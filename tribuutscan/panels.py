@@ -144,7 +144,7 @@ class CapturePanel(Panel):
 
 
 class ScanPanel(Panel):
-    """Live scan into one merged cloud (worker process), continue, browser 3D view."""
+    """Live scan into one merged cloud (worker process), pause, and continue."""
     title = "Scan"
     STATES = {"idle": ("Start scan (c)", "normal"), "counting": ("Cancel start (c / Esc)", "normal"),
               "scanning": ("Stop & Save (c)", "normal"), "pausing": ("Stop & Save (c)", "normal"),

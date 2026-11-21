@@ -37,7 +37,7 @@ We are open to testing more devices and to improvements from anyone. See
 **Early, but it scans.** On our one scanner:
 
 - Live scanning works: move the scanner around an object and frames merge into one point cloud
-  while you watch it grow in a browser 3D view. After Stop, an *Optimise* step ties the scan
+  while you watch it grow in the Live 3D model pane. After Stop, an *Optimise* step ties the scan
   together (loop closures), and *Make mesh* fuses the scan's frames into a surface (PLY with colour,
   STL for slicers). On our marker part the mesh lies 0.09 mm (median) from Creality's own scan of
   it, 0.34 mm for 90% of it.
@@ -129,7 +129,7 @@ zoom, double-click to reset the view, and select a piece if more than one has be
   *Continue last* goes on with the last saved scan if it used the same camera calibration and depth range.
 - **Pause & Inspect (p)** stops taking new frames into the scan. Once frames already accepted have
   finished, inspect the held point cloud in the same **Live 3D model** pane. Drag to rotate
-  or scroll to zoom; the scan isn't saved or ended. The camera previews can keep running. Return to the scanner window and use
+  or scroll to zoom; the scan isn't saved or ended. The camera previews can keep running. Use
   **Resume scan (p)** to continue the same scan (start from the last tracked view if you moved the
   scanner), or **Stop & Save (c)** to finish normally. Process and Crop are for the finished scan.
   Capture, Tracking and Geometry are shown separately: frames arriving doesn't mean tracking has
