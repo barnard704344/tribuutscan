@@ -125,6 +125,13 @@ def test_stop_makes_the_mesh_after_optimise():
                     reply("resumed")
             commands.put(("pause",))
             reply("paused")
+            commands.put(("coverage_preview", 1, None))
+            piece, version, xyz, seen = reply("coverage_frame")
+            assert piece == 1 and isinstance(version, str)
+            assert 0 < len(xyz) <= 4500 and xyz.shape == (len(seen), 3)
+            assert np.all(np.isfinite(xyz)) and (seen > 0).all()
+            commands.put(("coverage_preview", 1, version))
+            assert reply("coverage_frame") == [1, version, None, None]
             commands.put(("stop", True))  # pausing did not replace Stop & Save
             reply("saved")
             raw = next((Path(tmp) / "scan").glob("*-rec"))
@@ -153,6 +160,9 @@ def test_stop_makes_the_mesh_after_optimise():
             commands.put(("cancel", cancelled.name))
             recovery, warning = reply("cancelled")
             assert not warning and not cancelled.exists()
+            commands.put(("coverage_preview", 1, version))
+            piece, cleared, xyz, seen = reply("coverage_frame")
+            assert piece == 1 and cleared != version and len(xyz) == len(seen) == 0
             assert Path(recovery).is_dir() and not (Path(recovery) / "cloud.ply").exists()
             assert livescan.cl.recording_piece_starts(next(Path(recovery).glob("*-rec"))) == {3}
             assert (original / "mesh.stl").exists()
