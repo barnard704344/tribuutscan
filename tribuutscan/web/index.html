@@ -401,8 +401,15 @@ async function poll() {
         $("tracking").innerHTML += ` · piece ${s.pieces}: joins the others after Stop`;
       $("empty").classList.toggle("show", info.points === 0);
     }
-    if (Date.now() - messageAt > 8000)  // a Process result stays readable for a while
+    // Orbit/zoom remain unchanged when the scan freezes. Processing is for finished scans only.
+    const unfinished = info.phase !== "done";
+    document.querySelectorAll("[data-action]").forEach((li) => li.classList.toggle("later", unfinished));
+    $("crop-open").classList.toggle("later", unfinished);
+    if (info.phase === "paused")
+      $("status").textContent = "Paused · rotate or zoom here · Resume or Stop & Save in the scanner";
+    else if (Date.now() - messageAt > 8000)  // a Process result stays readable for a while
       $("status").innerHTML = info.phase === "optimising" ? "<b>●</b> optimising…" : "<b>●</b> connected";
+    $("dl-ply").classList.toggle("later", info.phase === "paused");
     $("dl-mesh").classList.toggle("later", !info.mesh);
     $("dl-stl").classList.toggle("later", !info.stl);
     $("dl-stl").querySelector("small").textContent = !info.stl ? "make a full mesh first"
@@ -410,7 +417,7 @@ async function poll() {
       : info.stl_state === "open" ? "mm, unsealed surface"
       : "mm, closure not recorded";
     $("dl-solid").classList.toggle("later", !info.solid);
-    $("crop-off").classList.toggle("later", !session.crop);
+    $("crop-off").classList.toggle("later", unfinished || !session.crop);
     let reloaded = false;
     for (const kind in shapes) {
       const option = $("show").querySelector(`option[value="${kind}"]`), shape = shapes[kind];
@@ -443,14 +450,14 @@ $("mode").addEventListener("change", () => {
 $("show").addEventListener("change", showWhich);
 $("reset").addEventListener("click", frame);
 window.addEventListener("keydown", (e) => { if (e.key === "r" || e.key === "R") frame(); });
-$("dl-ply").addEventListener("click", () => { location.href = "cloud.ply"; });
+$("dl-ply").addEventListener("click", () => { if (!$("dl-ply").classList.contains("later")) location.href = "cloud.ply"; });
 $("dl-mesh").addEventListener("click", () => { if (!$("dl-mesh").classList.contains("later")) location.href = "mesh.ply"; });
 $("dl-stl").addEventListener("click", () => { if (!$("dl-stl").classList.contains("later")) location.href = "mesh.stl"; });
 $("dl-solid").addEventListener("click", () => { if (!$("dl-solid").classList.contains("later")) location.href = "solid.ply"; });
 document.querySelectorAll("[data-action]").forEach((li) => li.addEventListener("click", () => {
   if (!li.classList.contains("later")) runAction(li.dataset.action, li.textContent.trim());
 }));
-$("crop-open").addEventListener("click", openCrop);
+$("crop-open").addEventListener("click", () => { if (!$("crop-open").classList.contains("later")) openCrop(); });
 for (let f = 0; f < 6; f++) $(`c${f}`).addEventListener("input", cropChanged);
 $("crop-cancel").addEventListener("click", () => closeCrop(false));
 $("crop-apply").addEventListener("click", async () => {

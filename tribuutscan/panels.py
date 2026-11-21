@@ -147,7 +147,8 @@ class ScanPanel(Panel):
     """Live scan into one merged cloud (worker process), continue, browser 3D view."""
     title = "Scan"
     STATES = {"idle": ("Start scan (c)", "normal"), "counting": ("Cancel start (c / Esc)", "normal"),
-              "scanning": ("Stop scan (c)", "normal"),
+              "scanning": ("Stop & Save (c)", "normal"), "pausing": ("Stop & Save (c)", "normal"),
+              "paused": ("Stop & Save (c)", "normal"), "resuming": ("Stop & Save (c)", "normal"),
               "saving": ("Saving...", "disabled"), "optimising": ("Optimising...", "disabled"),
               "meshing": ("Making the mesh...", "disabled")}
 
@@ -157,6 +158,10 @@ class ScanPanel(Panel):
         menu(row, self.app.preset, cloud.PRESETS_MM).pack(side="left")
         self.scan = button(row, style="Primary.Capture.TButton", command=self.app.toggle_scan)
         self.scan.pack(side="left", expand=True, fill="x", padx=(5, 0))
+        row = frame(body)
+        row.pack(fill="x", pady=(2, 0))
+        self.pause = button(row, command=self.app.toggle_pause_scan)
+        self.pause.pack(side="left", expand=True, fill="x")
         row = frame(body)
         row.pack(fill="x", pady=(2, 0))
         button(row, text="Continue last", command=self.app.continue_scan).pack(
@@ -174,6 +179,10 @@ class ScanPanel(Panel):
     def refresh(self):
         text, state = self.STATES[self.app.scan_state]
         self.set(self.scan, text=text, state=state)
+        phase = self.app.scan_state
+        label = {"paused": "Resume scan (p)", "pausing": "Finishing frames...", "resuming": "Resuming..."}.get(
+            phase, "Pause & Inspect (p)")
+        self.set(self.pause, text=label, state="normal" if phase in ("scanning", "paused") else "disabled")
 
 
 class ImuPanel(Panel):

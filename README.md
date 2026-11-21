@@ -103,7 +103,7 @@ right: Scanner, Capture, Scan, IMU and View.
   shows Too close, Optimum or Too far with the approximate distance; it uses a fresh aimed-object
   reading or the centre of the live depth view as a fallback. If neither is reliable, aim at the
   object rather than treating the missing reading as too near or too far. Move steadily and keep
-  markers in view if there are any. **Stop scan (c)** saves `captures/<stamp>-scan/cloud.ply`, runs Optimise and makes the mesh
+  markers in view if there are any. **Stop & Save (c)** saves `captures/<stamp>-scan/cloud.ply`, runs Optimise and makes the mesh
   (`mesh.ply`, `mesh.stl`, `solid.ply`; *Mesh after Stop*, on by default, about 15-20 s with a GPU). *Remove base* (on
   by default) leaves the table under the object out of the result. While scanning, the depth view
   dims everything that is not the object and, with a GPU, paints the scan so far over it, as seen
@@ -120,6 +120,11 @@ right: Scanner, Capture, Scan, IMU and View.
   recordings together, keeping their folder layout. Older scans with absolute recording paths can
   still use those paths and get relative references when saved again in this version.
   *Continue last* goes on with the last saved scan if it used the same camera calibration and depth range.
+- **Pause & Inspect (p)** stops taking new frames into the scan. Once frames already accepted have
+  finished, the current point cloud opens in the local 3D view. Drag to rotate or zoom in; the scan
+  isn't saved or ended. The camera previews can keep running. Return to the scanner window and use
+  **Resume scan (p)** to continue the same scan (start from the last tracked view if you moved the
+  scanner), or **Stop & Save (c)** to finish normally. Process and Crop are for the finished scan.
 - **Scanning on a platform**: the scanner can also stand still while you turn the object on a
   platform.
   - The scan notices this after a few seconds, because the room behind stays put ("object turning,

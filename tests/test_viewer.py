@@ -502,3 +502,81 @@ def test_a_dead_worker_clears_saving_and_can_be_replaced():
     viewer.App.toggle_scan(app)
     app.start_worker.assert_called_once()
     assert app.scan_state == "counting"
+
+
+def test_pause_synchronises_with_frame_enqueue_and_resume_requires_fresh_pair():
+    import queue
+    import threading
+    from types import SimpleNamespace as NS
+    from unittest.mock import patch
+
+    commands, replies = queue.Queue(), queue.Queue()
+    depth = NS(raw=b"depth", stamp=10.0, cap=NS(bytesperline=1600))
+    colour = NS(nearest=lambda t: (b"colour", t - 0.1))
+    app = NS(live={"proc": None, "commands": commands, "replies": replies}, depth=depth, scan_state="scanning")
+    feeder = viewer.Feeder(app)
+    feeder.send(app.live, depth, colour)
+    selecting, selected = threading.Event(), threading.Event()
+
+    def slow_pair(t):
+        selecting.set()
+        assert selected.wait(1)
+        return b"colour", t
+
+    frame = threading.Thread(target=feeder.send, args=(app.live, depth, NS(nearest=slow_pair)), daemon=True)
+    frame.start()
+    assert selecting.wait(1)
+    feeder.transition("pausing", ("pause",))
+    selected.set()
+    frame.join(1)
+    assert not frame.is_alive()
+    assert commands.get_nowait()[0] == "frame" and commands.get_nowait() == ("pause",) and commands.empty()
+
+    feeder.transition("resuming", ("resume",))
+    with patch.object(viewer.time, "monotonic", return_value=20.0):
+        feeder.transition("scanning", fresh=True)
+    assert commands.get_nowait() == ("resume",)
+    feeder.send(app.live, depth, colour)  # stale depth
+    depth.stamp = 20.05
+    feeder.send(app.live, depth, colour)  # depth fresh but matching colour captured while paused
+    assert commands.empty()
+    depth.stamp = 20.2
+    feeder.send(app.live, depth, colour)
+    assert np.allclose(commands.get_nowait()[5], (20.1, 0.0, 20.2))
+
+
+def test_paused_acknowledgement_opens_inspection_and_stop_saves_the_same_session():
+    import queue
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock, patch
+
+    feeder = Mock(out=queue.Queue())
+    app = NS(live={"url": "http://localhost:8765/", "feeder": feeder, "proc": NS(exitcode=None)},
+             scan_state="scanning", lighter=Mock(), log=Mock(), mesh_after=NS(get=lambda: True))
+    viewer.App.toggle_pause_scan(app)
+    feeder.transition.assert_called_once_with("pausing", ("pause",))
+    app.scan_state = "pausing"
+    feeder.out.put(("paused", [], None))
+    with patch.object(viewer.webbrowser, "open") as open_page, patch.dict(viewer.scan_view):
+        viewer.App.check_scan(app)
+    open_page.assert_called_once_with("http://localhost:8765/")
+    assert app.scan_state == "paused"
+    viewer.App.toggle_scan(app)
+    feeder.transition.assert_called_with("saving", ("stop", True))
+
+
+def test_scan_panel_build_wires_separate_pause_and_stop_controls():
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock, patch
+    from tribuutscan import panels
+
+    app = NS(preset=None, toggle_scan=Mock(), toggle_pause_scan=Mock(), continue_scan=Mock(), open_view=Mock(),
+             remove_base=None, keep_raw=None, mesh_after=None, countdown=None, scan_state="paused")
+    panel = NS(app=app, set=Mock(), STATES=panels.ScanPanel.STATES)
+    with patch.object(panels, "frame", return_value=Mock()), patch.object(panels, "button", side_effect=lambda *a, **kw: Mock(**kw)), \
+            patch.object(panels, "checkbox", return_value=Mock()), patch.object(panels, "menu", return_value=Mock()):
+        panels.ScanPanel.build(panel, object())
+        panels.ScanPanel.refresh(panel)
+    assert panel.scan.command is app.toggle_scan and panel.pause.command is app.toggle_pause_scan
+    panel.set.assert_any_call(panel.scan, text="Stop & Save (c)", state="normal")
+    panel.set.assert_any_call(panel.pause, text="Resume scan (p)", state="normal")

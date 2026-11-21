@@ -640,7 +640,7 @@ class App:
                      "feeder": None,  # (Feeder: frames out, replies in, off the Tk loop)
                      "done": collections.deque(maxlen=60), "last": None, "name": "", "gpu": "", "merging": ""}
         # (done: when frames came back; last: (merged, frames, points, tracking); gpu / merging: from its log)
-        self.scan_state = "idle"  # idle | counting (down to Start) | scanning | saving | optimising | meshing
+        self.scan_state = "idle"  # idle | counting | scanning | pausing | paused | resuming | saving | optimising | meshing
         self.imu, self.imu_note, self.imu_want = None, "", usbdepth.available()
         self.retry_at = 0.0  # time.monotonic() before which a lost scanner is not reconnected again
         self.lost = False  # a stream lost its device and the scanner is not back yet
@@ -723,7 +723,8 @@ class App:
             panel = cls(right, self)
             panel.pack(fill="x", pady=(0, 6))
             self.panels.append(panel)
-        for key, action in (("s", self.save), ("r", self.toggle_record), ("m", self.mesh), ("c", self.toggle_scan)):
+        for key, action in (("s", self.save), ("r", self.toggle_record), ("m", self.mesh), ("c", self.toggle_scan),
+                            ("p", self.toggle_pause_scan)):
             root.bind(key, lambda _event, action=action: action())
         root.bind("<Escape>", lambda _event: self.escape())
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -870,6 +871,12 @@ class App:
             fps = (len(done) - 1) / (done[-1] - done[0]) if len(done) > 1 and done[-1] > done[0] else 0.0
             now.append(f"scanning {live['name']}: {frames} frames ({fps:.1f} a second), {merged} merged, {points:,} points"
                        + ("" if tracking else ", TRACKING LOST"))
+        elif self.scan_state == "pausing":
+            now.append("pausing: finishing frames already accepted")
+        elif self.scan_state == "paused":
+            now.append("scan paused: rotate the model in the 3D view, then Resume or Stop & Save")
+        elif self.scan_state == "resuming":
+            now.append("resuming the same scan")
         elif self.scan_state in ("saving", "optimising", "meshing"):
             now.append(f"{self.scan_state} the scan {live['name']}")
         recorder = self.rec["recorder"]
@@ -940,8 +947,8 @@ class App:
             self.stop_recording()
             self.rec["thread"].join(timeout=2)  # let the last set and the files close cleanly
         if self.live["proc"] is not None:
-            if self.scan_state == "scanning":
-                self.live["commands"].put(("stop",))  # save what was scanned
+            if self.scan_state in ("scanning", "pausing", "paused", "resuming"):
+                self.live["feeder"].transition("saving", ("stop",))  # save what was scanned
                 self.log("scan stopped by closing, saving ...")
             self.live["commands"].put(("quit",))
             self.live["proc"].join(timeout=15)
@@ -1125,7 +1132,7 @@ class App:
         if self.rec["recorder"]:
             self.stop_recording()
             self.log("recording stopped: scanner disconnected")
-        if self.scan_state == "scanning":
+        if self.scan_state in ("scanning", "pausing", "paused", "resuming"):
             self.toggle_scan()  # requests a partial save; the worker reports the result separately
         elif self.scan_state == "counting":
             self.cancel_countdown()
@@ -1368,9 +1375,8 @@ class App:
     def toggle_scan(self, continue_from=None):
         """Start (after the countdown, when it is on), cancel the countdown, or stop and save."""
         live = self.live
-        if self.scan_state == "scanning":
-            self.scan_state = "saving"
-            live["commands"].put(("stop", bool(self.mesh_after.get())))
+        if self.scan_state in ("scanning", "pausing", "paused", "resuming"):
+            live["feeder"].transition("saving", ("stop", bool(self.mesh_after.get())))
             self.log("scan stopped, saving ...")
             return
         if self.scan_state == "counting":
@@ -1384,6 +1390,15 @@ class App:
             self.scan_state, self.count = "counting", {"until": time.monotonic() + COUNTDOWN_S, "from": continue_from}
             return
         self.begin_scan(continue_from)
+
+    def toggle_pause_scan(self):
+        """Pause and inspect the current model without ending the scan, or resume the same scan."""
+        if self.scan_state == "scanning":
+            self.live["feeder"].transition("pausing", ("pause",))
+            self.log("pausing: finishing frames already accepted ...")
+        elif self.scan_state == "paused" and not self.lost and not self.switching["busy"]:
+            self.live["feeder"].transition("resuming", ("resume",))
+            self.log("resuming the same scan ...")
 
     def cancel_countdown(self):
         if self.scan_state == "counting":
@@ -1520,6 +1535,21 @@ class App:
                 self.log(rest[0])
                 self.scan_state = "idle"
                 self.lighter(False)
+            elif kind == "paused" and self.scan_state == "pausing":
+                self.scan_state = "paused"
+                self.lighter(False)
+                scan_view.update(mask=None, lost=False, model=None)
+                if live["url"]:
+                    webbrowser.open(live["url"])
+                    self.log("scan paused; rotate the model in the 3D view")
+                else:
+                    self.log("scan paused; the 3D view is unavailable. Resume or Stop & Save here.")
+            elif kind == "resumed" and self.scan_state == "resuming":
+                live["done"].clear()
+                self.ticks.clear()
+                self.lighter(True)
+                feeder.transition("scanning", fresh=True)
+                self.log("scan resumed; hold or return to the last tracked view")
             elif kind == "frame_done":
                 merged, frames, points, tracking, cue, view, model, model_t = (list(rest) + [None] * 8)[:8]
                 if self.scan_state == "scanning" and cue is not None:
@@ -1585,13 +1615,25 @@ class Feeder(threading.Thread):
         super().__init__(daemon=True)
         self.app, self.out, self.lock = app, queue.Queue(), threading.Lock()
         self.live = {key: app.live[key] for key in ("proc", "commands", "replies")}
+        self.resume_after = 0.0
         self.inflight, self.sent_stamp, self.raw = 0, 0.0, {}  # raw: depth buffers in work, by capture time
         self.stats = {"sent": 0, "t0": None, "t1": None, "lag": collections.deque(maxlen=4000)}  # lag: capture -> sent
 
     def new_scan(self):
         with self.lock:
             self.inflight, self.raw = 0, {}
+            self.resume_after = 0.0
             self.stats = {"sent": 0, "t0": None, "t1": None, "lag": collections.deque(maxlen=4000)}
+
+    def transition(self, state, command=None, *, fresh=False):
+        """Order scan controls and frame enqueues through one lock."""
+        with self.lock:
+            if fresh:
+                # Don't send a frame captured during inspection, even if the stream has stalled.
+                self.resume_after = max(self.app.depth.stamp, time.monotonic())
+            self.app.scan_state = state
+            if command is not None:
+                self.live["commands"].put(command)
 
     def run(self):
         live, depth, color = self.live, self.app.depth, self.app.color
@@ -1611,7 +1653,7 @@ class Feeder(threading.Thread):
                 self.out.put((kind, rest, raw))
                 continue  # (replies first: they free a place)
             if self.app.scan_state == "scanning" and self.inflight < 2 and color.raw and depth.raw \
-                    and depth.stamp != self.sent_stamp:
+                    and depth.stamp != self.sent_stamp and depth.stamp > self.resume_after:
                 self.send(live, depth, color)
             else:
                 depth.fresh.wait(0.004)
@@ -1621,13 +1663,15 @@ class Feeder(threading.Thread):
         d_raw, d_t = depth.raw, depth.stamp
         c_raw, c_t = color.nearest(d_t)  # no IR: the worker's raw copy leaves it out (frames.SCAN_STREAMS)
         with self.lock:
+            if self.app.scan_state != "scanning" or d_t <= self.resume_after or c_t <= self.resume_after:
+                return  # the Tk thread may have queued a pause/stop while we selected frames
+            try:
+                live["commands"].put(("frame", c_raw, None, d_raw, depth.cap.bytesperline, (c_t, 0.0, d_t)))
+            except (OSError, ValueError):
+                return  # its worker died and Tk closed the queue
             self.sent_stamp, self.inflight = d_t, self.inflight + 1
             self.raw = {t: r for t, r in self.raw.items() if t > d_t - 2.0}  # (for the live model view)
             self.raw[d_t] = d_raw
-        try:
-            live["commands"].put(("frame", c_raw, None, d_raw, depth.cap.bytesperline, (c_t, 0.0, d_t)))
-        except (OSError, ValueError):
-            return  # its worker died and Tk closed the queue
         now, st = time.monotonic(), self.stats
         st["sent"] += 1
         st["t0"], st["t1"] = st["t0"] or now, now

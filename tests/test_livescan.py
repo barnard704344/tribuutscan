@@ -108,11 +108,25 @@ def test_stop_makes_the_mesh_after_optimise():
 
             reply("ready")
             commands.put(("start", "small", Path(tmp) / "scan", True, None, calib.CAMERA.mode, True))
+            frames = 0
             for bufs in fr.read_raw(rec):
-                commands.put(("frame", bufs["color"], None, bufs["depth"], bufs["bytesperline"], bufs["t"]))
-                reply("frame_done")
-            commands.put(("stop", True))
+                frame = ("frame", bufs["color"], None, bufs["depth"], bufs["bytesperline"], bufs["t"])
+                commands.put(frame)
+                frames += 1
+                assert reply("frame_done")[1] == frames  # the same scanner/pose history continues
+                if frames == 15:
+                    commands.put(("pause",))
+                    reply("paused")
+                    commands.put(frame)  # defensive worker-side rejection of an out-of-phase frame
+                    assert reply("frame_done") == [0, 0, 0]
+                    commands.put(("resume",))
+                    reply("resumed")
+            commands.put(("pause",))
+            reply("paused")
+            commands.put(("stop", True))  # pausing did not replace Stop & Save
             reply("saved")
+            raw = next((Path(tmp) / "scan").glob("*-rec"))
+            assert len((raw / "stamps.csv").read_text().splitlines()) == 1 + frames
             assert reply("optimised")[1] is True
             message = reply("meshed")[0]
             commands.put(("quit",))
@@ -241,3 +255,41 @@ def test_worker_reports_a_rejected_continue_without_exiting():
             assert not (Path(tmp) / "next-scan").exists()
         finally:
             calib.use_mode(before)
+
+
+def test_paused_view_uses_a_frozen_snapshot_and_disallows_processing():
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+
+    source = livescan.LiveSource()
+    source.phase = "paused"
+    source.paused_points = np.array([[1., 2., 3.]]), np.array([[4, 5, 6]], np.uint8), np.array([3], np.int32)
+    source.scanner = NS(stats=dict(merged=3, frames=5, tracking=True, lost=0, relocked=0), cue={},
+                        cloud=NS(point_mm=1., raw_points=7), pieces=[], crop=None, preset="medium",
+                        live_points=Mock(), crop_axes=Mock())
+    version, payload, info = source.current()
+    assert info["phase"] == "paused" and info["points"] == 1 and info["session"]["frames"] == 5
+    assert source.current() == (version, payload, info)
+    source.scanner.live_points.assert_not_called()
+    source.scanner.crop_axes.assert_not_called()
+    assert source.ply_bytes() is None
+    assert "Stop & Save" in source.process("optimise")
+    assert "Stop & Save" in source.process("crop", [0, 0, 0, 1, 1, 1])
+
+
+def test_pause_drains_accepted_raw_frames_without_closing_the_recording():
+    from unittest.mock import Mock
+
+    recorder = Mock()
+    raw = livescan.RawCopy(recorder)
+    try:
+        raw.put({"colour": b"1"}, {"t": 1.0})
+        raw.drain()
+        recorder.write.assert_called_once()
+        recorder.close.assert_not_called()
+        raw.put({"colour": b"2"}, {"t": 2.0})
+        raw.drain()
+        assert recorder.write.call_count == 2
+    finally:
+        raw.close()
+    recorder.close.assert_called_once()
