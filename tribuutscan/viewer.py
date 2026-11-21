@@ -260,23 +260,34 @@ def render_ir(cap, buf, width=SIDE_W):
 
 
 def render_depth(cap, buf, width=DEPTH_W):
-    scanning = time.monotonic() - scan_view["t"] < 1.0
+    now = time.monotonic()
+    scanning = now - scan_view["t"] < 1.0
     model = scan_view["model"] if scanning else None
-    if model is not None:
-        model, buf = model  # the frame the scan worker tracked: its model view and its depth agree
-    d = decode_depth(buf, cap.width, cap.height, cap.bytesperline)
-    shown, held = fit(d, width), None  # (colour-map only the shown pixels)
-    if hold_view["on"] and not scanning:
-        shown, held = hold_depth(shown, time.monotonic())
-    h, w = shown.shape
-    centre = shown[h * 3 // 8:h * 5 // 8, w * 3 // 8:w * 5 // 8]
+    h, w, stride = cap.height, cap.width, cap.bytesperline
+    mode = calib.CAMERA.mode
+    start, end = h * 3 // 8, h * 5 // 8
+    if model is None:
+        d = decode_depth(buf, w, h, stride)
+        centre_rows = d[start:end]
+    else:
+        model, model_buf = model  # render the corresponding earlier frame so the overlay lines up
+        d = decode_depth(model_buf, w, h, stride)
+        # Read just the centre rows from the current frame without decoding a second full image.
+        centre_rows = decode_depth(memoryview(buf)[start * stride:end * stride], w, end - start, stride)
+    # Distance is guidance for the current frame, never a held pixel or the tracked model.
+    centre = centre_rows[::2, w * 3 // 8:w * 5 // 8:2]
     valid = centre[centre > 0]
     stats = {
-        "text": f"valid {100 * (d > 0).mean():.0f}%" + ("" if held is None else
-                                                         f" now, {100 * (shown > 0).mean():.0f}% held"),
-        "centre_valid": valid.size / centre.size,
+        "text": f"valid {100 * (d > 0).mean():.0f}%",
+        "centre_valid": valid.size / centre.size if centre.size else 0.0,
         "centre_cm": float(pointcloud.depth_to_mm(np.median(valid))) / 10 if valid.size else None,
+        "centre_at": now,
+        "centre_mode": mode,
     }
+    shown, held = fit(d, width), None  # (colour-map only the shown pixels)
+    if hold_view["on"] and not scanning:
+        shown, held = hold_depth(shown, now)
+        stats["text"] += f" now, {100 * (shown > 0).mean():.0f}% held"
     rgb = depth_to_rgb(shown)
     if held is not None:
         rgb[held] = (rgb[held] * HELD_SHADE).astype(np.uint8)
@@ -350,6 +361,7 @@ def paint_outline(rgb, mask, width=2):
 def aim_once(cap, buf, history, rng_seed=0):
     """One aim (see aim_view): the piece a scan starting now would take, as isolate_mask finds it at the
     image centre, or at the user's pick (followed by its 3D centre)."""
+    mode = calib.CAMERA.mode
     depth4, _ = decode_strided(buf, cap.width, cap.height, cap.bytesperline)
     shape = (cap.height, cap.width)
     xyz, _, pix = cloud.frame_points({"depth4": depth4, "shape": shape}, 4, colour=False)
@@ -376,7 +388,7 @@ def aim_once(cap, buf, history, rng_seed=0):
         at = (float(p[j, 0]), float(p[j, 1]))
     colour = np.stack(calib.CAMERA.colour_px(p[:, 0], p[:, 1], z), -1)
     piece = {"pix": p, "colour": colour, "z": float(np.median(z)), "at": at, "plane": plane is not None,
-             "coverage": float(np.mean(history)), "points": int(len(p))}
+             "coverage": float(np.mean(history)), "points": int(len(p)), "mode": mode}
     aim_view.update(piece=piece, all=(xyz, pix), t=time.monotonic())
     return piece
 
@@ -397,12 +409,9 @@ def aim_loop(depth):
 
 
 def aim_hint(piece, ir_stats, imu_state, markers_on):
-    """(text, colour) for the bar under the depth preview while aiming: distance in this range's window, depth on
-    the object, IR clipping, base and tilt, markers; the colour is the worst of them."""
-    near, far = pointcloud.window_cm()
+    """(text, colour) for the secondary guidance under the distance gauge while aiming."""
     if piece is None:
-        return f"No object in view: aim at it from {near + 3:.0f}-{far - 4:.0f} cm", BAD
-    z, long_range = piece["z"] / 10, calib.CAMERA.mode.startswith("Long")
+        return "No object identified: aim the centre of the depth view at it.", MUTED_GUIDE
     parts, worst = [], GOOD
     rank = {GOOD: 0, EDGE: 1, BAD: 2}
 
@@ -411,13 +420,6 @@ def aim_hint(piece, ir_stats, imu_state, markers_on):
         parts.append(text)
         worst = colour if rank[colour] > rank[worst] else worst
 
-    est = " (estimate)" if calib.CAMERA.law_estimate else ""
-    if z < near + 2:
-        add(f"object ~{z:.0f} cm{est}: near the close edge, move back", EDGE)
-    elif z > far - 3:
-        add(f"object ~{z:.0f} cm{est}: near the far edge, move closer" + ("" if long_range else " or use Long range"), EDGE)
-    else:
-        add(f"object ~{z:.0f} cm{est}")
     c = piece["coverage"]
     add(f"depth {c:.0%}" + (": little, try another angle" if c < 0.15 else ""),
         BAD if c < 0.15 else EDGE if c < 0.4 else GOOD)
@@ -470,18 +472,63 @@ def mark_centre(rgb, arm=10, gap=4, at=None):
         rgb[a:b, cx - 1:cx + 1] = 255
 
 
-def distance_hint(stats):
-    """(text, colour) for the distance bar, from the depth centre stats (the active depth mode's window)."""
-    near, far = pointcloud.window_cm()
-    cm = stats.get("centre_cm")
-    if cm is None or stats["centre_valid"] < 0.2:
-        return f"Centre: no depth. Too close or too far; aim for {near + 3:.0f}-{far - 4:.0f} cm", BAD
-    text = f"Centre: ~{cm:.1f} cm" + (" (estimate)" if calib.CAMERA.law_estimate else "")
-    if cm < near + 2:
-        return text + " - near the close edge, move back", EDGE
-    if cm > far - 3:
-        return text + " - near the far edge, move closer", EDGE
-    return text + " - good", GOOD
+# Recommended working distances (README), not hard detection limits or accuracy guarantees.
+DISTANCE_BANDS = {"Close": (18, 30), "Long": (30, 50)}
+DISTANCE_STATES = ("Too close", "Optimum", "Too far")
+MUTED_GUIDE = panels.MUTED
+
+
+def distance_guide(piece, stats, mode, estimated, now):
+    """Return (active segment or None, reading and advice) for the depth-distance gauge."""
+    name = "Long" if mode.startswith("Long") else "Close"
+    near, far = DISTANCE_BANDS[name]
+    target = f"{name} range target: {near}–{far} cm"
+    cm, source = None, None
+    if piece is not None and piece.get("mode") == mode and piece.get("coverage", 0) >= 0.15:
+        z = piece.get("z")
+        if z is not None and math.isfinite(z) and z > 0:
+            cm, source = z / 10, "Picked object" if piece.get("at") is not None else "Object"
+    age = now - stats.get("centre_at", -math.inf)
+    if cm is None and stats.get("centre_mode") == mode and 0 <= age <= AIM_FRESH_S:
+        centre_cm = stats.get("centre_cm")
+        if stats.get("centre_valid", 0) >= 0.2 and centre_cm is not None and math.isfinite(centre_cm) and centre_cm > 0:
+            cm, source = centre_cm, "Centre"
+    if cm is None:
+        return None, f"No reliable depth · Aim at the object · {target}"
+    i = 0 if cm < near else 2 if cm > far else 1
+    estimate = " (estimate)" if estimated else ""
+    advice = ("Move back", "Hold this distance", "Move closer")[i]
+    return i, f"{source}: ~{cm:.1f} cm{estimate} · {advice} · {target}"
+
+
+class DistanceGauge(tk.Frame):
+    """Text and a three-zone strip give the reading without requiring colour perception."""
+    def __init__(self, parent):
+        super().__init__(parent, bg=panels.SURFACE, bd=0)
+        self.reading = tk.Label(self, anchor="w", bg=panels.SURFACE, fg=panels.INK, font=panels.BOLD)
+        self.reading.pack(fill="x")
+        strip = tk.Frame(self, bg=panels.LINE, padx=1, pady=1)
+        strip.pack(fill="x", pady=(3, 0))
+        self.zones = []
+        for i, text in enumerate(DISTANCE_STATES):
+            label = tk.Label(strip, text=text, pady=3, font=panels.BOLD)
+            label.grid(row=0, column=i, sticky="ew", padx=(0, 1 if i < 2 else 0))
+            strip.columnconfigure(i, weight=1, uniform="distance")
+            self.zones.append(label)
+        self.shown = None
+        self.show(None, "Waiting for live depth")
+
+    def show(self, active, text):
+        if self.shown == (active, text):
+            return
+        if self.shown is None or self.shown[0] != active:
+            for i, label in enumerate(self.zones):
+                selected = i == active
+                label.configure(text=("● " if selected else "") + DISTANCE_STATES[i],
+                                bg=(EDGE, GOOD, EDGE)[i] if selected else panels.BG,
+                                fg=panels.SURFACE if selected else panels.MUTED)
+        self.reading.configure(text=text)
+        self.shown = (active, text)
 
 
 # The IR node's auto exposure menu (v4l2.CID_EXPOSURE_AUTO). 0: the scanner's own auto exposure (what it powers
@@ -658,6 +705,8 @@ class App:
                 image.bind("<Button-1>", lambda e, name=name: self.aim_click(name, e.x, e.y))
                 image.bind("<Button-3>", lambda _e: self.aim_clear())
             if name == "Depth":
+                self.distance = DistanceGauge(parent)
+                self.distance.pack(fill="x", padx=8, pady=(6, 0))
                 bar = panels.frame(parent)
                 bar.pack(fill="x", padx=8, pady=(5, 0))
                 self.guide = tk.Label(bar, anchor="center", bg=panels.SURFACE, fg=panels.INK,
@@ -742,8 +791,15 @@ class App:
                 self.images[name] = tk.PhotoImage(data=s.latest, format="PPM")
                 image.configure(image=self.images[name])
             stats.configure(text=f"{s.fps:4.1f} fps   {s.stats.get('text', '')}")
+        now = time.monotonic()
+        if self.lost or self.switching["busy"]:
+            self.distance.show(None, "Distance unavailable · " + ("Scanner reconnecting" if self.lost else
+                                                                "Changing depth range"))
+        else:
+            self.distance.show(*distance_guide(fresh_aim(), self.depth.stats, calib.CAMERA.mode,
+                                               calib.CAMERA.law_estimate, now))
         if self.lost:
-            wait = self.retry_at - time.monotonic()
+            wait = self.retry_at - now
             self.guide.configure(fg=BAD, text="Reconnecting to the scanner ..." if self.switching["busy"] or wait <= 0 else
                                  f"Scanner disconnected: plug it in or replug it. Next try in {wait:.0f} s")
         else:
@@ -751,10 +807,7 @@ class App:
             if hint is None and aim_view["idle"] and time.monotonic() - aim_view["t"] <= AIM_FRESH_S:
                 hint = aim_hint(aim_view["piece"], self.ir.stats, self.imu.state() if self.imu else None,
                                 found_markers["on"])
-            if hint is None and self.depth.stats:
-                hint = distance_hint(self.depth.stats)
-            if hint is not None:
-                self.guide.configure(text=hint[0], fg=hint[1])
+            self.guide.configure(text=hint[0] if hint else "", fg=hint[1] if hint else MUTED_GUIDE)
         retry_shown = self.retry.winfo_ismapped()
         if self.lost and not self.switching["busy"] and not retry_shown:
             self.retry.pack(side="right", padx=(6, 0))

@@ -78,6 +78,33 @@ def test_depth_preview_holds_depth_for_a_moment():
         hv.update(saved)
 
 
+def test_distance_does_not_use_held_or_tracked_preview_depth():
+    import time
+    from tribuutscan.depth import encode_y10
+
+    class Cap:
+        width, height, bytesperline = 1280, 800, 1600
+
+    hv, sv = viewer.hold_view, viewer.scan_view
+    saved_hold, saved_scan = dict(hv), dict(sv)
+    live = encode_y10(np.full((Cap.height, Cap.width), 300, np.uint16))
+    empty = encode_y10(np.zeros((Cap.height, Cap.width), np.uint16))
+    try:
+        sv.update(t=0, model=None)
+        hv.update(on=True, s=1, depth=None)
+        assert viewer.render_depth(Cap, live)[1]["centre_valid"] == 1
+        stats = viewer.render_depth(Cap, empty)[1]
+        assert stats["centre_cm"] is None and "100% held" in stats["text"]
+        sv.update(t=time.monotonic(), model=(np.ones((8, 8), dtype=np.uint8), live))
+        stats = viewer.render_depth(Cap, empty)[1]
+        assert stats["centre_cm"] is None and stats["centre_valid"] == 0
+    finally:
+        hv.clear()
+        hv.update(saved_hold)
+        sv.clear()
+        sv.update(saved_scan)
+
+
 def test_depth_preview_has_a_red_frame_while_tracking_is_lost():
     import time
     from tribuutscan.depth import encode_y10
@@ -236,20 +263,42 @@ def test_the_aim_outlines_the_centre_piece_and_follows_a_pick():
 
 
 def test_the_aim_hint_names_what_needs_doing():
-    from tribuutscan import calib
-    near, far = viewer.pointcloud.window_cm()
-    piece = {"z": (near + far) / 2 * 10, "coverage": 0.6, "plane": True, "at": None}
+    piece = {"z": 240, "coverage": 0.6, "plane": True, "at": None}
     text, colour = viewer.aim_hint(piece, {"clipped": 0.5}, None, False)
     assert colour == viewer.GOOD and "depth 60%" in text and not text.startswith("Picked")
     text, colour = viewer.aim_hint(dict(piece, coverage=0.1, plane=False, at=(1, 2)), {"clipped": 9.0},
                                    {"pitch": -30.0}, False)
     assert colour == viewer.BAD and text.startswith("Picked") and "try another angle" in text
     assert "IR clipping 9%" in text and "no base, 30° down (ok on a platform)" in text
-    far_piece = dict(piece, z=(far - 1) * 10)
-    text, colour = viewer.aim_hint(far_piece, {}, None, False)
-    assert colour == viewer.EDGE and "far edge" in text
-    assert ("Long range" in text) == (not calib.CAMERA.mode.startswith("Long"))
-    assert viewer.aim_hint(None, {}, None, False)[1] == viewer.BAD
+    assert "No object identified" in viewer.aim_hint(None, {}, None, False)[0]
+
+
+def test_distance_guide_uses_documented_targets_for_both_ranges():
+    for mode, near, far in ((viewer.calib.CLOSE, 18, 30), (viewer.calib.LONG, 30, 50)):
+        for cm, state, advice in ((near - 0.1, 0, "Move back"), (near, 1, "Hold this distance"),
+                                  (far, 1, "Hold this distance"), (far + 0.1, 2, "Move closer")):
+            # Fresh aim takes precedence over an unrelated centre patch.
+            piece = {"mode": mode, "z": cm * 10, "coverage": 0.6, "at": (10, 10)}
+            stats = {"centre_mode": mode, "centre_at": 10, "centre_valid": 1, "centre_cm": 100}
+            active, text = viewer.distance_guide(piece, stats, mode, True, 10)
+            assert active == state
+            assert text.startswith(f"Picked object: ~{cm:.1f} cm (estimate)")
+            assert advice in text and f"{near}–{far} cm" in text
+
+
+def test_distance_guide_falls_back_only_to_fresh_reliable_centre_depth():
+    mode = viewer.calib.CLOSE
+    stats = {"centre_mode": mode, "centre_at": 10, "centre_valid": 0.4, "centre_cm": 22}
+    poor = {"mode": mode, "z": 100, "coverage": 0.1}
+    old_mode = {"mode": viewer.calib.LONG, "z": 100, "coverage": 1}
+    for piece in (None, poor, old_mode):
+        active, text = viewer.distance_guide(piece, stats, mode, False, 10.5)
+        assert active == 1 and text.startswith("Centre") and "estimate" not in text
+    for invalid in ({}, dict(stats, centre_at=6), dict(stats, centre_valid=0.1),
+                    dict(stats, centre_cm=float("nan")), dict(stats, centre_mode=viewer.calib.LONG)):
+        active, text = viewer.distance_guide(None, invalid, mode, False, 10.5)
+        assert active is None and "No reliable depth" in text and "18–30 cm" in text
+        assert "Move back" not in text and "Move closer" not in text
 
 
 def test_the_countdown_starts_the_scan_at_zero_with_the_picked_aim():

@@ -99,9 +99,11 @@ both with Open3D 0.20: the same results on every test and evaluation.
 The viewer shows depth large in the middle, colour and IR on the left, and folding panels on the
 right: Scanner, Capture, Scan, IMU and View.
 
-- **Start scan (c)**: stay 18-30 cm from the object in close range, 30-50 cm in long range (the
-  guide line under the images shows the distance), move steadily, keep markers in view if there are
-  any. **Stop scan (c)** saves `captures/<stamp>-scan/cloud.ply`, runs Optimise and makes the mesh
+- **Start scan (c)**: aim for 18-30 cm in close range or 30-50 cm in long range. The gauge below Depth
+  shows Too close, Optimum or Too far with the approximate distance; it uses a fresh aimed-object
+  reading or the centre of the live depth view as a fallback. If neither is reliable, aim at the
+  object rather than treating the missing reading as too near or too far. Move steadily and keep
+  markers in view if there are any. **Stop scan (c)** saves `captures/<stamp>-scan/cloud.ply`, runs Optimise and makes the mesh
   (`mesh.ply`, `mesh.stl`, `solid.ply`; *Mesh after Stop*, on by default, about 15-20 s with a GPU). *Remove base* (on
   by default) leaves the table under the object out of the result. While scanning, the depth view
   dims everything that is not the object and, with a GPU, paints the scan so far over it, as seen
