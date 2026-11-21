@@ -259,6 +259,14 @@ class Recorder:
                 f.write("index,kind,u,v\n")
             f.write(f"{self.count},{kind},{uv[0]:.1f},{uv[1]:.1f}\n")
 
+    def note_piece_start(self):
+        """Record a split on the frame just written by the FIFO raw writer."""
+        if self.count:
+            with (self.dir / "piece-starts.csv").open("a") as f:
+                if f.tell() == 0:
+                    f.write("index\n")
+                f.write(f"{self.count - 1}\n")
+
     def close(self):
         with self.lock:
             if self.imu is not None:

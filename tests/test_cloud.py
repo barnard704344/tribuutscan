@@ -861,37 +861,79 @@ def test_a_lost_frame_is_judged_by_how_much_it_looks_like_the_object():
     assert s.likeness(cl.look_of(lump(rng, 1500, 70, 360))) == "unsure"  # the object half out of view
 
 
-def test_only_frames_like_the_object_start_a_new_piece():
-    """Lost frames of something else ("other": crumbs, a wall, a box far behind) or of too little depth never start a
-    piece, however long they go on, and each starts the clock again; PIECE_AFTER_S of frames that may be the object
-    ("object" or "unsure": seen from above, the dev scene's hand showed a third of its points) do, and the new piece
-    is taken where they saw it, not where the last tracked piece was."""
+def test_indefinite_loss_never_replaces_the_existing_model():
     rng = np.random.default_rng(1)
     s = cl.Scanner("small", log=lambda m: None)
-    s.stats["merged"] = 5
-    hand, shelf = lump(rng, 3000, 60, 360), lump(rng, 3000, 60, 500) + [200.0, 0, 0]
-    s.last_source = shelf.mean(0)  # (where a junk piece once was: not where the new piece is taken)
-    frames = iter(range(1000))
-    for like in ["other"] * 30 + ["unsure"] * 5 + ["object"] * 4 + ["other"] + ["unsure"] * 9:  # 0.1 s apart
-        i = next(frames)
-        s.lost_long(i / 10, i, like, hand)
-    assert len(s.pieces) == 1 and s.lost_since is not None
-    while len(s.pieces) == 1 and i < 60:
-        i = next(frames)
-        s.lost_long(i / 10, i, "unsure", hand)
-    assert len(s.pieces) == 2 and s.pieces[1]["first_index"] == i + 1 and i in (50, 51)  # (1 s after frame 40)
-    xyz = np.concatenate([shelf, hand])
-    pix = np.c_[np.arange(len(xyz)) % 1280, np.arange(len(xyz)) // 1280].astype(float)
-    _, at = s.piece_start_seeds({}, xyz, pix)
-    i = int(np.argmin(np.hypot(pix[:, 0] - at[0], pix[:, 1] - at[1])))
-    assert i >= len(shelf)  # on the hand
+    try:
+        s.stats["merged"] = 5
+        s.last_merged, s.lost_run = np.eye(4), 1
+        s.stats["tracking"] = False
+        hand = lump(rng, 3000, 60, 360)
+        cloud, scene, pose = s.cloud, s.scene, s.pose.copy()
+        for i in range(200):
+            s.lost_long(i * 30, i, ["other", "object", "unsure"][i % 3], hand)
+        assert len(s.pieces) == 1 and s.cloud is cloud and s.scene is scene
+        assert np.array_equal(s.pose, pose) and np.allclose(s.like_source, hand.mean(0))
+        assert s.can_start_separate_piece() and s.request_separate_piece()
+        assert not s.request_separate_piece()
+    finally:
+        s.discard()
+
+
+def test_hold_relocks_without_splitting_then_explicit_start_waits_for_depth():
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import Mock
+    from tribuutscan import calib, frames as fr, synth
+    previous = calib.CAMERA.spec
+    calib.use(calib.ESTIMATES)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            rec = Path(d) / "test-rec"
+            synth.generate(rec, n_frames=1)
+            good = next(iter(fr.read_recording(rec)))
+            bad = dict(good, depth=np.zeros_like(good["depth"]))
+            s = cl.Scanner(log=lambda _: None, track_with="joint", merge_min_s=0.0)
+            try:
+                assert s.feed(good)
+                s.sync_merges()
+                assert not s.request_separate_piece()
+                primary = s.cloud
+                s.joint_step = Mock(return_value=(np.eye(4), False))
+                s.likeness = Mock(return_value="object")
+                s.relock = Mock(return_value=False)
+                s.refind_anywhere = Mock(return_value=False)
+                s.refind_shape = Mock(return_value=False)
+                for i in range(1, 5):
+                    s.pick("depth", (640, 400))
+                    assert not s.feed(dict(good, t=float(i * 30)))
+                assert s.refind_shape.call_count == 4 and s.can_start_separate_piece()
+                assert len(s.pieces) == 1 and s.cloud is primary
+                s.away_frames = cl.AWAY_FRAMES  # CPU frame-to-frame tracking no longer allowed
+                assert not s.relock_due() and not s.step_due()
+                s.relock.return_value = True
+                s.feed(dict(good, t=130.0))
+                assert s.stats["relocked"] == 1 and s.stats["tracking"] and not s.request_separate_piece()
+                assert len(s.pieces) == 1 and s.cloud is primary
+                s.feed(dict(bad, t=131.0))
+                assert s.request_separate_piece()
+                s.feed(dict(bad, t=132.0))
+                assert s.piece_pending and not s.can_start_separate_piece() and s.cloud is primary
+                next_index = s.stats["frames"]
+                assert s.feed(dict(good, t=133.0))
+                assert not s.piece_pending and s.stats["tracking"] and not s.request_separate_piece()
+                assert len(s.pieces) == 2 and s.pieces[1]["first_index"] == next_index
+                assert s.cloud is not primary and len(primary)
+                s.sync_merges()
+                assert len(s.cloud)
+            finally:
+                s.discard()
+    finally:
+        calib.use(previous)
 
 
 def test_unsure_frames_at_another_distance_start_no_piece():
-    """An "unsure" lost frame whose piece lies further from the object's distance than LOOK_NEAR (the 11-06 18:39
-    scan's swings to the shelf, ~6x the points 18 cm further, and to a hand as big ~17 cm further) starts the piece
-    clock again, like "other"; it stays "unsure", so recoveries are still tried. The hand with the board under it
-    (4x the points at its own distance) runs the clock."""
+    """A faraway unsure view does not seed a future explicit piece; a nearby unsure view can."""
     rng = np.random.default_rng(3)
     s = cl.Scanner("small", log=lambda m: None)
     s.stats["merged"] = 5
@@ -906,7 +948,7 @@ def test_unsure_frames_at_another_distance_start_no_piece():
     assert not s.beyond(cl.look_of(board))
     for i in range(30, 45):
         s.lost_long(i / 10, i, "unsure", board)
-    assert len(s.pieces) == 2
+    assert len(s.pieces) == 1 and s.lost_since is not None
 
 
 def test_a_pose_found_anywhere_and_lost_at_once_is_taken_back():

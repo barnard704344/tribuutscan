@@ -425,21 +425,13 @@ One frame (`cloud.Scanner.feed`, GPU tracker):
    object's colours instead of the region's core when the colour model can tell them (`colour.py`:
    U/V histograms of object vs the rest of the view, learned at keyframes; silent when they overlap,
    Bhattacharyya > 0.6, so depth alone decides as before).
-   **Pieces.** After PIECE_AFTER_S 1 s of lost frames whose piece may be the object ("object" or "unsure"; an
-   "other" frame, one with too little depth, or an "unsure" one whose piece lies further than LOOK_NEAR from the
-   object's distance (BEYOND: the shelf, the hands behind) starts the clock again), with every recovery failing, the scan
-   goes on in a new piece (`start_piece`): pose chain, scene, marker map, live cloud and tracking volume start
-   afresh (the volume emptied in place, `Engine.reset`: no second ~560 MB engine), at the last good pose; its
-   first frame takes the object by colour, else at the point nearest where the lost frames saw it
-   (`like_source`), else nearest the last source. Before 2026-11-06 any frame with depth counted: looking
-   away started pieces on the shelf and the wall, each taken where the last had its object, until one took
-   the boxes behind the hand. ("unsure" must count: seen from above, devplatform's hand showed a third of
-   its points, and with only "object" counting the CPU tracker never began a piece.) Re-finds look only within the current piece. `pieces` holds each one's first index, like `sources`.
-   **A click** on the depth or colour preview while scanning (`Scanner.pick`, sent as ("pick", kind, (u, v));
-   the raw copy notes it in picks.csv, `recording_picks` gives replays the same): on the object being
-   tracked (the last frame's labels) nothing changes; on something else a new piece starts there at once;
-   while lost, that frame's piece is taken at the click and found again in the scan if it can be, else a
-   new piece starts there (no 1 s wait). A piece a click started becomes the look piece.
+   **Pieces.** During loss the existing model and pose chain are held while recovery is retried; there is
+   no timeout that starts a new piece. The live operator can explicitly request a separate piece from a lost
+   scan with a model. The next suitable depth frame starts it (`start_piece`): the old geometry is frozen and
+   the pose chain, scene, marker map and tracking volume are reset. Replays of new raw recordings apply the
+   explicit starts at the frame indices from piece-starts.csv. Re-finds look within the current piece.
+   **A click** on the depth or colour preview (`Scanner.pick`) helps aim or recover the target, never splitting
+   the model. It does not retarget an already locked scan. Raw recordings keep clicks in picks.csv.
 6. **Scene** (`scene.py`, mode "still"):
    - The base is found by votes: 3 must agree in world coordinates. `stands_on` requires contact within
      10 mm, and at most half the plane may lie inside the object's outline; when tracking's piece floats above

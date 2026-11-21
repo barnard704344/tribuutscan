@@ -116,11 +116,11 @@ TRACKERS = {  # name: Scanner options (the scan mode comes from the dataset)
 }  # (the earlier variants, baseline to gpu-noverify, went in Phase 6: docs/history.md has their numbers)
 
 
-def make_scanner(tracker, preset, mode, aim=None, picks=None):
+def make_scanner(tracker, preset, mode, aim=None, picks=None, piece_starts=None):
     options = dict(mode=mode, **TRACKERS[tracker]) if tracker in TRACKERS else None
     if options is None:
         raise ValueError(f"unknown tracker {tracker}; one of {list(TRACKERS)}")
-    return cl.Scanner(preset, log=lambda m: None, aim=aim, picks=picks, **options)
+    return cl.Scanner(preset, log=lambda m: None, aim=aim, picks=picks, piece_starts=piece_starts, **options)
 
 
 def run(name, tracker="current", preset="small", live_markers=False, optimise_after=False, mesh=False):
@@ -197,7 +197,8 @@ def _run(name, tracker, preset, live_markers, optimise_after, mesh=False):
     directory = dataset_path(name)
     base, gap = GAPS.get(name, (name, range(0)))
     found = cached_markers(base, directory)
-    scanner = make_scanner(tracker, preset, DATASETS[name][2], cl.recording_aim(directory), cl.recording_picks(directory))
+    scanner = make_scanner(tracker, preset, DATASETS[name][2], cl.recording_aim(directory),
+                           cl.recording_picks(directory), cl.recording_piece_starts(directory))
     sightings, elapsed, n = [], 0.0, 0
     for i, frame in enumerate(fr.read_recording(directory)):
         if i in gap:

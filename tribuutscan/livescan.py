@@ -75,6 +75,8 @@ class RawCopy:
                 if self.error is None:
                     if item[0] == "pick":
                         self.recorder.note_pick(*item[1:])
+                    elif item[0] == "piece_start":
+                        self.recorder.note_piece_start()
                     else:
                         self.recorder.write(*item[1:])
             except Exception as e:
@@ -93,6 +95,9 @@ class RawCopy:
     def pick(self, kind, uv):
         """A click while scanning, noted in order with the frames (frames.Recorder.note_pick)."""
         self.queue.put(("pick", kind, uv))
+
+    def piece_start(self):
+        self.queue.put(("piece_start",))
 
     def close(self):
         self.queue.put(None)
@@ -168,7 +173,7 @@ class ScanProgress:
         capture = ("Waiting for a fresh frame" if self.last_frame is None else
                    "Frames arriving" if recent(self.last_frame) else "No recent processed frames")
         recovery = ("Return to the last aligned view. Keep a known edge or the same markers in view, "
-                    "and move slowly. If it stays lost, Stop & Save what you have.")
+                    "and move slowly. Your model is held until recovery or an explicit separate piece.")
         if self.last_frame is None:
             tracking = "Waiting after resume" if self.resuming else "Waiting"
             geometry = "On hold"
@@ -180,7 +185,7 @@ class ScanProgress:
             tracking, geometry, hint = "Lost", "On hold", recovery
             if self.cue.get("away"):
                 tracking = "Lost (target not matched)"
-                hint = "Check that the object has clear depth, then return to the last aligned view. If it stays lost, Stop & Save."
+                hint = "Check that the object has clear depth, then return to the last aligned view. The existing model is held."
         else:
             tracking = "Locked"
             geometry = ("Point count increasing" if recent(self.last_growth) else
@@ -312,6 +317,9 @@ class LiveSource:
                 info.update(piece_options=options, active_piece=active, default_piece=1, scan_id=self.scan_id)
             if self.phase == "scanning":
                 info["progress"] = self.progress.status()
+                info["can_start_separate_piece"] = s.can_start_separate_piece()
+                if s.piece_pending:
+                    info["progress"]["hint"] = "Separate piece requested. Hold the target in view until valid depth arrives."
             return version, payload, info
 
     def process(self, action, box=None):
@@ -450,10 +458,15 @@ def run(commands, replies, port=view3d.PORT):
                               shape=(fr.H, fr.W), t=t_d, skew_ms=(t_c - t_d) * 1000)  # colour per point
             with source.lock:
                 s = source.scanner
+                before_piece = len(s.pieces)
                 s.feed(frame)
+                new_piece = len(s.pieces) != before_piece
                 points = s.points_kept  # (the cloud lock is held through each ~90 ms merge: no waiting for it)
-                cue = dict(s.cue, base=s.scene.plane is not None, turning=s.object_turns, piece=source.piece_id())
+                cue = dict(s.cue, base=s.scene.plane is not None, turning=s.object_turns, piece=source.piece_id(),
+                           can_start_separate_piece=s.can_start_separate_piece())
                 source.progress.observe(s.stats["frames"], s.stats["merged"], points, s.stats["tracking"], cue)
+            if new_piece and recorder is not None:
+                recorder.piece_start()
             timing["raw"] += t2 - t0
             timing["feed"] += time.perf_counter() - t2
             timing["frames"] += 1
@@ -468,6 +481,12 @@ def run(commands, replies, port=view3d.PORT):
                 source.scanner.pick(how, uv)
             if recorder is not None:
                 recorder.pick(how, uv)  # (a replay of the raw copy takes it at the same frame)
+        elif kind == "start_separate_piece":
+            with source.lock:
+                accepted = (source.phase == "scanning" and source.scanner is not None
+                            and source.scanner.request_separate_piece())
+            replies.put(("log", "Separate piece requested; waiting for usable depth." if accepted else
+                         "Separate piece not started: requires a live, lost scan with an existing model and no pending request."))
         elif kind == "pause" and source.phase == "scanning" and source.scanner is not None:
             with source.lock:
                 s = source.scanner

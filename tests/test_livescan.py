@@ -119,6 +119,8 @@ def test_stop_makes_the_mesh_after_optimise():
                     reply("paused")
                     commands.put(frame)  # defensive worker-side rejection of an out-of-phase frame
                     assert reply("frame_done") == [0, 0, 0]
+                    commands.put(("start_separate_piece",))
+                    assert reply("log")[0].startswith("Separate piece not started")
                     commands.put(("resume",))
                     reply("resumed")
             commands.put(("pause",))
@@ -136,10 +138,23 @@ def test_stop_makes_the_mesh_after_optimise():
             commands.put(("start", "small", cancelled, True, None, calib.CAMERA.mode, True))
             commands.put(frame)
             assert reply("frame_done")[1] == 1
+            _, color, ir, packed, pitch, stamps = frame
+            no_depth = ("frame", color, ir, bytes(len(packed)), pitch, stamps)
+            commands.put(no_depth)
+            assert reply("frame_done")[4]["can_start_separate_piece"]
+            commands.put(("start_separate_piece",))
+            assert reply("log")[0].startswith("Separate piece requested")
+            commands.put(no_depth)
+            cue = reply("frame_done")[4]
+            assert cue["piece"] == 1 and not cue["can_start_separate_piece"]
+            commands.put(frame)
+            cue = reply("frame_done")[4]
+            assert cue["piece"] == 2 and not cue["can_start_separate_piece"]
             commands.put(("cancel", cancelled.name))
             recovery, warning = reply("cancelled")
             assert not warning and not cancelled.exists()
             assert Path(recovery).is_dir() and not (Path(recovery) / "cloud.ply").exists()
+            assert livescan.cl.recording_piece_starts(next(Path(recovery).glob("*-rec"))) == {3}
             assert (original / "mesh.stl").exists()
             commands.put(("quit",))
             proc.join(30)
@@ -339,7 +354,7 @@ def test_browser_telemetry_changes_without_rebuilding_stalled_geometry():
     points = Mock(return_value=(np.array([[1., 2., 3.]]), np.array([[4, 5, 6]], np.uint8), np.array([3], np.int32)))
     source.scanner = NS(stats=dict(merged=3, frames=5, tracking=False, lost=2, relocked=0), cue={},
                         cloud=NS(point_mm=1., raw_points=7), pieces=[1, 2], crop=None, preset="medium",
-                        live_points=points)
+                        live_points=points, can_start_separate_piece=lambda: True, piece_pending=False)
     source.remember_piece(1, points.return_value)
     source.piece_payload(2)  # this tab explicitly asked to inspect the active piece
     source.progress.observe(5, 3, 1, False, {"piece": 2})
@@ -377,6 +392,8 @@ def test_cancel_active_and_paused_takes_preserves_raw_and_allows_restart():
             self.add_source = Mock()
             self.discard = Mock()
             self.save = Mock(side_effect=AssertionError("cancel must not save"))
+        def can_start_separate_piece(self):
+            return False
         def feed(self, _frame):
             self.stats["frames"] += 1
         def sync_merges(self):
@@ -462,7 +479,7 @@ def test_piece_split_keeps_primary_and_public_selection_is_read_only():
     points = Mock(return_value=model([1]))
     source.scanner = NS(stats=dict(merged=3, frames=5, tracking=True, lost=0, relocked=0), cue={},
                         cloud=NS(point_mm=1., raw_points=7), pieces=[{}], crop=None, preset="medium",
-                        live_points=points)
+                        live_points=points, can_start_separate_piece=lambda: True, piece_pending=False)
     primary_v, _, _ = source.current()
     points.assert_called_once()
     # Captured before cloud reset, even if no browser poll happens at that moment.

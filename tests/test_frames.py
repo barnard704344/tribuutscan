@@ -174,9 +174,11 @@ def test_a_scan_recording_keeps_its_clicks_for_replays():
             copy.put(bufs, {"color": float(t), "depth": float(t)})
         copy.pick("colour", (640.25, 412.0))
         copy.put(bufs, {"color": 2.0, "depth": 2.0})
+        copy.piece_start()
         copy.pick("depth", (100.0, 50.0))
         copy.close()
         assert cl.recording_picks(copy.recorder.dir) == {2: ("colour", (640.2, 412.0)), 3: ("depth", (100.0, 50.0))}
+        assert cl.recording_piece_starts(copy.recorder.dir) == {2}
         assert len(list(fr.read_recording(copy.recorder.dir))) == 3
 
 
