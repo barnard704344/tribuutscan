@@ -172,7 +172,6 @@ class ScanPanel(Panel):
         row.pack(fill="x", pady=(2, 0))
         button(row, text="Continue last", command=self.app.continue_scan).pack(
             side="left", expand=True, fill="x")
-        button(body, text="Open live 3D preview", command=self.app.open_view).pack(fill="x", pady=(2, 0))
         row = frame(body)
         row.pack(fill="x", pady=(2, 0))
         checkbox(row, text="Remove base", variable=self.app.remove_base).pack(side="left")

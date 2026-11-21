@@ -96,8 +96,11 @@ Debian/Ubuntu `python3 -m venv` needs `python3-venv`).
 Tested with Python 3.12 (numpy 1.26, OpenCV 4.10 and 4.11) and Python 3.14 (numpy 2.5, OpenCV 5.0, Tk 9),
 both with Open3D 0.20: the same results on every test and evaluation.
 
-The viewer shows depth large in the middle, colour and IR on the left, and folding panels on the
-right: Scanner, Capture, Scan, IMU and View.
+The viewer shows Colour and IR on the left, Depth and the **Live 3D model** in the middle, and
+folding controls on the right. The 3D pane builds alongside the camera previews, with no browser
+required. Blue indicates 3 or more observations; amber indicates 1–2 observations. The live
+model is a sampled preview, not a completeness or accuracy check. Drag it to rotate, scroll to
+zoom, double-click to reset the view, and select a piece if more than one has been started.
 
 - **Start scan (c)**: aim for 18-30 cm in close range or 30-50 cm in long range. The gauge below Depth
   shows Too close, Optimum or Too far with the approximate distance; it uses a fresh aimed-object
@@ -125,9 +128,8 @@ right: Scanner, Capture, Scan, IMU and View.
   still use those paths and get relative references when saved again in this version.
   *Continue last* goes on with the last saved scan if it used the same camera calibration and depth range.
 - **Pause & Inspect (p)** stops taking new frames into the scan. Once frames already accepted have
-  finished, inspect the current point cloud in the live 3D preview. A window is requested if it
-  hasn't already been opened; use **Open live 3D preview** to reopen it if you closed it. Drag to
-  rotate or zoom in; the scan isn't saved or ended. The camera previews can keep running. Return to the scanner window and use
+  finished, inspect the held point cloud in the same **Live 3D model** pane. Drag to rotate
+  or scroll to zoom; the scan isn't saved or ended. The camera previews can keep running. Return to the scanner window and use
   **Resume scan (p)** to continue the same scan (start from the last tracked view if you moved the
   scanner), or **Stop & Save (c)** to finish normally. Process and Crop are for the finished scan.
   Capture, Tracking and Geometry are shown separately: frames arriving doesn't mean tracking has
@@ -149,8 +151,7 @@ right: Scanner, Capture, Scan, IMU and View.
   - Turn once with the scanner about level, then once more looking down at about 45°, from 30-35 cm.
     The second pass sees the top, and once the platform top shows depth it is found as the base and
     left out of the result.
-- **Open live 3D preview**: requests a separate browser window that follows the scan as it builds,
-  while the native camera controls stay available. If you close it, use the same button to reopen it. *Process* has Optimise again, merge again at
+- **Finished scans**: use the standalone browser viewer (below) for full-resolution inspection and export. *Process* has Optimise again, merge again at
   0.5 / 1 / 2 mm point distance, Make mesh, and Remove base / Keep base; *Show* switches between
   the cloud, the mesh and the solid (*Colour: Grey* shows the shape); *Export* downloads `cloud.ply`,
   `mesh.ply` (metres, like the cloud: the scanned surface), `mesh.stl` (millimetres, for

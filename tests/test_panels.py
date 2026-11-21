@@ -22,8 +22,7 @@ def test_scan_controls_keep_state_and_primary_style():
     assert button.call_args_list[3].kwargs == {
         "text": "Start separate piece", "state": "disabled", "command": app.start_separate_piece,
     }
-    assert any(call.kwargs == {"text": "Open live 3D preview", "command": app.open_view}
-               for call in button.call_args_list)
+    assert not any("3D preview" in call.kwargs.get("text", "") for call in button.call_args_list)
     for state, expected in panels.ScanPanel.STATES.items():
         app.scan_state = state
         panel.refresh()

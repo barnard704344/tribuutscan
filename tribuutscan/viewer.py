@@ -12,8 +12,8 @@ Panels (panels.py, each folds):
   at 30 or 10 fps (and IMU samples, imu.csv) to captures/<timestamp>-rec/, stopping when the disk has
   under 5 GB free (frames.Recorder); `m` tracks, optimises and fuses the latest recording into
   <stamp>-scan/mesh.ply and mesh.stl (cloud.py --optimise --mesh, fusion.py, in the Open3D .venv).
-- Scan: `c` merges frames live into one compact cloud (cloud.py) in a worker process; Open live 3D preview
-  shows it growing in the browser. Stop saves captures/<timestamp>-scan/.
+- Scan: `c` merges frames live into one compact cloud (cloud.py) in a worker process; the Live 3D model pane
+  shows it growing next to the camera previews. Stop saves captures/<timestamp>-scan/.
 - IMU: the scanner's accelerometer and gyroscope (imu.py): tilt from gravity, turn rate.
 - View: markers (white dot in a black ring) are found in the colour image a few times a second and
   ringed in the colour view; saved frames list them in info.json.
@@ -37,9 +37,7 @@ import time
 import tkinter as tk
 import tkinter.font
 import tkinter.messagebox
-import webbrowser
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import numpy as np
 
@@ -723,27 +721,6 @@ def progress_line(status):
     return f"{text}  |  {status['unjoined']}" if status["unjoined"] else text
 
 
-def open_live_preview(live, log):
-    """Request a separate browser window for the worker's local live coverage view."""
-    url = live.get("url")
-    if not url:
-        return False
-    try:
-        parts = urlsplit(url)
-        if parts.scheme != "http" or parts.hostname not in ("localhost", "127.0.0.1", "::1") or parts.username is not None:
-            log("Live 3D preview requires a local worker URL.")
-            return False
-        query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "live"]
-        target = urlunsplit(parts._replace(query=urlencode(query + [("live", "1")])))
-        if webbrowser.open(target, new=1):
-            live["preview_open"] = True
-            return True
-    except (ValueError, webbrowser.Error):
-        pass
-    log("Could not open the browser window. Try Open live 3D preview again.")
-    return False
-
-
 class App:
     """The viewer's state and actions. The panels (panels.py) call these methods; `tick` runs in the Tk
     thread about 30 times a second. The range switch and the record loop run in their own threads and
@@ -769,7 +746,7 @@ class App:
         self.record_rates = RECORD_RATES  # for the Capture panel
         self.record_rate = tk.StringVar(value=next(iter(RECORD_RATES)))
         self.job = {"process": None, "dir": None}
-        self.live = {"proc": None, "commands": None, "replies": None, "url": None, "open": False, "preview_open": False,
+        self.live = {"proc": None, "commands": None, "replies": None, "url": None,
                      "feeder": None,  # (Feeder: frames out, replies in, off the Tk loop)
                      "done": collections.deque(maxlen=60), "last": None, "name": "", "gpu": "", "merging": "",
                      "progress": livescan.ScanProgress()}
@@ -881,6 +858,9 @@ class App:
             stats = tk.Label(parent, anchor="w", bg=panels.SURFACE, fg=panels.MUTED, font=("TkFixedFont", 9))
             stats.pack(fill="x", padx=8, pady=(2, 5))
             self.views[name] = (title, image, stats)
+        from .model_pane import ModelPane
+        self.model_pane = ModelPane(middle)
+        self.model_pane.pack(fill="x", padx=8, pady=(5, 0))
         self.note = tk.Label(root, anchor="w", bg=panels.SURFACE, fg=panels.INK, padx=8, pady=5,
                              font=("TkDefaultFont", 10))
         self.note.grid(row=1, column=0, columnspan=3, sticky="we", padx=8, pady=(0, 8))
@@ -997,6 +977,7 @@ class App:
             self.retry.pack_forget()
         self.check_mesh()
         self.check_scan()
+        self.model_pane.tick(self.scan_state, scan_view["lost"], self.live["commands"])
         scan_view.update(active=self.scan_state in ("scanning", "pausing", "resuming"),
                          return_guide=self.refresh_return_guide())
         recorder = self.rec["recorder"]
@@ -1088,7 +1069,7 @@ class App:
         elif self.scan_state == "pausing":
             now.append("pausing: finishing frames already accepted")
         elif self.scan_state == "paused":
-            now.append("scan paused: rotate the model in the 3D view, then Resume or Stop & Save")
+            now.append("scan paused: rotate the Live 3D model, then Resume or Stop & Save")
         elif self.scan_state == "resuming":
             now.append("resuming the same scan")
         elif self.scan_state == "cancelling":
@@ -1130,9 +1111,9 @@ class App:
             how = (f"tracks on {live['gpu']}" if live["gpu"] else "tracks when a scan starts") + ", " + (
                 f"merges in pid {merge[0]}" if merge else "merges beside tracking" if live["merging"] == "thread"
                 else "merges in a process of its own while scanning")
-            rows.append(("Scan worker", f"pid {worker.pid}, {how}" + (f"; 3D view {live['url']}" if live["url"] else "")))
+            rows.append(("Scan worker", f"pid {worker.pid}, {how}"))
         else:
-            rows.append(("Scan worker", "not started (it starts with the first scan or the 3D view)"))
+            rows.append(("Scan worker", "not started (it starts with the first scan)"))
         if self.job["process"] is not None:
             procs.append(("meshing", self.job["process"].pid))
         cpu = [(name, rates.cpu(pid)) for name, pid in procs]
@@ -1159,6 +1140,7 @@ class App:
         if garbled["frames"]:
             self.log(f"{garbled['frames']} depth previews had rows garbled by the scanner ({garbled['rows']} rows cleared)")
         self.log("viewer closed")
+        self.model_pane.close()
         if self.rec["recorder"]:
             self.stop_recording()
             self.rec["thread"].join(timeout=2)  # let the last set and the files close cleanly
@@ -1685,6 +1667,7 @@ class App:
         live["progress"] = livescan.ScanProgress()
         live["done"].clear()
         self.tracked_reference.clear()
+        self.model_pane.reset()
         scan_view.update(active=True, return_guide=False, keep_base=not self.remove_base.get(),
                          mask=None, t=0.0, lost=False, model=None)
         live["feeder"].new_scan()
@@ -1743,18 +1726,6 @@ class App:
             return
         self.toggle_scan(continue_from=saved[-1])
 
-    def open_view(self):
-        live = self.live
-        if live["url"]:
-            open_live_preview(live, self.log)  # explicit reopen also works if the user closed a window
-            return
-        if live.get("open"):
-            return
-        if live["proc"] is None:
-            self.start_worker()
-        live["open"] = True  # consume once when the worker reports ready
-        self.log("starting the live 3D preview ...")
-
     def lighter(self, scanning):
         """While scanning, the colour and IR previews and the marker ring update less often (the GIL is the
         viewer's limit: idle, its threads already used 76 / 42 / 21 / 13% of a core on 2026-11-05)."""
@@ -1773,12 +1744,10 @@ class App:
                 break
             if kind == "ready":
                 live["url"] = rest[0]
-                if live.get("open"):
-                    live["open"] = False
-                    if rest[0]:
-                        open_live_preview(live, self.log)
-                    else:
-                        self.log("Live 3D preview is unavailable. The camera previews still work here.")
+            elif kind == "coverage_frame":
+                model = getattr(self, "model_pane", None)
+                if model is not None:
+                    model.state.receive(*rest)
             elif kind == "log":
                 self.log(rest[0])
                 if rest[0].startswith("tracking on the GPU: "):
@@ -1799,6 +1768,8 @@ class App:
                 self.ticks.clear()
                 self.scan_state, self.count = "idle", None
                 self.lighter(False)
+                if hasattr(self, "model_pane"):
+                    self.model_pane.reset()
                 scan_view.update(mask=None, lost=False, model=None)
                 if warning and place:
                     self.log(warning)
@@ -1818,12 +1789,7 @@ class App:
                 self.scan_state = "paused"
                 self.lighter(False)
                 scan_view.update(mask=None, lost=False, model=None)
-                if live["url"]:
-                    if not live.get("preview_open"):
-                        open_live_preview(live, self.log)
-                    self.log("scan paused; inspect the live 3D preview, or use Open live 3D preview to reopen it")
-                else:
-                    self.log("scan paused; the 3D view is unavailable. Resume or Stop & Save here.")
+                self.log("scan paused; drag the Live 3D model to inspect it here")
             elif kind == "resumed" and self.scan_state == "resuming":
                 live["done"].clear()
                 self.ticks.clear()
@@ -1835,6 +1801,8 @@ class App:
                 merged, frames, points, tracking, cue, view, model, model_t = (list(rest) + [None] * 8)[:8]
                 if self.scan_state in ("scanning", "pausing") and cue is not None:
                     live["progress"].observe(frames, merged, points, tracking, cue)
+                    if hasattr(self, "model_pane"):
+                        self.model_pane.set_pieces(cue.get("piece", 1))
                     if not self.lost and not self.switching["busy"]:
                         cap = self.depth.cap
                         accepted = raw if cue.get("reference_ok", True) else None
@@ -1871,10 +1839,11 @@ class App:
                 channel.cancel_join_thread()  # an unread frame can be stuck in the dead child's pipe
                 channel.close()
             proc.join(timeout=0)
-            live.update(proc=None, commands=None, replies=None, feeder=None, url=None, open=False,
-                        preview_open=False, last=None, gpu="", merging="")
+            live.update(proc=None, commands=None, replies=None, feeder=None, url=None, last=None, gpu="", merging="")
             self.scan_state, self.count = "idle", None
             self.lighter(False)
+            if hasattr(self, "model_pane"):
+                self.model_pane.reset(worker_gone=True)
             scan_view.update(mask=None, lost=False, model=None)
             interrupted = f" while {state}; check {name} for partial files" if state != "idle" and name else ""
             self.log(f"scan worker exited (code {code}){interrupted}. Start a new scan to restart it.")

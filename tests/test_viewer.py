@@ -256,7 +256,7 @@ def test_status_box_says_what_runs_and_what_it_uses():
         assert lines[0].split(None, 1)[1] == ("scanning 20261102-170723-scan: 80 frames (2.0 a second), 12 merged, "
                                               "30,411 points, TRACKING LOST; recording 20261102-171000-rec: 40 sets, "
                                               "120 MB, 0 missed; meshing 20261102-160000-rec")
-        assert f"pid {worker.pid}, tracks on Intel(R) Arc(tm) A750 Graphics (DG2)" in text and "localhost:8765" in text
+        assert f"pid {worker.pid}, tracks on Intel(R) Arc(tm) A750 Graphics (DG2)" in text
         cpu = next(line for line in lines if line.startswith("CPU"))
         assert all(re.search(rf"{name} \d+%", cpu) for name in ("viewer", "worker", "meshing")), cpu
         memory = next(line for line in lines if line.startswith("Memory"))
@@ -569,7 +569,6 @@ def test_a_dead_worker_clears_saving_and_can_be_replaced():
         viewer.App.check_scan(app)
     assert app.scan_state == "idle" and app.count is None
     assert all(live[k] is None for k in ("proc", "commands", "replies", "feeder", "url"))
-    assert live["open"] is False
     assert "code 1" in logs[-1] and "partial files" in logs[-1]
     for channel in (commands, replies):
         channel.cancel_join_thread.assert_called_once()
@@ -622,7 +621,7 @@ def test_pause_synchronises_with_frame_enqueue_and_resume_requires_fresh_pair():
     assert np.allclose(commands.get_nowait()[5], (20.1, 0.0, 20.2))
 
 
-def test_paused_acknowledgement_opens_inspection_and_stop_saves_the_same_session():
+def test_paused_acknowledgement_keeps_native_inspection_and_stop_saves_same_session():
     import queue
     from types import SimpleNamespace as NS
     from unittest.mock import Mock, patch
@@ -634,12 +633,9 @@ def test_paused_acknowledgement_opens_inspection_and_stop_saves_the_same_session
     feeder.transition.assert_called_once_with("pausing", ("pause",))
     app.scan_state = "pausing"
     feeder.out.put(("paused", [], None))
-    with patch.object(viewer.webbrowser, "open") as open_page, patch.dict(viewer.scan_view):
+    with patch.dict(viewer.scan_view):
         viewer.App.check_scan(app)
-        app.scan_state = "pausing"  # repeated pause reuses the window that already shows this model
-        feeder.out.put(("paused", [], None))
-        viewer.App.check_scan(app)
-    open_page.assert_called_once_with("http://localhost:8765/?live=1", new=1)
+    assert "Live 3D model" in app.log.call_args.args[0]
     assert app.scan_state == "paused"
     viewer.App.toggle_scan(app)
     feeder.transition.assert_called_with("saving", ("stop", True))
@@ -651,7 +647,7 @@ def test_scan_panel_build_wires_separate_pause_and_stop_controls():
     from tribuutscan import panels
 
     app = NS(preset=None, toggle_scan=Mock(), toggle_pause_scan=Mock(), cancel_scan=Mock(),
-             start_separate_piece=Mock(), continue_scan=Mock(), open_view=Mock(),
+             start_separate_piece=Mock(), continue_scan=Mock(),
              remove_base=None, keep_raw=None, mesh_after=None, countdown=None, scan_state="paused")
     panel = NS(app=app, set=Mock(), STATES=panels.ScanPanel.STATES)
     with patch.object(panels, "frame", return_value=Mock()), patch.object(panels, "button", side_effect=lambda *a, **kw: Mock(**kw)), \
@@ -700,7 +696,8 @@ def test_close_after_cancel_does_not_save_the_take():
 
     commands = queue.Queue()
     app = NS(live={"proc": NS(join=Mock(), is_alive=lambda: False), "commands": commands, "feeder": Mock()},
-             scan_state="cancelling", rec={"recorder": None}, log=Mock(), imu_off=Mock(), streams={}, root=Mock())
+             scan_state="cancelling", rec={"recorder": None}, log=Mock(), imu_off=Mock(), streams={}, root=Mock(),
+             model_pane=Mock())
     viewer.App.close(app)
     assert commands.get_nowait() == ("quit",) and commands.empty()
     app.live["feeder"].transition.assert_not_called()
@@ -849,34 +846,16 @@ def test_coverage_status_does_not_report_old_or_lost_samples():
     assert "during a live scan" in viewer.coverage_status(stats, 10.1, "paused", False, False, False)
 
 
-def test_open_live_3d_preview_uses_local_url_and_browser_window():
-    from unittest.mock import Mock, patch
-
-    log = Mock()
-    live = {"url": "http://127.0.0.1:8765/?foo=bar&live=0#part"}
-    with patch.object(viewer.webbrowser, "open", return_value=True) as open_page:
-        assert viewer.open_live_preview(live, log)
-        open_page.assert_called_once_with("http://127.0.0.1:8765/?foo=bar&live=1#part", new=1)
-        assert live["preview_open"]
-        assert not viewer.open_live_preview({"url": "https://example.com/"}, log)
-        assert open_page.call_count == 1
-
-
-def test_explicit_preview_opens_once_on_worker_ready_and_can_reopen():
+def test_viewer_accepts_native_coverage_reply_even_while_paused():
     import queue
     from types import SimpleNamespace as NS
-    from unittest.mock import Mock, patch
+    from unittest.mock import Mock
 
-    app = viewer.App.__new__(viewer.App)
-    app.live = {"url": None, "proc": NS(exitcode=None), "feeder": NS(out=queue.Queue()), "open": False}
-    app.log = Mock()
-    with patch.object(viewer.webbrowser, "open", return_value=True) as open_page:
-        app.open_view()
-        app.open_view()
-        for _ in range(2):
-            app.live["feeder"].out.put(("ready", ["http://localhost:8765/"], None))
-            app.check_scan()
-        open_page.assert_called_once_with("http://localhost:8765/?live=1", new=1)
-        assert not app.live["open"]
-        app.open_view()  # user can reopen even if the prior browser window was closed
-        assert open_page.call_count == 2
+    out = queue.Queue()
+    state = Mock()
+    app = NS(live={"feeder": NS(out=out), "proc": NS(exitcode=None)}, scan_state="paused",
+             model_pane=NS(state=state))
+    out.put(("ready", ["http://localhost:8765/"], None))
+    out.put(("coverage_frame", [1, "v1", [[1, 2, 3]], [2]], None))
+    viewer.App.check_scan(app)
+    state.receive.assert_called_once_with(1, "v1", [[1, 2, 3]], [2])
