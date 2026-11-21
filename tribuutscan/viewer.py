@@ -173,6 +173,8 @@ class Stream(threading.Thread):
     def resume(self, cap):
         self.cap = cap
         self.recent.clear()
+        self.raw, self.stamp, self.latest, self.stats = None, 0.0, None, {}
+        self.fresh.clear()
         self.idle.clear()  # running again from now on, before the thread wakes (the reconnect check reads it)
         self.resumed.set()
 
@@ -528,6 +530,24 @@ def wait_for_scanner(timeout=15.0):
             time.sleep(0.5)
 
 
+def open_captures(nodes, log):
+    """Open all streams or release the ones that opened before a failure."""
+    opened = []
+    try:
+        for open_one in (lambda: fr.open_depth(nodes, log),
+                         lambda: v4l2.Capture(nodes["color"], "YUYV", fr.W, fr.H),
+                         lambda: v4l2.Capture(nodes["ir"], "GREY", fr.W, fr.H)):
+            opened.append(open_one())
+    except BaseException:
+        for cap in reversed(opened):
+            try:
+                cap.close()
+            except OSError as e:
+                log(f"could not close an incomplete capture: {e}")
+        raise
+    return opened
+
+
 def node_controls(target):
     """Controls of a V4L2 node path, or of the USB depth capture (it owns the depth function's controls)."""
     return target.controls() if isinstance(target, usbdepth.DepthCapture) else v4l2.controls(target)
@@ -557,17 +577,7 @@ class App:
         self.nodes = v4l2.discover()
         self.ir_auto = True  # Auto IR: the scanner's own auto exposure (ir_exposure_mode)
         ir_exposure_mode(self.nodes, self.ir_auto, self.log)
-        opened = []  # closed again if a later one fails, so a retry finds the scanner free
-        try:
-            for open_one in (lambda: fr.open_depth(self.nodes, self.log),
-                             lambda: v4l2.Capture(self.nodes["color"], "YUYV", fr.W, fr.H),
-                             lambda: v4l2.Capture(self.nodes["ir"], "GREY", fr.W, fr.H)):
-                opened.append(open_one())
-        except BaseException:
-            for c in opened:
-                c.close()
-            raise
-        cap, color, ir = opened
+        cap, color, ir = open_captures(self.nodes, self.log)
         self.targets = {**self.nodes, "depth": cap if isinstance(cap, usbdepth.DepthCapture) else self.nodes["depth"]}
         self.streams = {"Colour": Stream(color, render_color), "IR (flipped)": Stream(ir, render_ir),
                         "Depth": Stream(cap, render_depth)}
@@ -691,8 +701,9 @@ class App:
 
     def tick(self):
         if not self.switching["busy"] and time.monotonic() > self.retry_at \
-                and any(s.idle.is_set() for s in self.streams.values()):  # a stream lost its device
+                and (self.lost or any(s.idle.is_set() for s in self.streams.values())):  # no complete capture
             self.switching["busy"], self.lost = True, True
+            self.stop_lost_capture()
             self.log("lost the scanner (unplugged, or it reset its USB connection): reconnecting ...")
             threading.Thread(target=self.reconnect, daemon=True).start()
         self.check_switch()
@@ -709,7 +720,7 @@ class App:
                     set_control(self.targets[node], cid, int(scale.get()))
                 except (OSError, AttributeError) as e:
                     self.log(f"{label}: {getattr(e, 'strerror', None) or e}")
-        if self.ir_auto and not self.switching["busy"] and time.monotonic() - self.ir_read_at >= IR_FOLLOW_S:
+        if self.ir_auto and not self.lost and not self.switching["busy"] and time.monotonic() - self.ir_read_at >= IR_FOLLOW_S:
             self.ir_read_at = time.monotonic()
             self.follow_ir()
         st = self.imu.state() if self.imu is not None else None  # the depth preview's hold follows the IMU
@@ -966,7 +977,7 @@ class App:
 
     def choose_range(self, label):
         mode = RANGES[label]
-        busy = self.rec["recorder"] or self.scan_state != "idle" or self.switching["busy"]
+        busy = self.rec["recorder"] or self.scan_state != "idle" or self.lost or self.switching["busy"]
         if mode == calib.CAMERA.mode or busy:
             if busy:
                 self.log("stop recording and scanning before switching the range")
@@ -1022,8 +1033,11 @@ class App:
                          f"in {self.switching.get('step') or 'a step'}: left alone")
                 return
             step("opening the streams again")
-            self.reopen()
-            if self.imu_want:
+            reopened = self.reopen()
+            if not reopened:
+                self.lost = True
+                self.retry_at = time.monotonic() + RETRY_S
+            if reopened and self.imu_want:
                 step("switching the IMU on")
                 self.imu_on()
             step(None)
@@ -1041,17 +1055,19 @@ class App:
         self.lost = True
         threading.Thread(target=self.reconnect, daemon=True).start()
 
+    def stop_lost_capture(self):
+        """Stop using the old capture on the Tk thread before reconnecting."""
+        if self.rec["recorder"]:
+            self.stop_recording()
+            self.log("recording stopped: scanner disconnected")
+        if self.scan_state == "scanning":
+            self.toggle_scan()  # requests a partial save; the worker reports the result separately
+        elif self.scan_state == "counting":
+            self.cancel_countdown()
+
     def reconnect(self):
-        """Background thread, after a stream lost its device (the scanner reset itself): stop what
-        depended on the old connection, then open everything again; the depth range is read anew
-        (a reset puts the scanner back in close range)."""
+        """Background thread: release the old streams and reopen the re-enumerated device."""
         try:
-            if self.rec["recorder"]:
-                self.stop_recording()
-                self.log("recording stopped: the scanner reset itself")
-            if self.scan_state == "scanning":
-                self.toggle_scan()  # stops and saves; frames after a reset may be in another range
-                self.log("scan stopped and saved: the scanner reset itself")
             self.imu_off(quiet=True)
             for s in self.streams.values():
                 s.pause()
@@ -1074,12 +1090,13 @@ class App:
         """Open all three streams again (node paths can change after the scanner re-enumerates).
         Returns False (and says so) if they could not be opened."""
         try:
-            self.nodes.update(wait_for_scanner())
-            ir_exposure_mode(self.nodes, self.ir_auto, self.log)  # (a USB reset puts it back to auto)
-            self.color.resume(v4l2.Capture(self.nodes["color"], "YUYV", fr.W, fr.H))
-            self.ir.resume(v4l2.Capture(self.nodes["ir"], "GREY", fr.W, fr.H))
-            cap = fr.open_depth(self.nodes, self.log)
-            self.targets.update(self.nodes, depth=cap if isinstance(cap, usbdepth.DepthCapture) else self.nodes["depth"])
+            nodes = wait_for_scanner()
+            ir_exposure_mode(nodes, self.ir_auto, self.log)  # (a USB reset puts it back to auto)
+            cap, color, ir = open_captures(nodes, self.log)
+            self.nodes.update(nodes)
+            self.targets.update(nodes, depth=cap if isinstance(cap, usbdepth.DepthCapture) else nodes["depth"])
+            self.color.resume(color)
+            self.ir.resume(ir)
             self.depth.resume(cap)
             return True
         except Exception as e:  # noqa: BLE001 - shown to the user; the viewer stays up
@@ -1148,8 +1165,8 @@ class App:
 
     # --- capture -----------------------------------------------------------------------------------
     def save(self):
-        if self.switching["busy"]:
-            self.log("switching the range: save when the streams are back")
+        if self.lost or self.switching["busy"]:
+            self.log("save when the scanner streams are back")
             return
         color, ir, depth = self.color, self.ir, self.depth
         if not (color.raw and ir.raw and depth.raw):
@@ -1202,7 +1219,7 @@ class App:
         if self.rec["recorder"]:
             self.stop_recording()
             return
-        if not self.depth.raw or self.switching["busy"]:
+        if not self.depth.raw or self.lost or self.switching["busy"]:
             self.log("nothing to record yet")
             return
         fps = RECORD_RATES[self.record_rate.get()]
@@ -1294,7 +1311,7 @@ class App:
         if self.scan_state == "counting":
             self.cancel_countdown()
             return
-        if self.scan_state != "idle" or self.switching["busy"]:
+        if self.scan_state != "idle" or self.lost or self.switching["busy"]:
             return
         if live["proc"] is None:
             self.start_worker()  # (during the countdown it has the time to start)

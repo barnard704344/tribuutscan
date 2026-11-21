@@ -385,3 +385,42 @@ def test_a_click_while_scanning_tells_the_worker_where_the_object_is():
     app.scan_state = "optimising"
     app.aim_click("Depth", 10, 10)
     assert app.live["commands"].empty()
+
+
+def test_failed_reopen_closes_staged_sources_without_resuming_any_stream():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    old = {"depth": "d0", "color": "c0", "ir": "i0"}
+    new = {"depth": "d1", "color": "c1", "ir": "i1"}
+    logs = []
+    app = SimpleNamespace(nodes=old.copy(), targets=old.copy(), ir_auto=True, log=logs.append,
+                          color=Mock(), ir=Mock(), depth=Mock())
+    depth, color = Mock(), Mock()
+    with patch.object(viewer, "wait_for_scanner", return_value=new), patch.object(viewer, "ir_exposure_mode"), \
+            patch.object(viewer.fr, "open_depth", return_value=depth), \
+            patch.object(viewer.v4l2, "Capture", side_effect=(color, OSError("failed IR open"))):
+        assert not viewer.App.reopen(app)
+    depth.close.assert_called_once()
+    color.close.assert_called_once()
+    assert app.nodes == old and app.targets == old
+    for stream in (app.color, app.ir, app.depth):
+        stream.resume.assert_not_called()
+    assert "failed IR open" in logs[-1]
+
+
+def test_successful_reopen_replaces_all_three_streams():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    nodes = {"depth": "d1", "color": "c1", "ir": "i1"}
+    app = SimpleNamespace(nodes={}, targets={}, ir_auto=True, log=Mock(), color=Mock(), ir=Mock(), depth=Mock())
+    depth, color, ir = Mock(), Mock(), Mock()
+    with patch.object(viewer, "wait_for_scanner", return_value=nodes), patch.object(viewer, "ir_exposure_mode"), \
+            patch.object(viewer.fr, "open_depth", return_value=depth), \
+            patch.object(viewer.v4l2, "Capture", side_effect=(color, ir)):
+        assert viewer.App.reopen(app)
+    assert app.nodes == nodes and app.targets == nodes
+    for stream, cap in ((app.color, color), (app.ir, ir), (app.depth, depth)):
+        stream.resume.assert_called_once_with(cap)
+        cap.close.assert_not_called()
