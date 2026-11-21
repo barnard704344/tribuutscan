@@ -457,7 +457,8 @@ def test_piece_split_keeps_primary_and_public_selection_is_read_only():
         return np.column_stack((xs, np.zeros((n, 2)))), np.zeros((n, 3), np.uint8), np.ones(n, np.int32)
 
     source = livescan.LiveSource()
-    source.phase, source.scan_id = "scanning", 7
+    source.phase = "scanning"
+    scan_id = source.scan_id
     points = Mock(return_value=model([1]))
     source.scanner = NS(stats=dict(merged=3, frames=5, tracking=True, lost=0, relocked=0), cue={},
                         cloud=NS(point_mm=1., raw_points=7), pieces=[{}], crop=None, preset="medium",
@@ -471,11 +472,15 @@ def test_piece_split_keeps_primary_and_public_selection_is_read_only():
     primary_v2, primary, info = source.current()
     assert primary_v2 != primary_v and info["points"] == 2
     assert info["default_piece"] == 1 and info["active_piece"] == 2
+    assert info["scan_id"] == scan_id
+    other_worker = livescan.LiveSource()
+    assert other_worker.scan_id != scan_id
+    assert other_worker.store_piece(1, model([1, 2]))[0] != primary_v2
     assert [p["id"] for p in info["piece_options"]] == [1, 2]
     points.assert_called_once()  # an unselected second piece isn't sampled by polling
-    other = source.piece_payload(2, scan_id=7)
-    assert other != primary and source.piece_payload(1, scan_id=7) == primary
-    assert source.piece_payload(10) is None and source.piece_payload(2, scan_id=8) is None
+    other = source.piece_payload(2, scan_id=scan_id)
+    assert other != primary and source.piece_payload(1, scan_id=scan_id) == primary
+    assert source.piece_payload(10) is None and source.piece_payload(2, scan_id=livescan.LiveSource().scan_id) is None
     # No global selection mutation: plain default still served after explicitly reading an unaligned piece.
     version, payload, info = source.current()
     assert (version, payload) == (primary_v2, primary) and info["points"] == 2
@@ -533,10 +538,11 @@ def test_piece_endpoint_binds_read_to_requested_piece_and_scan():
     from tribuutscan import view3d
 
     source = NS(piece_payload=Mock(return_value=b"one-piece"), current=Mock())
-    req = NS(path="/cloud.bin?piece=2&scan_id=7", source=source, reply=Mock(), send_error=Mock(),
-             piece_number=view3d.Handler.piece_number)
+    token = livescan.LiveSource().scan_id
+    req = NS(path=f"/cloud.bin?piece=2&scan_id={token}", source=source, reply=Mock(), send_error=Mock(),
+             piece_number=view3d.Handler.piece_number, scan_token=view3d.Handler.scan_token)
     view3d.Handler.do_GET(req)
-    source.piece_payload.assert_called_once_with(2, 7)
+    source.piece_payload.assert_called_once_with(2, token)
     source.current.assert_not_called()
     req.reply.assert_called_once_with(b"one-piece", "application/octet-stream")
     for query in ("piece=0", "piece=-2", "piece=2&piece=3", "piece=", "piece=1&scan_id=blah"):

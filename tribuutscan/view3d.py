@@ -167,7 +167,7 @@ class Handler(BaseHTTPRequestHandler):
                 params = parse_qs(query, keep_blank_values=True, max_num_fields=8)
                 if "piece" in params:
                     piece = self.piece_number(params["piece"])
-                    scan_id = self.piece_number(params["scan_id"]) if "scan_id" in params else None
+                    scan_id = self.scan_token(params["scan_id"]) if "scan_id" in params else None
                     fetch = getattr(self.source, "piece_payload", None)
                     payload = fetch(piece, scan_id) if fetch is not None else None
                     if payload is not None:
@@ -204,6 +204,12 @@ class Handler(BaseHTTPRequestHandler):
                 or not values[0].isdigit() or int(values[0]) < 1):
             raise ValueError("invalid piece number")
         return int(values[0])
+
+    @staticmethod
+    def scan_token(values):
+        if len(values) != 1 or len(values[0]) != 32 or any(c not in "0123456789abcdef" for c in values[0]):
+            raise ValueError("invalid scan token")
+        return values[0]
 
     def do_POST(self):
         """/process/<action>[?box=6 numbers]: an optimise.process action on a finished scan."""

@@ -37,6 +37,8 @@ import sys
 import threading
 import time
 
+from uuid import uuid4
+
 import numpy as np
 
 from . import calib
@@ -198,7 +200,7 @@ class LiveSource:
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.scanner, self.name, self.scan_id = None, "no scan yet", 0
+        self.scanner, self.name, self.scan_id = None, "no scan yet", uuid4().hex
         self.phase, self.out_dir, self.busy = "idle", None, threading.Lock()
         self.progress = ScanProgress()
         self.clear_preview()
@@ -418,7 +420,7 @@ def run(commands, replies, port=view3d.PORT):
                 if capture:
                     source.scanner.stats["capture"] = capture  # (session.json takes every stats key)
                 out_dir, keep_raw = next_dir, next_keep_raw
-                source.scan_id += 1
+                source.scan_id = uuid4().hex
                 source.name = f"live: {out_dir.name}"
                 source.phase, source.out_dir = "scanning", out_dir
                 source.clear_preview(piece_origin=len(source.scanner.pieces))
