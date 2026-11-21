@@ -57,7 +57,7 @@ SLIDERS = [
     ("IR gain", "depth", v4l2.CID_GAIN),
     ("Colour brightness", "color", v4l2.CID_BRIGHTNESS),
 ]
-PANELS = [panels.ScannerPanel, panels.CapturePanel, panels.ScanPanel, panels.ImuPanel, panels.ViewPanel]
+PANELS = [panels.ScanPanel, panels.ScannerPanel, panels.CapturePanel, panels.ImuPanel, panels.ViewPanel]
 
 IR_LABELS = ("IR exposure", "IR gain")  # the sliders the scanner's own auto exposure drives while Auto IR is on
 IR_FOLLOW_S = 1.0  # ...and they show its values, read back this often
@@ -65,7 +65,7 @@ IR_FOLLOW_S = 1.0  # ...and they show its values, read back this often
 COUNTDOWN_S = 3  # Start counts down this long (Scan panel: Countdown), the aim still updating
 RECORD_RATES = {"30 fps": 30, "10 fps": 10}  # colour + compressed depth: about 75 / 25 MB/s (frames.Recorder)
 
-GOOD, EDGE, BAD = "#2e7d32", "#ef6c00", "#c62828"
+GOOD, EDGE, BAD = "#286333", "#92510a", "#a92222"
 
 REPO = Path(__file__).resolve().parent.parent
 VENV_PYTHON = REPO / ".venv" / "bin" / "python"  # has Open3D (uv sync --all-extras)
@@ -614,25 +614,32 @@ class App:
     def build_window(self):
         root = self.root
         root.title("triBUUTSCAN (Ferret Pro)")
-        main, right = tk.Frame(root), tk.Frame(root)  # main: the previews, and the Status / Messages boxes under them
+        root.configure(bg=panels.BG)
+        panels.configure_styles(root)
+        main = tk.Frame(root, bg=panels.BG)  # previews, with Status and Messages below
+        right = tk.Frame(root, bg=panels.BG)
         main.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=(8, 4), pady=8)
         right.grid(row=0, column=2, sticky="n", padx=(4, 8), pady=8)
         root.rowconfigure(0, weight=1)
-        left, middle = tk.Frame(main), tk.Frame(main)
+        root.columnconfigure(1, weight=1)
+        main.columnconfigure(1, weight=1)
+        left, middle = panels.frame(main), panels.frame(main)
         left.grid(row=0, column=0, sticky="n", padx=(0, 4))
         middle.grid(row=0, column=1, sticky="n", padx=(4, 0))
-        boxes = tk.Frame(main)  # (they take the room the right-hand panels leave under the previews)
+        boxes = tk.Frame(main, bg=panels.BG)  # (they take the room the right-hand panels leave under the previews)
         boxes.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(2, 0))
         main.rowconfigure(1, weight=1)
         self.info = {}
         mono = tkinter.font.nametofont("TkFixedFont").copy()  # (("TkFixedFont", 9) is not monospace: a family name)
         mono.configure(size=9)
         for col, (name, indent) in enumerate((("Status", " " * LABEL_W), ("Messages", "[00:00:00] "))):
-            box = tk.Frame(boxes)
+            box = panels.frame(boxes)
             box.grid(row=0, column=col, sticky="nsew", padx=(0, 8) if col == 0 else 0)
             boxes.columnconfigure(col, weight=1, uniform="info")
-            tk.Label(box, text=name, font=panels.BOLD).pack(anchor="w")
-            text = tk.Text(box, width=40, height=9, wrap="word", font=mono, relief="flat", padx=6, pady=4,
+            tk.Label(box, text=name, bg=panels.SURFACE, fg=panels.INK, font=panels.BOLD).pack(
+                anchor="w", padx=8, pady=(5, 0))
+            text = tk.Text(box, width=40, height=9, wrap="word", font=mono, relief="flat", padx=8, pady=4,
+                           bg=panels.SURFACE, fg=panels.INK, highlightthickness=0, bd=0,
                            state="disabled", takefocus=0)
             text.tag_configure("hang", lmargin2=mono.measure(indent))  # wrapped lines start under the text
             text.pack(fill="both", expand=True)
@@ -640,25 +647,28 @@ class App:
         boxes.rowconfigure(0, weight=1)
         self.views = {}
         for name, parent, width in (("Colour", left, SIDE_W), ("IR (flipped)", left, SIDE_W), ("Depth", middle, DEPTH_W)):
-            title = tk.Label(parent, text=depth_title(self.depth.cap) if name == "Depth" else name, font=panels.BOLD)
-            title.pack(anchor="w")
+            title = tk.Label(parent, text=depth_title(self.depth.cap) if name == "Depth" else name,
+                             bg=panels.SURFACE, fg=panels.INK, font=panels.BOLD)
+            title.pack(anchor="w", padx=8, pady=4)
             blank = tk.PhotoImage(width=width, height=width * fr.H // fr.W)
             self.images[name] = blank
-            image = tk.Label(parent, image=blank, bg="black", bd=0)
+            image = tk.Label(parent, image=blank, bg="#101928", bd=0, highlightthickness=0)
             image.pack()
             if name in ("Depth", "Colour"):  # the aim: a click picks the object there, a right-click lets go
                 image.bind("<Button-1>", lambda e, name=name: self.aim_click(name, e.x, e.y))
                 image.bind("<Button-3>", lambda _e: self.aim_clear())
             if name == "Depth":
-                bar = tk.Frame(parent)
-                bar.pack(fill="x", pady=(4, 0))
-                self.guide = tk.Label(bar, anchor="center", font=("TkDefaultFont", 12, "bold"))
+                bar = panels.frame(parent)
+                bar.pack(fill="x", padx=8, pady=(5, 0))
+                self.guide = tk.Label(bar, anchor="center", bg=panels.SURFACE, fg=panels.INK,
+                                      font=("TkDefaultFont", 11, "bold"))
                 self.guide.pack(side="left", fill="x", expand=True)
-                self.retry = tk.Button(bar, text="Retry now", font=panels.BOLD, command=self.retry_now)  # shown while lost
-            stats = tk.Label(parent, anchor="w", font=("TkFixedFont", 9))
-            stats.pack(fill="x", pady=(0, 6))
+                self.retry = panels.button(bar, text="Retry now", command=self.retry_now)  # shown while lost
+            stats = tk.Label(parent, anchor="w", bg=panels.SURFACE, fg=panels.MUTED, font=("TkFixedFont", 9))
+            stats.pack(fill="x", padx=8, pady=(2, 5))
             self.views[name] = (title, image, stats)
-        self.note = tk.Label(root, anchor="w", font=("TkDefaultFont", 11))
+        self.note = tk.Label(root, anchor="w", bg=panels.SURFACE, fg=panels.INK, padx=8, pady=5,
+                             font=("TkDefaultFont", 10))
         self.note.grid(row=1, column=0, columnspan=3, sticky="we", padx=8, pady=(0, 8))
         for cls in PANELS:
             panel = cls(right, self)
@@ -912,7 +922,9 @@ class App:
                 self.log(f"{label}: {getattr(e, 'strerror', None) or e}")
 
         scale = tk.Scale(parent, label=label, orient="horizontal", from_=info["min"], to=info["max"],
-                         resolution=info["step"] or 1, command=set_value)
+                         resolution=info["step"] or 1, command=set_value, bg=panels.SURFACE, fg=panels.INK,
+                         highlightbackground=panels.SURFACE, highlightcolor=panels.ACCENT, bd=0,
+                         troughcolor=panels.LINE, activebackground=panels.HOVER, sliderrelief="flat")
         scale.set(info["value"])
         self.synced[label] = held(scale)  # (Tk calls set_value later, when drawn: it must not count as a move)
         scale.pack(fill="x")
