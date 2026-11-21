@@ -62,6 +62,7 @@ GUESS_MAX_S = 0.3  # the motion guess extrapolates the last motion over at most 
                    # it ran on and on, 7 -> 177 mm at the object over 20 lost frames of the hand scan)
 REFIND_KEYFRAMES, REFIND_TRIES = 16, 3  # refind_anywhere: keyframes compared, best ones tried...
 REFIND_MIN_INLIERS = 50  # ...and the ORB inliers a pose found anywhere needs (the hand scan's had 141-245)...
+OBJECT_ANCHORS, OBJECT_ANCHOR_EVERY = 8, 8  # bounded in-memory confirmed RGB-D reference views
 REFIND_MIN_AWAY = 25  # ...this many of them on the still scene around the object, not on it: the synthetic plate
                       # (the same markers on both faces, a plain table) was re-found mirrored, 180 degrees off
 REFIND_MM_S, REFIND_DEG_S, REFIND_SLACK = 300.0, 60.0, (50.0, 15.0)  # ...and must be reachable in the time lost:
@@ -785,6 +786,9 @@ class Scanner:
         self.lost_since = None  # frame time the current loss began (frames with depth only)
         self.last_source = None  # the last tracked source's centre (camera mm): where a new piece looks first
         import collections
+        self.feature_anchors = collections.deque(maxlen=OBJECT_ANCHORS)
+        self.feature_rng = np.random.default_rng(0)
+        self.feature_anchor_at = self.feature_retry_t = None
         self.look = collections.deque(maxlen=LOOK_FRAMES)  # look_of the look piece's last tracked sources (likeness)
         self.look_piece = 0  # the piece whose tracked frames teach the look: the first, or the last one a click started
         self.like_source = None  # centre (camera mm) of the last lost frame's piece that looked like the object
@@ -862,6 +866,8 @@ class Scanner:
                 self.frame_table = table_normal(all_xyz, plane)
         xyz, pix = all_xyz[keep], all_pix[keep]
         if len(xyz) < 500 // seg ** 2:
+            if self.unconfirmed is not None:
+                self.take_back()  # loss of depth also breaks consecutive confirmation
             stats["lost"] += 1
             stats["tracking"] = False
             self.lost_run += 1
@@ -951,6 +957,9 @@ class Scanner:
                     step, ok = self.joint_step(levels, xyz, marker_pts, guess, index)
                 else:  # the CPU tracker looked away: do not trust frame-to-frame tracking
                     step, ok = np.eye(4), False
+                confirming_object = self.unconfirmed is not None and "object_anchor" in self.unconfirmed
+                if confirming_object and status != "tracked":
+                    ok = False  # a different global pose is not confirmation of the object match
                 like = "object" if ok else self.likeness(seen)  # (a piece of something else: no recovery tried)
                 undo = None if ok or self.unconfirmed is not None else self.undo_point(index)
                 if ok and status != "tracked":  # (re-found by shape after a gap: no motion to go on from)
@@ -959,15 +968,19 @@ class Scanner:
                     self.motion = step
                     self.motion_s = (t - self.last_t) if (t is not None and self.last_t is not None) else None
                     self.pose = self.pose @ self.motion
-                elif (like != "other" and (self.relock_due() or (self.gpu is None and like == "object"))
+                elif (not confirming_object and like != "other" and (self.relock_due() or (self.gpu is None and like == "object"))
                       and self.relock(*self.relock_source(levels, xyz), marker_pts)):
                     stats["relocked"] += 1
                     status = "relocked"
-                elif like != "other" and self.refind_anywhere(frame, pix, xyz, marker_pts, feat):
+                elif (like != "other" and self.unconfirmed is None
+                      and (anchor := self.refind_object_features(frame, pix, xyz, marker_pts)) is not None):
+                    status = "re-found by object features"
+                    undo["object_anchor"] = anchor
+                elif not confirming_object and like != "other" and self.refind_anywhere(frame, pix, xyz, marker_pts, feat):
                     stats["relocked"] += 1
                     status = "re-found"
                     feat = self.refind_feat
-                elif like != "other" and self.refind_shape(xyz, marker_pts, t):
+                elif not confirming_object and like != "other" and self.refind_shape(xyz, marker_pts, t):
                     stats["relocked"] += 1
                     status = "re-found by shape"
                 else:
@@ -987,6 +1000,8 @@ class Scanner:
             self.last_t, self.lost_run, self.lost_since = t, 0, None
             self.last_source, self.like_source, self.away_frames = xyz.mean(0), None, 0
             self.cue.pop("away", None)
+            if self.unconfirmed is None:
+                self.feature_retry_t = None
             if len(self.pieces) - 1 == self.look_piece:  # the object's look, from the first piece (or a clicked one)
                 self.look.append(seen)
             self.prev = True if levels is None else levels
@@ -1010,8 +1025,16 @@ class Scanner:
             self.hold = REFIND_HOLD + 1
         if self.hold:  # a pose found anywhere is merged only once the frames after it have tracked from it
             self.hold -= 1
+            if self.hold and self.unconfirmed and "object_anchor" in self.unconfirmed:
+                self.cue["object_recovery_pending"] = True
             if not self.hold:
+                confirmed = self.unconfirmed
                 self.unconfirmed = None
+                if confirmed and "object_anchor" in confirmed:
+                    ref, inliers = confirmed["object_anchor"]
+                    stats["relocked"] += 1
+                    stats["object_feature_refinds"] = stats.get("object_feature_refinds", 0) + 1
+                    self.log(f"Reacquired using object features ({inliers} matches to frame {ref}).")
             return False
         self.since_merge = getattr(self, "since_merge", 0) + 1
         if self.last_merged is not None:
@@ -1045,6 +1068,8 @@ class Scanner:
         elif self.prev is not None and self.prev is not True:
             self.keyframes.append((index, self.pose.copy(), np.asarray(self.prev[-1].points) * 1000,
                                    self.prev_feat, marker_pts))
+        if self.gpu is not None and self.features is not None:
+            self.remember_object_features(frame, index, all_pix[self.last_view[1]])
         self.poses.append((index, self.pose.copy()))
         stats["merged"] += 1
         job = (frame, index, self.pose.copy(), pix, seg)
@@ -1441,6 +1466,7 @@ class Scanner:
         if self.marker_map is u["marker_map"]:
             self.marker_map.pos, self.marker_map.count = u["markers"]
         self.prev_feat, self.feat_pose = u["feat"]
+        self.cue.pop("object_recovery_pending", None)
         self.track_log = [(i, "taken back", None) if i >= u["index"] and p is not None else (i, st, p)
                           for i, st, p in self.track_log]
         self.stats["taken_back"] = self.stats.get("taken_back", 0) + 1
@@ -1525,6 +1551,8 @@ class Scanner:
         self.prev_feat = self.feat_pose = self.refind_feat = None
         self.hold, self.cue, self.unconfirmed = 0, {}, None
         self.shape_model, self.shape_t = None, None
+        self.feature_anchors.clear()
+        self.feature_anchor_at = self.feature_retry_t = None
         self.model, self.model_merged, self.model_levels, self.model_at = None, -1, None, -1
         self.last_merged, self.merge_t, self.since_merge = None, None, 0
         self.room_ref, self.room_t = None, None
@@ -1706,6 +1734,66 @@ class Scanner:
         pts = [loc[0] for loc in markers.locate(self.depth_of(frame), found) if loc is not None]
         self.no_markers = 0 if pts else self.no_markers + 1
         return np.array(pts).reshape(-1, 3)
+
+    def object_features(self, frame, pix):
+        return self.features.extract(self.features.luma_of(frame), self.depth_of(frame), pix,
+                                     object_stride=self.seg_stride)
+
+    def remember_object_features(self, frame, index, pix):
+        """Keep only features from the confirmed object's mask, never base/background or a guessed pose."""
+        at = self.stats["merged"]
+        interval = OBJECT_ANCHOR_EVERY if self.feature_anchors else 2
+        if self.feature_anchor_at is not None and at - self.feature_anchor_at < interval:
+            return
+        self.feature_anchor_at = at
+        feat = self.object_features(frame, pix)
+        if len(feat[0]) >= REFIND_MIN_INLIERS:
+            self.feature_anchors.append((index, self.pose.copy(), feat))
+
+    def refind_object_features(self, frame, pix, xyz, marker_pts):
+        """Match live depth-backed object features to earlier confirmed views, then verify independently on the GPU."""
+        if self.gpu is None or self.features is None or not self.feature_anchors or not self.stats["merged"]:
+            return None
+        t = frame.get("t")
+        stamp = t if t is not None else 0.1 * self.stats["frames"]
+        if self.feature_retry_t is not None and 0 <= stamp - self.feature_retry_t < SHAPE_EVERY_S:
+            return None
+        self.feature_retry_t = stamp
+        current = self.object_features(frame, pix)
+        if len(current[0]) < REFIND_MIN_INLIERS:
+            return None
+        candidates = [(self.features.mutual_matches(current, feat), index, pose, feat)
+                      for index, pose, feat in self.feature_anchors]
+        candidates.sort(key=lambda c: (len(c[0]), c[1]), reverse=True)
+        from . import track
+        for pairs, index, pose, feat in candidates[:REFIND_TRIES]:
+            if len(pairs) < REFIND_MIN_INLIERS:
+                break
+            pts = []
+            found, count = self.features.relative_pose(current, feat, self.feature_rng, pts, pairs=pairs)
+            if found is None or count < REFIND_MIN_INLIERS or 2 * count <= len(pairs):
+                continue
+            # A row of mutually matching keypoints is not a rigid spatial reference.
+            source = pts[0]
+            spread = np.linalg.svd(source - source.mean(axis=0), compute_uv=False) / np.sqrt(count)
+            if spread[1] < self.features.INLIER_MM:
+                continue
+            seed = np.linalg.inv(self.pose) @ pose @ found
+            if not self.reachable(seed, xyz, t):
+                continue
+            step, info = self.gpu_step(xyz, marker_pts, seed)
+            if not (self.solve_ok(info, xyz) and info["fitness"] >= RELOCK_FITNESS
+                    and (info["degeneracy"] or 0.) >= track.DEGENERATE and self.floor_agrees(step)
+                    and self.reachable(step, xyz, t) and same_pose(seed, step, xyz)):
+                continue
+            if not info["markers_used"] and len(marker_pts) >= 3 and len(self.marker_map) >= 3:
+                known = self.marker_map.match_global(marker_pts)
+                if known is not None and not same_pose(seed, np.linalg.inv(self.pose) @ known, xyz,
+                                                      MARKER_CHECK_MM, MARKER_CHECK_DEG):
+                    continue
+            self.pose, self.motion, self.motion_s = self.pose @ step, np.eye(4), None
+            return index, count
+        return None
 
     def refind_anywhere(self, frame, pix, xyz, marker_pts, feat=None):
         """Lost, and not back near the last good pose (relock): find the frame anywhere in the scan by

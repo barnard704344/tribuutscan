@@ -1082,3 +1082,102 @@ def test_raw_sources_follow_the_collection_when_moved():
             assert [call.args[0] for call in reader.call_args_list] == expected
         reopened.close()
         sc.close()
+
+
+def test_object_feature_provenance_excludes_background_and_depth_holes():
+    from tribuutscan import features
+    depth = np.full((22, 22), 350, np.uint16)
+    support = np.array([[x, y] for y in (4, 8, 12) for x in (4, 8, 12)])
+    depth[6, 6] = 800  # closer/farther surface inside projected mask
+    depth[6, 10] = 0
+    centres = np.array([[8, 8], [10, 10], [6, 6], [10, 6], [14, 10], [-1, 8]])
+    valid = np.array([True, True, True, False, True, False])
+    assert features.object_feature_mask(depth, centres, support, 4, valid).tolist() == [
+        True, True, False, False, False, False]
+
+
+def test_object_features_relock_cross_angle_but_reject_conflicts_and_bad_depth_fit():
+    from unittest.mock import Mock
+    from tribuutscan import features, track
+    rng = np.random.default_rng(20)
+    current_pts = rng.uniform([-38, -38, 270], [38, 38, 335], (120, 3))
+    desc = rng.integers(0, 256, (120, 32), dtype=np.uint8)
+    a = np.radians(28)
+    recovered = np.eye(4)
+    recovered[:3, :3] = [[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]]
+    recovered[:3, 3] = [-0.12, 0.02, 0.05]
+    ref_pts = current_pts @ recovered[:3, :3].T + recovered[:3, 3] * 1000
+    s = cl.Scanner(log=lambda _: None, track_with="joint")
+    current = current_pts, desc
+    try:
+        s.gpu, s.features = Mock(), features
+        s.stats["merged"] = 1
+        s.last_t = 0.
+        s.object_features = Mock(return_value=current)
+        s.feature_anchors.append((2, np.eye(4), (ref_pts, desc)))
+        info = dict(fitness=.9, rmse_mm=.5, markers_used=0, marker_rmse_mm=None,
+                    degeneracy=track.DEGENERATE * 2)
+        s.gpu_step = Mock(side_effect=lambda xyz, markers, guess: (guess, info))
+        markers = np.empty((0, 3))
+        assert s.refind_object_features({"t": 2.}, None, current_pts, markers) == (2, len(desc))
+        assert np.allclose(s.pose, recovered, atol=1e-6)
+        seed = s.gpu_step.call_args.args[-1]
+        assert np.allclose(seed, recovered, atol=1e-6)
+        assert len(s.pieces) == 1 and s.stats["merged"] == 1
+
+        s.pose = np.eye(4)
+        info["fitness"] = .01
+        assert s.refind_object_features({"t": 3.}, None, current_pts, markers) is None
+        assert np.array_equal(s.pose, np.eye(4))
+        info["fitness"] = .9
+        conflict = ref_pts.copy()
+        conflict[:60] += [25., 0., 0.]
+        s.feature_anchors.clear()
+        s.feature_anchors.append((3, np.eye(4), (conflict, desc)))
+        s.gpu_step.reset_mock()
+        assert s.refind_object_features({"t": 4.}, None, current_pts, markers) is None
+        s.gpu_step.assert_not_called()
+        # Replicated descriptor cannot provide different anchors for one point.
+        assert not features.mutual_matches(current, (ref_pts, np.repeat(desc[:1], len(desc), axis=0)))
+    finally:
+        s.gpu = None
+        s.discard()
+
+
+def test_object_feature_recovery_reports_success_only_after_consecutive_confirmation():
+    from unittest.mock import Mock, patch
+    logs = []
+    s = cl.Scanner(log=logs.append, track_with="joint")
+    try:
+        xyz = lump(np.random.default_rng(21), 1300, 50, 300)
+        pix = np.c_[np.arange(len(xyz)) % 640, np.arange(len(xyz)) // 640]
+        s.gpu, s.track_with, s.features = Mock(), "gpu", None
+        s.stats.update(merged=3, tracking=False)
+        s.prev, s.last_merged, s.last_t, s.lost_run = True, np.eye(4), 1., 8
+        s.gpu_source, s.note = Mock(), Mock()
+        s.frame_markers = Mock(return_value=np.empty((0, 3)))
+        s.gpu_step = Mock(return_value=(np.eye(4), {"markers_used": 0}))
+        s.accepted, s.odd_markers = Mock(return_value=False), Mock(return_value=False)
+        s.relock, s.refind_anywhere, s.refind_shape = Mock(return_value=False), Mock(return_value=False), Mock(return_value=False)
+        s.likeness = Mock(return_value="object")
+        s.refind_object_features = Mock(return_value=(2, 73))
+        with patch.object(cl, "frame_points", return_value=(xyz, None, pix)), \
+                patch.object(cl, "frame_shape", return_value=(800, 1280)), \
+                patch.object(cl, "isolate_mask", return_value=(np.ones(len(xyz), bool), None)) as isolate:
+            assert not s.feed({"t": 3.})
+            assert s.unconfirmed is not None and s.hold == cl.REFIND_HOLD
+            assert not logs and s.stats["merged"] == 3
+            isolate.return_value = np.zeros(len(xyz), bool), None
+            assert not s.feed({"t": 3.05})
+            assert not logs and s.unconfirmed is None
+            isolate.return_value = np.ones(len(xyz), bool), None
+            assert not s.feed({"t": 3.1})
+            s.accepted.return_value = True
+            for i in range(cl.REFIND_HOLD):
+                assert not s.feed({"t": 3.12 + i * .02})
+            assert s.stats["object_feature_refinds"] == 1
+            assert logs == ["Reacquired using object features (73 matches to frame 2)."]
+            assert s.stats["merged"] == 3 and len(s.pieces) == 1
+    finally:
+        s.gpu = None
+        s.discard()
