@@ -214,7 +214,9 @@ function meshColours(kind) {  // camera colour, or plain grey for the shape
 }
 
 async function loadMesh(kind) {  // "mesh" or "solid"
-  const buf = await (await fetch(`${kind}.bin`)).arrayBuffer();
+  const response = await fetch(`${kind}.bin`);
+  if (!response.ok) throw new Error(`could not load ${kind}`);
+  const buf = await response.arrayBuffer();
   const [n, m] = new Uint32Array(buf, 0, 2);
   const xyz = new Float32Array(buf, 8, n * 3);
   const rgbAt = 8 + n * 12, idxAt = rgbAt + n * 3 + ((4 - (n * 3) % 4) % 4);
@@ -261,7 +263,9 @@ function frame() {
 }
 
 async function load() {
-  const buf = await (await fetch("cloud.bin")).arrayBuffer();
+  const response = await fetch("cloud.bin");
+  if (!response.ok) throw new Error("could not load cloud");
+  const buf = await response.arrayBuffer();
   const [n, hasSeen] = new Uint32Array(buf, 0, 2);
   const xyz = new Float32Array(buf, 8, n * 3);
   const rgbAt = 8 + n * 12, rgbLen = n * 3 + ((4 - (n * 3) % 4) % 4);
@@ -370,11 +374,13 @@ async function runAction(action, label, query = "") {  // a Process action; its 
 
 async function poll() {
   try {
-    const info = await (await fetch("info.json")).json();
+    const response = await fetch("info.json");
+    if (!response.ok) throw new Error("could not load scan info");
+    const info = await response.json();
     session = info.session || {};
     if (info.version !== version) {
-      version = info.version;
       await load();
+      version = info.version;
       const s = info.session || {};
       pointMm = s.point_distance_mm || pointMm;
       material.size = pointMm / 1000 * $("size").value;
@@ -405,8 +411,8 @@ async function poll() {
       option.disabled = !info[kind];
       option.textContent = info[kind] ? SHAPE_NAMES[kind] : `${SHAPE_NAMES[kind]} (make a mesh first)`;
       if (info[kind] && info[kind] !== shape.version) {
-        shape.version = info[kind];
         await loadMesh(kind);
+        shape.version = info[kind];
         reloaded = true;
         if (kind === "mesh") { $("show").value = "mesh"; showWhich(); }  // a new mesh: show it
       } else if (!info[kind] && shape.obj) {
@@ -417,7 +423,7 @@ async function poll() {
     }
     if (reloaded && unclipOnMesh) { unclipOnMesh = false; setClipping(null); }  // the cropped mesh is here
   } catch (e) {
-    $("status").textContent = "server stopped";
+    $("status").textContent = "could not refresh scan; retrying…";
   }
   setTimeout(poll, 500);
 }
