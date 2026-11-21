@@ -10,10 +10,10 @@ Messages in:  ("merge", frame, index, pose, pix, step, orb, depth mode) with orb
               mask pixels); the depth mode is calib.CAMERA's when it was sent (a replay switches to the
               recording's mode only as its frames are read: with the mode of the process's start, long-range
               frames were merged on the close-range law and tracking fell apart after its first loss)
-              | ("points", min_seen) | ("state",) | ("quit",)
+              | ("points", min_seen) | ("coverage", epoch) | ("state",) | ("quit",)
 Replies:      ("ready",) once started | ("merged", index, cubes seen MIN_SEEN times, raw points, markers or [],
               orb slot or None, ORB features or None) | ("points", (xyz, rgb, seen)) | ("state", cloud arrays,
-              merged_data)
+              merged_data) | ("coverage", epoch, (xyz, seen))
 """
 import multiprocessing
 import queue
@@ -28,7 +28,7 @@ READY_S = 60.0  # the process must report itself started within this
 def run(jobs, replies, point_mm, stride, clean, spec, mode):
     """The process: one VoxelCloud and the merged frames' points, built from the jobs in order."""
     from . import calib
-    from . import cloud as cl
+    from . import cloud as cl, coverage_preview
     calib.use(spec)
     calib.use_mode(mode)
     features = None
@@ -63,6 +63,8 @@ def run(jobs, replies, point_mm, stride, clean, spec, mode):
                          None if orb is None else orb[0], feat))
         elif kind == "points":
             replies.put(("points", cloud.points(msg[1])))
+        elif kind == "coverage":
+            replies.put(("coverage", msg[1], coverage_preview.cloud_candidates(cloud)))
         elif kind == "reset":  # a new scan piece: its own cloud (the merged frames' points stay for the join)
             cloud = cl.VoxelCloud(point_mm)
         elif kind == "state":
@@ -94,6 +96,7 @@ class MergeProcess:
             config["daemon"] = was_daemon
         self.on_merged, self.sent, self.done = on_merged, 0, 0
         self.points_cache, self.points_asked = None, False  # latest snapshot (for the 3D page), one asked for
+        self.coverage_cache, self.coverage_wanted, self.coverage_epoch, self.coverage_serial = None, False, 0, 0
         try:  # started for real (imports, the camera) before any merge is sent: else the thread merges
             self.replies.get(timeout=READY_S)
         except queue.Empty:
@@ -129,6 +132,10 @@ class MergeProcess:
                 self.points_cache, self.points_asked = reply[1], False
                 if wait_for == "points":
                     return reply[1]
+            elif reply[0] == "coverage" and reply[1] == self.coverage_epoch:
+                self.coverage_cache = reply[2]
+                self.coverage_serial += 1
+                self.coverage_wanted = False
             elif reply[0] == "state" and wait_for == "state":
                 return reply[1], reply[2]
 
@@ -136,6 +143,8 @@ class MergeProcess:
         """The cloud starts empty from the next job on (cloud.Scanner.start_piece); merged frames stay."""
         self.jobs.put(("reset",))
         self.points_cache = None
+        self.coverage_cache, self.coverage_wanted = None, False
+        self.coverage_epoch += 1
 
     def sync(self):
         """Wait until every job sent is merged."""
@@ -155,6 +164,14 @@ class MergeProcess:
         if not self.points_asked:
             self.jobs.put(("points", min_seen))
             self.points_asked = True
+
+    def ask_coverage(self):
+        """Ask for bounded preview points in the background; do not queue repeats."""
+        if self.coverage_wanted:
+            return False
+        self.jobs.put(("coverage", self.coverage_epoch))
+        self.coverage_wanted = True
+        return True
 
     def state(self):
         """(cloud arrays, merged_data) after every job sent; the process then ends."""

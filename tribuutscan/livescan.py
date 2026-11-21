@@ -45,7 +45,7 @@ from . import calib
 from . import cloud as cl
 from . import frames as fr
 from . import pointcloud as pc
-from . import view3d
+from . import coverage_preview, view3d
 from .depth import LazyFrame, decode_strided
 
 PAYLOAD_EVERY_S = 0.5  # rebuild the page's cloud at most this often
@@ -220,6 +220,8 @@ class LiveSource:
         self.piece_cache, self.piece_origin, self.piece_revision = {}, max(1, piece_origin), 0
         self.piece_sampled_at, self.piece_sampled_key = float("-inf"), None
         self.piece_requested = None
+        self.native_revision, self.native_key, self.native_sample = 0, None, None
+        self.native_requested_at_merge = None
 
     def reset(self):
         """Clear the cancelled model but retain the same local viewer service."""
@@ -284,6 +286,75 @@ class LiveSource:
                 self.piece_requested = piece
                 self.refresh_live_piece(requested=True)
             return self.live_payload(piece)[1]
+
+    def native_coverage(self, piece, last_version):
+        """One bounded, read-only sample for the Tk pane; never wait for merge/render work."""
+        empty = np.empty((0, 3), np.float32), np.empty(0, np.uint16)
+        with self.lock:
+            s = self.scanner
+            version = f"{self.scan_id}-coverage-{piece}-empty"
+            sample = empty
+            if s is not None and self.phase in self.LIVE_PHASES:
+                active = self.piece_id()
+                if piece != active:
+                    archived = self.piece_cache.get(piece)
+                    if archived is not None:
+                        version, payload, count = archived
+                        if version != last_version:
+                            sample = coverage_preview.from_browser_payload(payload, count)
+                else:
+                    self.refresh_native_coverage(s, active)
+                    if self.native_sample is not None and self.native_sample[0] == active:
+                        _, version, sample = self.native_sample
+            xyz, seen = (None, None) if version == last_version else sample
+            return version, xyz, seen
+
+    def refresh_native_coverage(self, s, piece):
+        merge = getattr(s, "merge_proc", None)
+        paused = self.phase == "paused"
+        if paused:
+            if self.paused_points is None:
+                return
+            xyz, _, seen = self.paused_points
+            key = piece, self.phase, id(xyz)
+            already_masked = True
+        elif merge is not None:
+            # This rail samples in the merge process, only one request at a time.
+            # A browser poll may concurrently have its own full point-cloud snapshot.
+            try:
+                merge.poll()
+                request = piece, merge.done
+                if self.native_requested_at_merge != request and merge.ask_coverage():
+                    self.native_requested_at_merge = request
+            except RuntimeError:
+                return  # do not make preview responsible for surfacing a failed merge process
+            if merge.coverage_cache is None:
+                return  # preserve the last good snapshot on Resume
+            xyz, seen = merge.coverage_cache
+            key = piece, self.phase, merge.coverage_serial
+            already_masked = False
+        else:
+            # Fallback cloud: copy only a bounded sample and keep lock time short.
+            key = piece, self.phase, s.stats["merged"]
+            if key == self.native_key:
+                return
+            with s.cloud_lock:
+                xyz, seen = coverage_preview.cloud_candidates(s.cloud)
+            already_masked = False
+        if key == self.native_key:
+            return
+        self.native_key = key
+        if not already_masked:
+            keep = s.output_mask(xyz, connect=False)
+            xyz, seen = xyz[keep], seen[keep]
+        sample = coverage_preview.sample_points(xyz, seen)
+        old = self.native_sample
+        if old is not None and old[0] == piece and (not len(xyz) or all(
+                np.array_equal(a, b) for a, b in zip(sample, old[2]))):
+            return  # no growth or an in-flight empty sample cannot blank this piece
+        self.native_revision += 1
+        version = f"{self.scan_id}-coverage-{piece}-{self.native_revision}"
+        self.native_sample = piece, version, sample
 
     def current(self):
         with self.lock:
@@ -481,6 +552,10 @@ def run(commands, replies, port=view3d.PORT):
                          s.view_codes, t_d))
         elif kind == "frame":
             replies.put(("frame_done", 0, 0, 0))
+        elif kind == "coverage_preview":
+            _, piece, previous_version = cmd
+            version, xyz, seen = source.native_coverage(piece, previous_version)
+            replies.put(("coverage_frame", piece, version, xyz, seen))
         elif kind == "pick" and source.phase == "scanning" and source.scanner is not None:  # a click on the preview: the object is there
             _, how, uv = cmd
             with source.lock:
