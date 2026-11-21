@@ -8,18 +8,24 @@ def test_scan_controls_keep_state_and_primary_style():
     app = Mock()
     panel = object.__new__(panels.ScanPanel)
     panel.app, panel.shown = app, {}
-    panel.scan = Mock()
+    scan, pause = Mock(), Mock()
     with patch.object(panels, "frame", return_value=Mock()), \
             patch.object(panels, "menu"), patch.object(panels, "checkbox"), \
-            patch.object(panels, "button", return_value=panel.scan) as button:
+            patch.object(panels, "button", side_effect=[scan, pause, Mock(), Mock()]) as button:
         panel.build(None)
     assert button.call_args_list[0].kwargs == {
         "style": "Primary.Capture.TButton", "command": app.toggle_scan,
     }
+    assert button.call_args_list[1].kwargs == {"command": app.toggle_pause_scan}
     for state, expected in panels.ScanPanel.STATES.items():
         app.scan_state = state
         panel.refresh()
-        assert panel.scan.configure.call_args.kwargs == dict(zip(("text", "state"), expected))
+        assert scan.configure.call_args.kwargs == dict(zip(("text", "state"), expected))
+        assert pause.configure.call_args.kwargs["state"] == (
+            "normal" if state in ("scanning", "paused") else "disabled")
+    app.scan_state = "paused"
+    panel.refresh()
+    assert pause.configure.call_args.kwargs["text"] == "Resume scan (p)"
 
 
 def test_foreground_colours_stay_legible():
