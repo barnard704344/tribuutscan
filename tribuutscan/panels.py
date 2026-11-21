@@ -49,11 +49,11 @@ def configure_styles(root):
 
 def button(parent, **kwargs):
     kwargs.setdefault("style", "Capture.TButton")
-    return tbutton(parent, **kwargs)
+    return ttk.Button(parent, **kwargs)
 
 
 def checkbox(parent, **kwargs):
-    return tcheckbox(parent, style="Capture.TCheckbutton", **kwargs)
+    return ttk.Checkbutton(parent, style="Capture.TCheckbutton", **kwargs)
 
 
 def frame(parent):

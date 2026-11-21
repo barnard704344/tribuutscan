@@ -36,3 +36,12 @@ def test_foreground_colours_stay_legible():
     ):
         dark, light = sorted(map(luminance, (foreground, background)))
         assert (light + 0.05) / (dark + 0.05) >= 4.5
+
+
+def test_control_factories_use_real_ttk_constructor_references():
+    parent = Mock()
+    with patch.object(panels.ttk, "Button") as button, patch.object(panels.ttk, "Checkbutton") as check:
+        assert panels.button(parent, text="Retry") is button.return_value
+        button.assert_called_once_with(parent, text="Retry", style="Capture.TButton")
+        assert panels.checkbox(parent, text="Keep raw") is check.return_value
+        check.assert_called_once_with(parent, text="Keep raw", style="Capture.TCheckbutton")
