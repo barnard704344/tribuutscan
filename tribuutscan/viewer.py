@@ -21,6 +21,7 @@ The distance bar reads the centre of the depth image. Events go to the message l
 and captures/viewer.log. One viewer at a time (captures/.viewer.lock). When the scanner resets its USB
 connection (it does so on its own now and then), the viewer reconnects by itself.
 """
+import argparse
 import collections
 import fcntl
 import itertools
@@ -1542,8 +1543,11 @@ def open_app(root, ask=tkinter.messagebox.askretrycancel):
                 return None
 
 
-def main():
-    gpu.force_cpu(sys.argv)  # (before the worker and meshing jobs start: they inherit it)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="triBUUTSCAN live USB scanner viewer")
+    parser.add_argument(gpu.FORCE_CPU, action="store_true", help="track and mesh on the CPU, even with a GPU")
+    args = parser.parse_args(argv)
+    gpu.force_cpu([gpu.FORCE_CPU] if args.force_cpu else [])  # worker and mesh jobs inherit it
     LOCK.parent.mkdir(exist_ok=True)
     lock = open(LOCK, "w")
     try:
