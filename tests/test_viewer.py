@@ -174,7 +174,7 @@ def test_status_shows_views_adding_even_when_point_count_stays_steady():
 
 def test_depth_preview_paints_the_live_model_of_the_tracked_frame():
     """While scanning with the GPU tracker the preview shows the frame the worker tracked (not the newest),
-    with the model painted over it: grey where seen often enough, yellow too few times, orange missing."""
+    with the model painted as solid blue, striped yellow, or dotted pink by coverage."""
     import time
     from tribuutscan.depth import encode_y10
 
@@ -198,9 +198,10 @@ def test_depth_preview_paints_the_live_model_of_the_tracked_frame():
     finally:
         viewer.scan_view.update(active=False, preview=viewer.LIVE_DEPTH, mask=None, t=0.0, model=None)
     assert (shown[:200, :150] == viewer.MODEL_DONE).all()
-    assert (shown[:200, 210:390] == viewer.MODEL_THIN).all()
-    want = (plain[:200, 410:590] * 0.3 + viewer.MODEL_MISSING * 0.7).astype(np.uint8)
-    assert (shown[:200, 410:590] == want).all()
+    assert (shown[0, 212] == viewer.MODEL_THIN).all()
+    assert (shown[0, 210] == viewer.MODEL_THIN // 2).all()  # stripe
+    assert (shown[2, 414] == viewer.MODEL_MISSING).all()
+    assert (shown[0, 410] == viewer.MODEL_MISSING // 2).all()  # dot
     assert (shown[:200, 610:] == plain[:200, 610:]).all()  # the tracked frame's depth, not the newest's
     assert viewer.MODEL_LEGEND in stats["text"]
 
@@ -820,3 +821,26 @@ def test_return_reference_uses_only_acknowledged_stable_frames_from_feeder():
         app.switching["busy"] = True
         done(4, True, two)
         assert ref.raw == one  # late reply from a previous capture cannot become the new reference
+
+
+def test_visible_coverage_excludes_background_base_and_unclassified_cells():
+    codes = np.array([[128, 255, 10, 1], [0, 128, 10, 1]], dtype=np.uint8)
+    object_mask = np.array([[2, 1, 2, 2], [2, 0, 2, 0]], dtype=np.uint8)
+    counts = viewer.visible_coverage(codes, object_mask)
+    assert counts == (1, 2, 1)
+    caption = viewer.coverage_caption(counts)
+    assert "25% observed enough" in caption and "50% another pass" in caption and "25% not captured" in caption
+    assert "Visible object" in caption and "Not a measure of accuracy" in caption
+    assert viewer.visible_coverage(codes, None) is None
+    assert viewer.visible_coverage(np.zeros_like(codes), object_mask) is None
+    assert "%" not in viewer.coverage_caption(None)
+
+
+def test_coverage_status_does_not_report_old_or_lost_samples():
+    stats = {"centre_at": 10.0, "coverage": "CPU tracking · Coverage colours unavailable"}
+    assert "CPU tracking" in viewer.coverage_status(stats, 10.1, "scanning", False, False, False)
+    assert "Waiting" in viewer.coverage_status(stats, 11.1, "scanning", False, False, False)
+    assert "Tracking lost" in viewer.coverage_status(stats, 10.1, "scanning", False, True, False)
+    assert "Last tracked view" in viewer.coverage_status(stats, 10.1, "scanning", False, True, True)
+    assert "not ready" in viewer.coverage_status(stats, 10.1, "scanning", True, False, False)
+    assert "during a live scan" in viewer.coverage_status(stats, 10.1, "paused", False, False, False)

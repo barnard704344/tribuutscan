@@ -468,7 +468,8 @@ def run(commands, replies, port=view3d.PORT):
                 points = s.points_kept  # (the cloud lock is held through each ~90 ms merge: no waiting for it)
                 cue = dict(s.cue, base=s.scene.plane is not None, turning=s.object_turns, piece=source.piece_id(),
                            can_start_separate_piece=s.can_start_separate_piece(),
-                           reference_ok=getattr(s, "unconfirmed", None) is None)
+                           reference_ok=getattr(s, "unconfirmed", None) is None,
+                           coverage_supported=getattr(s, "track_with", None) == "gpu")
                 source.progress.observe(s.stats["frames"], s.stats["merged"], points, s.stats["tracking"], cue)
             if new_piece and recorder is not None:
                 recorder.piece_start()

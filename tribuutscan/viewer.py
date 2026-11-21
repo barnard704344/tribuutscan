@@ -222,9 +222,11 @@ aim_view = {"on": True, "idle": False, "pick": None, "follow": None, "piece": No
 # box (mean of AIM_KEEP)}; all: (xyz, pix) of the frame, for a click on the colour preview
 BASE_TINT = np.array([0, 40, 110], np.uint8)
 LOST_RGB, LOST_PX = np.array([198, 40, 40], np.uint8), 8
-MODEL_DONE, MODEL_THIN = np.array([215, 222, 235]), np.array([240, 196, 60])  # seen often enough / too few times
-MODEL_MISSING = np.array([255, 96, 32])  # the object where the model has nothing yet
-MODEL_LEGEND = "   model: grey done, yellow needs more views, orange not scanned yet"
+MODEL_DONE, MODEL_THIN = np.array([100, 205, 255]), np.array([255, 205, 65])
+MODEL_MISSING = np.array([238, 112, 198])
+MODEL_LEGEND = "Coverage guide"
+COVERAGE_SWATCHES = (("Observed enough", "#64cdff"), ("Another pass", "#ffcd41"), ("Not captured", "#ee70c6"))
+
 
 
 def find_markers_loop(color):
@@ -268,7 +270,7 @@ def render_depth(cap, buf, width=DEPTH_W):
     returning = scanning and view_state["return_guide"]
     coverage = scanning and not returning and view_state["preview"] == COVERAGE
     fresh_coverage = coverage and now - view_state["t"] < 1.0
-    model = view_state["model"] if fresh_coverage else None
+    model = view_state["model"] if fresh_coverage and not view_state["lost"] else None
     h, w, stride = cap.height, cap.width, cap.bytesperline
     mode = calib.CAMERA.mode
     start, end = h * 3 // 8, h * 5 // 8
@@ -297,7 +299,7 @@ def render_depth(cap, buf, width=DEPTH_W):
     rgb = depth_to_rgb(shown)
     if held is not None:
         rgb[held] = (rgb[held] * HELD_SHADE).astype(np.uint8)
-    view = view_state["mask"] if fresh_coverage else None
+    view = view_state["mask"] if fresh_coverage and not view_state["lost"] else None
     if view is not None:
         lab = view[np.ix_(preview_index(view.shape[0], rgb.shape[0]), preview_index(view.shape[1], rgb.shape[1]))]
         rgb[lab == 0] //= 4
@@ -305,10 +307,14 @@ def render_depth(cap, buf, width=DEPTH_W):
         rgb[base] = rgb[base] // 2 + BASE_TINT if view_state["keep_base"] else rgb[base] // 4
     if model is not None:
         paint_model(rgb, model)
-        stats["text"] += MODEL_LEGEND
+        stats["text"] += "   " + MODEL_LEGEND
+        counts = visible_coverage(model, view)
+        stats["coverage"] = coverage_caption(counts)
     elif coverage:
-        stats["text"] += ("   coverage: object mask" if view is not None else
-                          "   coverage: waiting for a processed view")
+        stats["coverage"] = ("Tracking lost · Coverage paused" if view_state["lost"] else
+                             "CPU tracking · Coverage colours unavailable"
+                             if fresh_coverage and view_state.get("coverage_supported") is False else
+                             "Waiting for fresh coverage")
     elif scanning:
         stats["text"] += "   live depth · compare with last tracked view" if returning else "   live depth"
     piece = None if scanning else fresh_aim()
@@ -459,17 +465,51 @@ def hold_depth(depth, now):
     return np.where(valid, depth, np.where(held, hv["depth"], 0)), held
 
 
+def visible_coverage(codes, mask):
+    """Counts of classified cells in the visible object only; zero is unknown, not a hole."""
+    if mask is None:
+        return None
+    rows = preview_index(mask.shape[0], codes.shape[0])
+    cols = preview_index(mask.shape[1], codes.shape[1])
+    values = codes[(codes > 0) & (mask[np.ix_(rows, cols)] == 2)]
+    if not values.size:
+        return None
+    return (int(np.count_nonzero(values >= 128)), int(np.count_nonzero((values >= 2) & (values < 128))),
+            int(np.count_nonzero(values == 1)))
+
+
+def coverage_caption(counts):
+    if counts is None:
+        return "No classified visible-object cells · Not a measure of accuracy"
+    names = ("observed enough", "another pass", "not captured")
+    portions = [f"{100 * n / sum(counts):.0f}% {name}" for n, name in zip(counts, names)]
+    return "Visible object, classified only · " + " · ".join(portions) + " · Not a measure of accuracy"
+
+
+def coverage_status(stats, now, phase, blocked, tracking_lost, reference_shown):
+    if blocked:
+        return "Coverage unavailable · Scanner not ready"
+    if phase not in ("scanning", "pausing", "resuming"):
+        return "Coverage is shown during a live scan"
+    if tracking_lost:
+        return ("Tracking lost · Compare live Depth with Last tracked view" if reference_shown else
+                "Tracking lost · Coverage paused")
+    if now - stats.get("centre_at", -float("inf")) < 1.0:
+        return stats.get("coverage", "Waiting for fresh coverage")
+    return "Waiting for fresh coverage"
+
+
 def paint_model(rgb, codes):
-    """Paint the live model view (gpu.preview_codes) over a preview: model surface seen often enough grey,
-    too few times yellow, both shaded by how squarely they face the scanner; the frame's own object
-    where the model has nothing yet orange."""
+    """Render the three worker classifications with distinct hues and patterns."""
     lab = codes[np.ix_(preview_index(codes.shape[0], rgb.shape[0]), preview_index(codes.shape[1], rgb.shape[1]))]
-    lab = lab.astype(np.float32)
     done, thin, missing = lab >= 128, (lab >= 2) & (lab < 128), lab == 1
-    light = 0.35 + 0.65 * np.where(done, (lab - 128) / 127, (lab - 2) / 125)
+    light = 0.70 + 0.30 * np.where(done, (lab - 128.) / 127, (lab - 2.) / 125)
     rgb[done] = (MODEL_DONE * light[done][:, None]).astype(np.uint8)
     rgb[thin] = (MODEL_THIN * light[thin][:, None]).astype(np.uint8)
-    rgb[missing] = (rgb[missing] * 0.3 + MODEL_MISSING * 0.7).astype(np.uint8)
+    rgb[missing] = MODEL_MISSING
+    y, x = np.ogrid[:rgb.shape[0], :rgb.shape[1]]
+    pattern = (thin & ((x + y) % 14 < 2)) | (missing & (x % 10 < 2) & (y % 10 < 2))
+    rgb[pattern] //= 2
 
 
 def mark_centre(rgb, arm=10, gap=4, at=None):
@@ -806,6 +846,16 @@ class App:
                                       font=("TkDefaultFont", 11, "bold"), wraplength=460)
                 self.guide.pack(side="left", fill="x", expand=True)
                 self.retry = panels.button(bar, text="Retry now", command=self.retry_now)  # shown while lost
+                self.coverage_panel = panels.frame(parent)
+                legend = panels.frame(self.coverage_panel)
+                legend.pack(fill="x")
+                for (label, colour), pattern in zip(COVERAGE_SWATCHES, ("solid", "stripes", "dots")):
+                    tk.Label(legend, text=f"{label} ({pattern})", bg=colour, fg=panels.INK,
+                             font=panels.BOLD, padx=6, pady=2).pack(side="left", padx=(0, 3))
+                self.coverage_summary = tk.Label(self.coverage_panel, anchor="w", justify="left",
+                                                 wraplength=DEPTH_W - 16, bg=panels.SURFACE, fg=panels.INK)
+                self.coverage_summary.pack(fill="x", pady=(2, 0))
+                self.coverage_shown = None
             stats = tk.Label(parent, anchor="w", bg=panels.SURFACE, fg=panels.MUTED, font=("TkFixedFont", 9))
             stats.pack(fill="x", padx=8, pady=(2, 5))
             self.views[name] = (title, image, stats)
@@ -886,6 +936,17 @@ class App:
                 image.configure(image=self.images[name])
             stats.configure(text=f"{s.fps:4.1f} fps   {s.stats.get('text', '')}")
         now = time.monotonic()
+        if self.preview_mode.get() == COVERAGE:
+            caption = coverage_status(self.depth.stats, now, self.scan_state, self.lost or self.switching["busy"],
+                                      scan_view["lost"], self.return_photo is not None)
+            if self.coverage_shown != caption:
+                self.coverage_summary.configure(text=caption)
+                if self.coverage_shown is None:
+                    self.coverage_panel.pack(fill="x", padx=8, pady=(4, 0), before=self.distance)
+                self.coverage_shown = caption
+        elif self.coverage_shown is not None:
+            self.coverage_panel.pack_forget()
+            self.coverage_shown = None
         if self.lost or self.switching["busy"]:
             self.distance.show(None, "Distance unavailable · " + ("Scanner reconnecting" if self.lost else
                                                                 "Changing depth range"))
@@ -1754,6 +1815,7 @@ class App:
                     live["done"].append(time.monotonic())  # (the Status box: frames back a second)
                     live["last"] = (merged, frames, points, tracking)
                     scan_view.update(mask=view, t=time.monotonic(), lost=not tracking,
+                                     coverage_supported=cue.get("coverage_supported"),
                                      model=None if model is None or raw is None else (model, raw))
             elif kind == "saved":
                 path, points = rest

@@ -108,8 +108,11 @@ right: Scanner, Capture, Scan, IMU and View.
   by default) leaves the table under the object out of the result. **Live depth** shows the latest
   depth image without the model, held pixels or dimming while scanning. Select **Coverage** above
   the depth preview to inspect the tracked object mask and, with a GPU, the accumulated model:
-  **grey** where the mesh has surface, **yellow** where it needs more views, **orange** where the
-  scanner sees surface not in the model yet. The status line shows views added and when the last
+  **solid blue** where the model has enough observations, **striped yellow** where another pass
+  may help, and **dotted pink** where the scanner sees object surface not yet in the model. Any
+  percentages describe only classified object cells in the visible view, not unseen surfaces,
+  dimensional accuracy, or a guarantee of a finished mesh. CPU tracking has an object mask but
+  not the three coverage colours. The status line shows views added and when the last
   view was added, even if the shape and point count look unchanged. A red frame in either mode
   means tracking is lost. When an aligned frame is available, **Last tracked view** appears beside
   the latest Depth feed, with the captured outline and centre distance when available. Match the
