@@ -193,7 +193,9 @@ found_markers = {"on": True, "list": [], "stamp": 0.0, "hz": MARKER_HZ}  # list 
 # first frame's object is what the centre hits) and has a red frame while tracking is lost. With the GPU
 # tracker it also sends the live model view of that frame (gpu.preview_codes), painted over the object
 # (paint_model); the preview then shows the frame the worker tracked, so model and depth agree.
-scan_view = {"mask": None, "t": 0.0, "keep_base": False, "lost": False, "model": None}  # model: (codes, depth raw)
+LIVE_DEPTH, COVERAGE = "Live depth", "Coverage"
+scan_view = {"active": False, "preview": LIVE_DEPTH, "mask": None, "t": 0.0,
+             "keep_base": False, "lost": False, "model": None}  # model: (codes, depth raw)
 # Outside a scan the depth preview holds each pixel's last depth for a moment (display only: scans take the
 # real frames). On some surfaces the scanner drops whole regions from one frame to the next (2026-11-05, the
 # test block on the white platform, scanner still: 2-6% of the centre per frame, 10% over 30 frames, none of
@@ -261,8 +263,11 @@ def render_ir(cap, buf, width=SIDE_W):
 
 def render_depth(cap, buf, width=DEPTH_W):
     now = time.monotonic()
-    scanning = now - scan_view["t"] < 1.0
-    model = scan_view["model"] if scanning else None
+    view_state = scan_view.copy()
+    scanning = view_state["active"]
+    coverage = scanning and view_state["preview"] == COVERAGE
+    fresh_coverage = coverage and now - view_state["t"] < 1.0
+    model = view_state["model"] if fresh_coverage else None
     h, w, stride = cap.height, cap.width, cap.bytesperline
     mode = calib.CAMERA.mode
     start, end = h * 3 // 8, h * 5 // 8
@@ -291,15 +296,20 @@ def render_depth(cap, buf, width=DEPTH_W):
     rgb = depth_to_rgb(shown)
     if held is not None:
         rgb[held] = (rgb[held] * HELD_SHADE).astype(np.uint8)
-    view = scan_view["mask"]
-    if view is not None and scanning:
+    view = view_state["mask"] if fresh_coverage else None
+    if view is not None:
         lab = view[np.ix_(preview_index(view.shape[0], rgb.shape[0]), preview_index(view.shape[1], rgb.shape[1]))]
         rgb[lab == 0] //= 4
         base = lab == 1
-        rgb[base] = rgb[base] // 2 + BASE_TINT if scan_view["keep_base"] else rgb[base] // 4
+        rgb[base] = rgb[base] // 2 + BASE_TINT if view_state["keep_base"] else rgb[base] // 4
     if model is not None:
         paint_model(rgb, model)
         stats["text"] += MODEL_LEGEND
+    elif coverage:
+        stats["text"] += ("   coverage: object mask" if view is not None else
+                          "   coverage: waiting for a processed view")
+    elif scanning:
+        stats["text"] += "   live depth"
     piece = None if scanning else fresh_aim()
     if piece is not None:  # the aim: the piece a scan would start on, outlined; the rest dimmed
         mask = piece_mask(piece["pix"], rgb.shape[:2], (cap.height, cap.width), grow_px=2)
@@ -312,7 +322,7 @@ def render_depth(cap, buf, width=DEPTH_W):
             mark_centre(rgb, at=(at[0] * rgb.shape[1] / cap.width, at[1] * rgb.shape[0] / cap.height))
     if scanning:
         mark_centre(rgb)
-        if scan_view["lost"]:
+        if view_state["lost"]:
             b = LOST_PX
             rgb[:b], rgb[-b:], rgb[:, :b], rgb[:, -b:] = LOST_RGB, LOST_RGB, LOST_RGB, LOST_RGB
     return ppm(rgb), stats
@@ -616,8 +626,11 @@ ACTIVE_SCAN_STATES = ("scanning", "pausing", "paused", "resuming")
 
 def progress_line(status):
     """One-line operational status; detailed recovery guidance appears below the depth preview."""
+    age = status.get("last_view_age_s")
+    last_view = "" if age is None else (" · last just now" if age < 1 else f" · last {age:.0f} s ago")
     text = (f"Capture: {status['capture']} ({status['frames']})  |  Tracking: {status['tracking']}"
-            f"  |  Geometry: {status['geometry']} ({status['points']:,} pts)")
+            f"  |  Views added: {status['merged']:,}{last_view}"
+            f"  |  {status['points']:,} pts · {status['geometry']}")
     return f"{text}  |  {status['unjoined']}" if status["unjoined"] else text
 
 
@@ -662,6 +675,8 @@ class App:
         self.remove_base = tk.BooleanVar(value=True)
         self.mesh_after = tk.BooleanVar(value=True)  # the mesh made after Stop (and Optimise)
         self.imu_wanted, self.find_markers = tk.BooleanVar(value=self.imu_want), tk.BooleanVar(value=True)
+        self.preview_mode = tk.StringVar(value=LIVE_DEPTH)
+        scan_view["preview"] = LIVE_DEPTH
         self.hold_depth = tk.BooleanVar(value=hold_view["on"])  # the View panel's "Hold depth"
         self.ir_auto_var = tk.BooleanVar(value=self.ir_auto)  # the Scanner panel's "Auto IR"
         self.countdown, self.count = tk.BooleanVar(value=True), None  # the Scan panel's "Countdown"; its end
@@ -705,9 +720,18 @@ class App:
         boxes.rowconfigure(0, weight=1)
         self.views = {}
         for name, parent, width in (("Colour", left, SIDE_W), ("IR (flipped)", left, SIDE_W), ("Depth", middle, DEPTH_W)):
-            title = tk.Label(parent, text=depth_title(self.depth.cap) if name == "Depth" else name,
+            title_parent = parent
+            if name == "Depth":
+                title_parent = panels.frame(parent)
+                title_parent.pack(fill="x", padx=8, pady=3)
+                panels.menu(title_parent, self.preview_mode, (LIVE_DEPTH, COVERAGE),
+                            self.choose_depth_preview).pack(side="right")
+            title = tk.Label(title_parent, text=depth_title(self.depth.cap) if name == "Depth" else name,
                              bg=panels.SURFACE, fg=panels.INK, font=panels.BOLD)
-            title.pack(anchor="w", padx=8, pady=4)
+            if name == "Depth":
+                title.pack(side="left")
+            else:
+                title.pack(anchor="w", padx=8, pady=4)
             blank = tk.PhotoImage(width=width, height=width * fr.H // fr.W)
             self.images[name] = blank
             image = tk.Label(parent, image=blank, bg="#101928", bd=0, highlightthickness=0)
@@ -832,6 +856,7 @@ class App:
             self.retry.pack_forget()
         self.check_mesh()
         self.check_scan()
+        scan_view["active"] = self.scan_state in ("scanning", "pausing", "resuming")
         recorder = self.rec["recorder"]
         if recorder:
             self.message = (f"REC {recorder.count} sets, {recorder.megabytes:.0f} MB"
@@ -1256,6 +1281,10 @@ class App:
             self.imu_note = ""
             self.log("IMU off")
 
+    def choose_depth_preview(self, mode):
+        if mode in (LIVE_DEPTH, COVERAGE):
+            scan_view["preview"] = mode
+
     def toggle_hold(self):
         hold_view["on"] = bool(self.hold_depth.get())
 
@@ -1490,7 +1519,7 @@ class App:
         live["name"], live["last"], live["merging"] = out.name, None, ""
         live["progress"] = livescan.ScanProgress()
         live["done"].clear()
-        scan_view.update(keep_base=not self.remove_base.get(), lost=False, model=None)
+        scan_view.update(active=True, keep_base=not self.remove_base.get(), mask=None, t=0.0, lost=False, model=None)
         live["feeder"].new_scan()
         self.ticks.clear()
         live["commands"].put(("start", self.preset.get(), out, self.keep_raw.get(), continue_from, calib.CAMERA.mode,

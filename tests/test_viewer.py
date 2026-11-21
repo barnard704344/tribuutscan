@@ -45,10 +45,10 @@ def test_depth_preview_dims_all_but_the_object():
     mask[:, :80] = 2  # object on the left, base top right, the rest bottom right
     mask[:50, 80:] = 1
     try:
-        viewer.scan_view.update(mask=mask, t=time.monotonic(), keep_base=True)
+        viewer.scan_view.update(active=True, preview=viewer.COVERAGE, mask=mask, t=time.monotonic(), keep_base=True)
         shaded = as_array(viewer.render_depth(Cap, buf)[0])
     finally:
-        viewer.scan_view.update(mask=None, t=0.0)
+        viewer.scan_view.update(active=False, preview=viewer.LIVE_DEPTH, mask=None, t=0.0)
     assert (shaded[:, :380] == plain[:, :380]).all()  # object unchanged (the centre mark aside)
     assert (shaded[300:, 450:] == plain[300:, 450:] // 4).all()  # other dimmed
     assert (shaded[:200, 450:] == plain[:200, 450:] // 2 + viewer.BASE_TINT).all()  # kept base tinted
@@ -95,7 +95,7 @@ def test_distance_does_not_use_held_or_tracked_preview_depth():
         assert viewer.render_depth(Cap, live)[1]["centre_valid"] == 1
         stats = viewer.render_depth(Cap, empty)[1]
         assert stats["centre_cm"] is None and "100% held" in stats["text"]
-        sv.update(t=time.monotonic(), model=(np.ones((8, 8), dtype=np.uint8), live))
+        sv.update(active=True, preview=viewer.COVERAGE, t=time.monotonic(), model=(np.ones((8, 8), dtype=np.uint8), live))
         stats = viewer.render_depth(Cap, empty)[1]
         assert stats["centre_cm"] is None and stats["centre_valid"] == 0
     finally:
@@ -117,9 +117,9 @@ def test_depth_preview_has_a_red_frame_while_tracking_is_lost():
     viewer.scan_view.update(mask=None, t=0.0)
     plain = as_array(viewer.render_depth(Cap, buf)[0])
     try:
-        viewer.scan_view.update(t=time.monotonic(), lost=True)
+        viewer.scan_view.update(active=True, t=time.monotonic(), lost=True)
         lost = as_array(viewer.render_depth(Cap, buf)[0])
-        viewer.scan_view.update(t=0.0)  # no frame for a second: not scanning any more
+        viewer.scan_view.update(active=False, t=0.0)  # scan ended
         idle = as_array(viewer.render_depth(Cap, buf)[0])
     finally:
         viewer.scan_view.update(mask=None, lost=False, t=0.0)
@@ -127,6 +127,49 @@ def test_depth_preview_has_a_red_frame_while_tracking_is_lost():
         assert (edge == viewer.LOST_RGB).all()
     assert (lost[100:400, 100:300] == plain[100:400, 100:300]).all()  # inside unchanged
     assert (idle == plain).all()
+
+
+def test_live_depth_is_undimmed_and_current_even_when_worker_overlay_is_delayed():
+    import time
+    from unittest.mock import patch
+    from tribuutscan.depth import encode_y10
+
+    class Cap:
+        width, height, bytesperline = 1280, 800, 1600
+
+    width = 128
+    newest_depth = np.zeros((Cap.height, Cap.width), np.uint16)
+    newest_depth[:, :Cap.width // 2] = 240  # opposite half is invalid
+    newest = encode_y10(newest_depth)
+    tracked = encode_y10(np.full_like(newest_depth, 400))
+    codes = np.full((8, 8), 255, np.uint8)
+    mask = np.zeros_like(codes)
+    with patch.dict(viewer.scan_view), patch.dict(viewer.hold_view), patch.dict(viewer.aim_view, idle=False):
+        viewer.scan_view.update(active=False)
+        viewer.hold_view.update(on=True, s=10, depth=None)
+        viewer.render_depth(Cap, tracked, width)  # seed held depth, which must not appear during the scan
+        app = viewer.App.__new__(viewer.App)
+        app.choose_depth_preview(viewer.LIVE_DEPTH)
+        for stamp in (0, time.monotonic()):
+            viewer.scan_view.update(active=True, t=stamp, mask=mask, model=(codes, tracked))
+            image, stats = viewer.render_depth(Cap, newest, width)
+            expected = viewer.depth_to_rgb(viewer.fit(newest_depth, width))
+            viewer.mark_centre(expected)
+            assert image == viewer.ppm(expected)
+            assert "live depth" in stats["text"] and viewer.MODEL_LEGEND not in stats["text"]
+        app.choose_depth_preview(viewer.COVERAGE)
+        image, stats = viewer.render_depth(Cap, newest, width)
+        assert image != viewer.ppm(expected) and viewer.MODEL_LEGEND in stats["text"]
+
+
+def test_status_shows_views_adding_even_when_point_count_stays_steady():
+    progress = viewer.livescan.ScanProgress()
+    progress.observe(40, 12, 50000, True, {}, now=10)
+    progress.observe(44, 14, 50000, True, {}, now=13)
+    assert "Views added: 14 · last just now" in viewer.progress_line(progress.status(now=13))
+    assert "50,000 pts" in viewer.progress_line(progress.status(now=13))
+    result = viewer.progress_line(progress.status(now=17))
+    assert "Views added: 14 · last 4 s ago" in result
 
 
 def test_depth_preview_paints_the_live_model_of_the_tracked_frame():
@@ -148,11 +191,12 @@ def test_depth_preview_paints_the_live_model_of_the_tracked_frame():
     codes[:, 320:480] = 1  # the object, not in the model yet
     mask = np.full((100, 160), 2, np.uint8)  # all object: nothing dimmed
     try:
-        viewer.scan_view.update(mask=mask, t=time.monotonic(), lost=False, model=(codes, tracked))
+        viewer.scan_view.update(active=True, preview=viewer.COVERAGE, mask=mask, t=time.monotonic(),
+                                lost=False, model=(codes, tracked))
         ppm, stats = viewer.render_depth(Cap, newest)
         shown = as_array(ppm)
     finally:
-        viewer.scan_view.update(mask=None, t=0.0, model=None)
+        viewer.scan_view.update(active=False, preview=viewer.LIVE_DEPTH, mask=None, t=0.0, model=None)
     assert (shown[:200, :150] == viewer.MODEL_DONE).all()
     assert (shown[:200, 210:390] == viewer.MODEL_THIN).all()
     want = (plain[:200, 410:590] * 0.3 + viewer.MODEL_MISSING * 0.7).astype(np.uint8)

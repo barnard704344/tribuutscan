@@ -194,7 +194,8 @@ class ScanProgress:
                     "Move slowly towards a new angle and keep part of the scanned surface in view.")
         unjoined = f"Piece {self.piece} is not joined to earlier pieces yet." if self.piece > 1 else ""
         return dict(capture=capture, tracking=tracking, geometry=geometry, hint=hint,
-                    frames=self.frames, merged=self.merged, points=self.points, unjoined=unjoined)
+                    frames=self.frames, merged=self.merged, points=self.points, unjoined=unjoined,
+                    last_view_age_s=None if self.last_merge is None else max(0.0, now - self.last_merge))
 
 
 class LiveSource:

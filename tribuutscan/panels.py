@@ -246,5 +246,5 @@ class ViewPanel(Panel):
     def build(self, body):
         checkbox(body, text="Find markers (ringed in colour)", variable=self.app.find_markers,
                  command=self.app.toggle_markers).pack(anchor="w")
-        checkbox(body, text="Hold depth (calmer preview, held parts dimmer)", variable=self.app.hold_depth,
+        checkbox(body, text="Hold depth while not scanning (dimmer held pixels)", variable=self.app.hold_depth,
                  command=self.app.toggle_hold).pack(anchor="w")

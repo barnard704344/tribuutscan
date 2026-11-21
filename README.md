@@ -105,13 +105,13 @@ right: Scanner, Capture, Scan, IMU and View.
   object rather than treating the missing reading as too near or too far. Move steadily and keep
   markers in view if there are any. **Stop & Save (c)** saves `captures/<stamp>-scan/cloud.ply`, runs Optimise and makes the mesh
   (`mesh.ply`, `mesh.stl`, `solid.ply`; *Mesh after Stop*, on by default, about 15-20 s with a GPU). *Remove base* (on
-  by default) leaves the table under the object out of the result. While scanning, the depth view
-  dims everything that is not the object and, with a GPU, paints the scan so far over it, as seen
-  from where the scanner is: **grey** where the mesh will have the surface, **yellow** where it needs
-  more views, **orange** where the scanner sees the object but the scan has nothing yet. A red frame
-  means tracking is lost. The depth view then shows the scan so far where it was last seen. Move (or
-  turn the object) back until the live view lines up with that grey shape, and the scan goes on. It
-  can also try to recover on a part already scanned. While tracking is lost, the model stays put.
+  by default) leaves the table under the object out of the result. **Live depth** shows the latest
+  depth image without the model, held pixels or dimming while scanning. Select **Coverage** above
+  the depth preview to inspect the tracked object mask and, with a GPU, the accumulated model:
+  **grey** where the mesh has surface, **yellow** where it needs more views, **orange** where the
+  scanner sees surface not in the model yet. The status line shows views added and when the last
+  view was added, even if the shape and point count look unchanged. A red frame in either mode
+  means tracking is lost. Return to the last aligned view. While tracking is lost, the model stays put.
   Click the target in the depth or colour preview to guide recovery, not to start another piece.
   Use **Start separate piece** only if you deliberately want to capture a disconnected area instead
   of recovering. It waits for usable depth. Pieces are not guaranteed to align after Stop.
