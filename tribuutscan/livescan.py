@@ -12,7 +12,7 @@ Commands:  ("start", preset, out_dir, keep_raw, continue_from or None, depth mod
            | ("frame", yuyv, grey or None, depth_buf, bytesperline, (t_colour, t_ir, t_depth))
            | ("pick", "depth" | "colour", (u, v))   (a click on that preview, full-size pixel: the object is
            there, cloud.Scanner.pick; noted in the raw copy's picks.csv)
-           | ("pause",) | ("resume",) | ("stop"[, mesh]) | ("quit",)   (times: camera capture times, seconds; mesh: make the mesh after
+           | ("pause",) | ("resume",) | ("cancel", take_name) | ("stop"[, mesh]) | ("quit",)   (times: camera capture times, seconds; mesh: make the mesh after
            Optimise, fusion on the GPU, so Stop ends with a finished model)
 Replies:   ("ready", url) | ("log", text) | ("optimised", message, a mesh follows) | ("meshed", message)
            | ("frame_done", merged, frames, points, tracking, cue, view, model, t_depth) | ("saved", path, points)
@@ -201,6 +201,14 @@ class LiveSource:
         self.progress = ScanProgress()
         self.cached, self.built_key, self.built_at = ("0", view3d.pack_arrays(np.empty((0, 3))), {}), None, 0.0
 
+    def reset(self):
+        """Clear the cancelled model but retain the same local viewer service."""
+        self.scanner, self.out_dir, self.paused_points = None, None, None
+        self.phase, self.name = "idle", "no scan yet"
+        self.progress = ScanProgress()
+        self.cached = ("empty", view3d.pack_arrays(np.empty((0, 3))), {})
+        self.built_key, self.built_at = None, 0.0
+
     def current(self):
         with self.lock:
             s = self.scanner
@@ -301,6 +309,15 @@ def run(commands, replies, port=view3d.PORT):
         if kind == "start":
             timing, decoded_at_start = {k: 0 for k in timing}, reader.decode_s
             _, preset, next_dir, next_keep_raw, continue_from, depth_mode, remove_base, *options = cmd
+            next_dir = Path(next_dir)
+            if continue_from:
+                previous, current = Path(continue_from).resolve(), next_dir.resolve()
+                if previous == current or previous in current.parents or current in previous.parents:
+                    replies.put(("start_failed", "cannot continue: the new take needs a separate output folder"))
+                    continue
+            if next_dir.exists() and (next_dir.is_symlink() or not next_dir.is_dir() or any(next_dir.iterdir())):
+                replies.put(("start_failed", "cannot start: output folder is not a new empty take"))
+                continue
             options = options[0] if options else {}
             options = {"tracker": options} if isinstance(options, str) else options
             capture = options.get("capture", {})
@@ -389,6 +406,35 @@ def run(commands, replies, port=view3d.PORT):
                 source.paused_points = None
                 source.progress.resume()
             replies.put(("resumed",))
+        elif kind == "cancel":
+            _, take_name = cmd
+            if (source.phase not in ("scanning", "paused") or out_dir is None or out_dir.name != take_name):
+                replies.put(("cancelled", "", "No active matching take to cancel."))
+                continue
+            # Detach the scan before shutting down. A closing parent mustn't make it autosave.
+            with source.lock:
+                scanner, cancelled_dir = source.scanner, out_dir
+                source.reset()
+                out_dir, keep_raw = None, False
+            errors = []
+            if recorder is not None:
+                try:
+                    recorder.close()
+                    if recorder.error is not None:
+                        errors.append(f"raw data incomplete: {recorder.error}")
+                except Exception as e:
+                    errors.append(f"could not close raw recording: {e}")
+                recorder = None
+            try:
+                scanner.discard()
+            except Exception as e:
+                errors.append(f"could not release scan resources cleanly: {e}")
+            try:
+                moved = fr.stash_cancelled(cancelled_dir)
+            except OSError as e:
+                moved = cancelled_dir  # never delete; identify where recovery data stayed
+                errors.append(f"could not move recovery data: {e}")
+            replies.put(("cancelled", str(moved) if moved is not None else "", "; ".join(errors)))
         elif kind == "stop" and source.phase in ("scanning", "paused") and source.scanner is not None:
             if recorder is not None:
                 recorder.close()

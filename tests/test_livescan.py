@@ -129,10 +129,21 @@ def test_stop_makes_the_mesh_after_optimise():
             assert len((raw / "stamps.csv").read_text().splitlines()) == 1 + frames
             assert reply("optimised")[1] is True
             message = reply("meshed")[0]
+            assert message.startswith("mesh:"), message
+            original = Path(tmp) / "scan"
+            assert (original / "mesh.ply").exists() and (original / "mesh.stl").exists()
+            cancelled = Path(tmp) / "cancel-live-scan"
+            commands.put(("start", "small", cancelled, True, None, calib.CAMERA.mode, True))
+            commands.put(frame)
+            assert reply("frame_done")[1] == 1
+            commands.put(("cancel", cancelled.name))
+            recovery, warning = reply("cancelled")
+            assert not warning and not cancelled.exists()
+            assert Path(recovery).is_dir() and not (Path(recovery) / "cloud.ply").exists()
+            assert (original / "mesh.stl").exists()
             commands.put(("quit",))
             proc.join(30)
-            assert message.startswith("mesh:"), message
-            assert (Path(tmp) / "scan" / "mesh.ply").exists() and (Path(tmp) / "scan" / "mesh.stl").exists()
+            assert proc.exitcode == 0
     finally:
         calib.use(before)
         if env is None:
@@ -342,3 +353,94 @@ def test_browser_telemetry_changes_without_rebuilding_stalled_geometry():
     assert info2["progress"]["tracking"] == "Lost (target not matched)"
     assert info2["progress"]["geometry"] == "On hold"
     assert "Piece 2" in info2["progress"]["unjoined"]
+
+
+def test_cancel_active_and_paused_takes_preserves_raw_and_allows_restart():
+    import csv
+    import queue
+    import tempfile
+    import threading
+    from pathlib import Path
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock, patch
+    from tribuutscan import frames as fr
+
+    class Scan:
+        def __init__(self, *args, **kwargs):
+            self.stats = dict(frames=0, merged=0, tracking=False)
+            self.scene = NS(plane=None)
+            self.cue, self.pieces = {}, []
+            self.last_view = self.view_codes = None
+            self.points_kept, self.object_turns = 0, False
+            self.add_source = Mock()
+            self.discard = Mock()
+            self.save = Mock(side_effect=AssertionError("cancel must not save"))
+        def feed(self, _frame):
+            self.stats["frames"] += 1
+        def sync_merges(self):
+            pass
+        def cloud_points(self, _seen):
+            return np.empty((0, 3)), np.empty((0, 3), np.uint8), np.empty(0, np.int32)
+        def output_mask(self, xyz, **kwargs):
+            return np.ones(len(xyz), bool)
+
+    commands, replies = queue.Queue(), queue.Queue()
+    server = Mock()
+    frame = ("frame", bytes(fr.FRAME_BYTES["color"]), None, bytes(1600 * fr.H), 1600, (1., 0., 1.))
+    seen = []
+
+    def wait_for(wanted):
+        while True:
+            reply = replies.get(timeout=5)
+            seen.append(reply[0])
+            if reply[0] == wanted:
+                return reply[1:]
+
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        saved = root / "earlier-scan"
+        saved.mkdir()
+        old_file = saved / "cloud.ply"
+        old_file.write_bytes(b"earlier")
+        current, fresh = root / "this-live-scan", root / "next-live-scan"
+        paused_scan, next_scan = Scan(), Scan()
+        with patch.object(livescan.view3d, "serve", return_value=server) as serve, \
+                patch.object(livescan.cl, "Scanner", return_value=next_scan) as factory:
+            factory.continue_from.return_value = paused_scan
+            worker = threading.Thread(target=livescan.run, args=(commands, replies, 0), daemon=True)
+            worker.start()
+            try:
+                wait_for("ready")
+                source = serve.call_args.args[0]
+                commands.put(("start", "small", current, True, saved, livescan.calib.CLOSE, True))
+                commands.put(frame)
+                assert wait_for("frame_done")[1] == 1
+                commands.put(("pause",))
+                wait_for("paused")
+                commands.put(("cancel", current.name))
+                recovery, warning = wait_for("cancelled")
+                recovered = Path(recovery)
+                assert not warning and recovered.parent.parent == root / ".cancelled"
+                assert recovered.name == current.name and not current.exists()
+                assert old_file.read_bytes() == b"earlier"
+                raw = next(recovered.glob("*-rec"))
+                assert len(list(csv.DictReader((raw / "stamps.csv").open()))) == 1
+                assert not (recovered / "cloud.ply").exists()
+                assert source.current()[0] == "empty" and source.scanner is None
+                paused_scan.discard.assert_called_once()
+                paused_scan.save.assert_not_called()
+                commands.put(frame)  # a late out-of-phase frame is not added to any take
+                assert wait_for("frame_done") == (0, 0, 0)
+                commands.put(("start", "small", fresh, False, None, livescan.calib.CLOSE, True))
+                commands.put(frame)
+                assert wait_for("frame_done")[1] == 1
+                commands.put(("cancel", fresh.name))
+                assert wait_for("cancelled") == ("", "")
+                next_scan.discard.assert_called_once()
+                next_scan.save.assert_not_called()
+                assert not any(k in seen for k in ("saved", "optimised", "meshed"))
+            finally:
+                commands.put(("quit",))
+                worker.join(timeout=5)
+    assert not worker.is_alive()
+    server.shutdown.assert_called_once()

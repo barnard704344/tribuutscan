@@ -611,6 +611,9 @@ def set_control(target, cid, value):
         v4l2.set_control(target, cid, value)
 
 
+ACTIVE_SCAN_STATES = ("scanning", "pausing", "paused", "resuming")
+
+
 def progress_line(status):
     """One-line operational status; detailed recovery guidance appears below the depth preview."""
     text = (f"Capture: {status['capture']} ({status['frames']})  |  Tracking: {status['tracking']}"
@@ -648,7 +651,7 @@ class App:
                      "done": collections.deque(maxlen=60), "last": None, "name": "", "gpu": "", "merging": "",
                      "progress": livescan.ScanProgress()}
         # (done: when frames came back; last: (merged, frames, points, tracking); gpu / merging: from its log)
-        self.scan_state = "idle"  # idle | counting | scanning | pausing | paused | resuming | saving | optimising | meshing
+        self.scan_state = "idle"  # idle | counting | scanning | pausing | paused | resuming | cancelling | saving | optimising | meshing
         self.imu, self.imu_note, self.imu_want = None, "", usbdepth.available()
         self.retry_at = 0.0  # time.monotonic() before which a lost scanner is not reconnected again
         self.lost = False  # a stream lost its device and the scanner is not back yet
@@ -896,6 +899,8 @@ class App:
             now.append("scan paused: rotate the model in the 3D view, then Resume or Stop & Save")
         elif self.scan_state == "resuming":
             now.append("resuming the same scan")
+        elif self.scan_state == "cancelling":
+            now.append("cancelling this take without saving or meshing")
         elif self.scan_state in ("saving", "optimising", "meshing"):
             now.append(f"{self.scan_state} the scan {live['name']}")
         recorder = self.rec["recorder"]
@@ -966,7 +971,8 @@ class App:
             self.stop_recording()
             self.rec["thread"].join(timeout=2)  # let the last set and the files close cleanly
         if self.live["proc"] is not None:
-            if self.scan_state in ("scanning", "pausing", "paused", "resuming"):
+            # A queued cancel already owns cleanup; don't turn it into a save when closing.
+            if self.scan_state in ACTIVE_SCAN_STATES:
                 self.live["feeder"].transition("saving", ("stop",))  # save what was scanned
                 self.log("scan stopped by closing, saving ...")
             self.live["commands"].put(("quit",))
@@ -1151,7 +1157,7 @@ class App:
         if self.rec["recorder"]:
             self.stop_recording()
             self.log("recording stopped: scanner disconnected")
-        if self.scan_state in ("scanning", "pausing", "paused", "resuming"):
+        if self.scan_state in ACTIVE_SCAN_STATES:
             self.toggle_scan()  # requests a partial save; the worker reports the result separately
         elif self.scan_state == "counting":
             self.cancel_countdown()
@@ -1394,7 +1400,7 @@ class App:
     def toggle_scan(self, continue_from=None):
         """Start (after the countdown, when it is on), cancel the countdown, or stop and save."""
         live = self.live
-        if self.scan_state in ("scanning", "pausing", "paused", "resuming"):
+        if self.scan_state in ACTIVE_SCAN_STATES:
             live["feeder"].transition("saving", ("stop", bool(self.mesh_after.get())))
             self.log("scan stopped, saving ...")
             return
@@ -1409,6 +1415,14 @@ class App:
             self.scan_state, self.count = "counting", {"until": time.monotonic() + COUNTDOWN_S, "from": continue_from}
             return
         self.begin_scan(continue_from)
+
+    def cancel_scan(self):
+        """Abandon just the active take and wait for worker cleanup before enabling a fresh scan."""
+        if self.scan_state == "counting":
+            self.cancel_countdown()
+        elif self.scan_state in ACTIVE_SCAN_STATES:
+            self.live["feeder"].transition("cancelling", ("cancel", self.live["name"]))
+            self.log("cancelling this take without saving ...")
 
     def toggle_pause_scan(self):
         """Pause and inspect the current model without ending the scan, or resume the same scan."""
@@ -1553,8 +1567,31 @@ class App:
                     live["merging"] = "thread"
             elif kind == "start_failed":
                 self.log(rest[0])
-                self.scan_state = "idle"
+                if self.scan_state != "cancelling":
+                    self.scan_state = "idle"
+                    self.lighter(False)
+            elif kind == "cancelled" and self.scan_state == "cancelling":
+                place, warning = rest
+                live.update(last=None, name="", merging="", gpu="", progress=livescan.ScanProgress())
+                live["done"].clear()
+                self.ticks.clear()
+                self.scan_state, self.count = "idle", None
                 self.lighter(False)
+                scan_view.update(mask=None, lost=False, model=None)
+                if warning and place:
+                    self.log(warning)
+                if place:
+                    path = Path(place)
+                    try:
+                        short_path = Path("captures") / path.relative_to(fr.CAPTURES)
+                    except ValueError:
+                        short_path = path
+                    self.log(f"scan cancelled without saving; recovery files are in {short_path}"
+                             + (" (see Messages for a warning)" if warning else ""))
+                elif warning:
+                    self.log(f"scan cancellation: {warning}")
+                else:
+                    self.log("scan cancelled without saving")
             elif kind == "paused" and self.scan_state == "pausing":
                 self.scan_state = "paused"
                 self.lighter(False)

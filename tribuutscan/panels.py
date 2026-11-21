@@ -149,6 +149,7 @@ class ScanPanel(Panel):
     STATES = {"idle": ("Start scan (c)", "normal"), "counting": ("Cancel start (c / Esc)", "normal"),
               "scanning": ("Stop & Save (c)", "normal"), "pausing": ("Stop & Save (c)", "normal"),
               "paused": ("Stop & Save (c)", "normal"), "resuming": ("Stop & Save (c)", "normal"),
+              "cancelling": ("Cancelling...", "disabled"),
               "saving": ("Saving...", "disabled"), "optimising": ("Optimising...", "disabled"),
               "meshing": ("Making the mesh...", "disabled")}
 
@@ -161,7 +162,9 @@ class ScanPanel(Panel):
         row = frame(body)
         row.pack(fill="x", pady=(2, 0))
         self.pause = button(row, command=self.app.toggle_pause_scan)
-        self.pause.pack(side="left", expand=True, fill="x")
+        self.pause.pack(side="left", expand=True, fill="x", padx=(0, 5))
+        self.cancel = button(row, text="Cancel scan", command=self.app.cancel_scan)
+        self.cancel.pack(side="left", expand=True, fill="x")
         row = frame(body)
         row.pack(fill="x", pady=(2, 0))
         button(row, text="Continue last", command=self.app.continue_scan).pack(
@@ -183,6 +186,8 @@ class ScanPanel(Panel):
         label = {"paused": "Resume scan (p)", "pausing": "Finishing frames...", "resuming": "Resuming..."}.get(
             phase, "Pause & Inspect (p)")
         self.set(self.pause, text=label, state="normal" if phase in ("scanning", "paused") else "disabled")
+        can_cancel = phase in ("counting", "scanning", "pausing", "paused", "resuming")
+        self.set(self.cancel, state="normal" if can_cancel else "disabled")
 
 
 class ImuPanel(Panel):

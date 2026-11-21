@@ -129,6 +129,11 @@ right: Scanner, Capture, Scan, IMU and View.
   recovered or the point cloud is growing. If tracking remains lost, return to an overlapping view
   of a known edge or the same markers. Check the depth image if the target isn't matched. Save the
   usable scan if it won't recover; later pieces are not guaranteed to join.
+- **Cancel scan** abandons only the current take, whether scanning or paused, and leaves the viewer
+  open for another scan. It does not save a cloud, optimise, or export a mesh. Any raw files already
+  captured are recoverable under `captures/.cancelled/` (the Messages pane shows the path). They are
+  not listed by Continue or Replay, and are not automatically deleted. Earlier saved scans, including
+  the source of a continued scan, stay where they were.
 - **Scanning on a platform**: the scanner can also stand still while you turn the object on a
   platform.
   - The scan notices this after a few seconds, because the room behind stays put ("object turning,

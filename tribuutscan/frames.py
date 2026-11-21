@@ -46,6 +46,18 @@ def capture_dir(root=CAPTURES, suffix="", *, live=False):
         return out
 
 
+def stash_cancelled(path):
+    """Move an abandoned take out of normal listings without deleting its raw data."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    if not path.is_dir() or path.is_symlink():
+        raise OSError("cancelled take is not a regular directory")
+    # A reserved destination container lets rename be atomic without replacing any previous take.
+    bucket = capture_dir(path.parent / ".cancelled", "-cancelled")
+    return path.rename(bucket / path.name)
+
+
 def decode(color_buf, ir_buf, depth_buf, depth_bytesperline, yuyv=False):
     """Decoded frame set; "ir" is None when there is no IR buffer (scan recordings leave it out). With
     `yuyv` the colour stays as it came ("yuyv": the raw bytes) for whoever converts only what it needs."""

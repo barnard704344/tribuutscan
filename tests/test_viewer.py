@@ -570,7 +570,7 @@ def test_scan_panel_build_wires_separate_pause_and_stop_controls():
     from unittest.mock import Mock, patch
     from tribuutscan import panels
 
-    app = NS(preset=None, toggle_scan=Mock(), toggle_pause_scan=Mock(), continue_scan=Mock(), open_view=Mock(),
+    app = NS(preset=None, toggle_scan=Mock(), toggle_pause_scan=Mock(), cancel_scan=Mock(), continue_scan=Mock(), open_view=Mock(),
              remove_base=None, keep_raw=None, mesh_after=None, countdown=None, scan_state="paused")
     panel = NS(app=app, set=Mock(), STATES=panels.ScanPanel.STATES)
     with patch.object(panels, "frame", return_value=Mock()), patch.object(panels, "button", side_effect=lambda *a, **kw: Mock(**kw)), \
@@ -578,5 +578,48 @@ def test_scan_panel_build_wires_separate_pause_and_stop_controls():
         panels.ScanPanel.build(panel, object())
         panels.ScanPanel.refresh(panel)
     assert panel.scan.command is app.toggle_scan and panel.pause.command is app.toggle_pause_scan
+    assert panel.cancel.command is app.cancel_scan
     panel.set.assert_any_call(panel.scan, text="Stop & Save (c)", state="normal")
     panel.set.assert_any_call(panel.pause, text="Resume scan (p)", state="normal")
+
+
+def test_cancel_stops_new_scan_frames_and_acknowledgement_reenables_start():
+    import queue
+    from collections import deque
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock, patch
+
+    commands = queue.Queue()
+    proc = NS(exitcode=None)
+    live = {"proc": proc, "commands": commands, "replies": queue.Queue(), "name": "a-live-scan", "done": deque()}
+    app = NS(live=live, scan_state="paused", log=Mock(), lighter=Mock(), ticks=deque(),
+             lost=False, switching={"busy": False}, countdown=NS(get=lambda: True), start_worker=Mock())
+    feeder = live["feeder"] = viewer.Feeder(app)
+    viewer.App.cancel_scan(app)
+    assert app.scan_state == "cancelling"
+    assert commands.get_nowait() == ("cancel", "a-live-scan")
+    viewer.App.toggle_scan(app)
+    viewer.App.cancel_scan(app)
+    assert commands.empty() and app.scan_state == "cancelling"
+    feeder.out.put(("cancelled", ["/captures/.cancelled/first/a-live-scan", ""], None))
+    with patch.dict(viewer.scan_view):
+        viewer.App.check_scan(app)
+    assert app.scan_state == "idle" and app.live["proc"] is proc
+    assert "recovery files" in app.log.call_args.args[0]
+    viewer.App.toggle_scan(app)
+    assert app.scan_state == "counting"
+    app.start_worker.assert_not_called()
+
+
+def test_close_after_cancel_does_not_save_the_take():
+    import queue
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+
+    commands = queue.Queue()
+    app = NS(live={"proc": NS(join=Mock(), is_alive=lambda: False), "commands": commands, "feeder": Mock()},
+             scan_state="cancelling", rec={"recorder": None}, log=Mock(), imu_off=Mock(), streams={}, root=Mock())
+    viewer.App.close(app)
+    assert commands.get_nowait() == ("quit",) and commands.empty()
+    app.live["feeder"].transition.assert_not_called()
+    app.root.destroy.assert_called_once()

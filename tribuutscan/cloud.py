@@ -1374,6 +1374,19 @@ class Scanner:
             self.gpu.close()
             self.gpu = None
 
+    def discard(self):
+        """Release a cancelled take without flushing, saving, or exporting its geometry."""
+        try:
+            self.close()
+        finally:
+            try:
+                if self.merge_proc is not None:
+                    self.merge_proc.discard()
+                    self.merge_proc = None
+            finally:
+                self.merger.shutdown(wait=True, cancel_futures=True)
+                self.pending.clear()
+
     def marker_pairs(self, marker_pts, guess, ref):
         """(this frame's markers mm, their map positions in the target frame mm) for the markers matched
         at the predicted pose, or None; ref: the target's frame -> world."""
