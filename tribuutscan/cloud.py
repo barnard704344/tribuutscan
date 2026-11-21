@@ -15,10 +15,11 @@ Each frame is first cut down to the object: the depth window, then the table or 
 Writes captures/<stamp>-scan/: cloud.ply (metres, x right, y up, z toward the scanner),
 poses.txt (merged frames), frame_poses.txt (every tracked frame), labels.npz, session.json (with the
 camera model's source and fingerprint, and `sources`: the recordings the frame indices point into,
-so a scan can be fused again from its raw frames).
+relative to the saved scan folder so the paths survive moving the scan and recordings together).
 """
 import bisect
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -1056,7 +1057,7 @@ class Scanner:
 
     def add_source(self, rec, first_index):
         """Frames from `rec` (a Recorder directory) are fed from scanner index `first_index` on."""
-        self.sources.append({"rec": str(rec), "first_index": int(first_index)})
+        self.sources.append({"rec": str(Path(rec).absolute()), "first_index": int(first_index)})
 
     def frame_poses(self):
         """[(index, pose)] of every tracked frame (a scan saved before these were kept: its merged ones)."""
@@ -1161,7 +1162,8 @@ class Scanner:
         sc.stats.update({k: session[k] for k in ("frames", "merged", "lost", "relocked", "shape_refinds") if k in session})
         sc.object_turns = sc.stats["object_turns"] = bool(session.get("object_turns", False))
         sc.crop = session.get("crop")
-        sc.sources = list(session.get("sources", []))
+        sc.sources = [{**src, "rec": str((directory / src["rec"]).resolve())}
+                      for src in session.get("sources", [])]  # absolute legacy paths still work
         if session.get("piece_list"):  # a scan of joined pieces (their frames already in one world)
             sc.pieces = [dict(p) for p in session["piece_list"]]
             sc.piece_joins = [tuple(j) for j in session.get("piece_joins", [])]
@@ -1972,7 +1974,8 @@ class Scanner:
         self.flush()
         self.trim_table()
         self.stats["remove_base"], self.stats["base_found"] = self.remove_base, self.scene.plane is not None
-        self.stats["sources"] = self.sources
+        self.stats["sources"] = [{**src, "rec": os.path.relpath(src["rec"], Path(directory).resolve())}
+                                 for src in self.sources]
         self.stats["crop"], self.stats["crop_axes"] = self.crop, self.crop_axes().round(6).tolist()
         self.stats["piece_list"] = [{k: (bool(v) if k == "joined" else int(v)) for k, v in p.items()} for p in self.pieces]
         self.stats["piece_joins"] = [[int(a), int(b)] for a, b in self.piece_joins]

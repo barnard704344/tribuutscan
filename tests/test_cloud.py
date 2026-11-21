@@ -503,7 +503,7 @@ def test_a_saved_scan_keeps_what_fusing_again_needs():
             assert set(i for i, _ in tracked) <= set(sc.labels)
             sc.save(out)
             session = json.loads((out / "session.json").read_text())
-            assert session["sources"] == [{"rec": str(rec.resolve()), "first_index": 0}]
+            assert session["sources"] == [{"rec": "../t-rec", "first_index": 0}]
             assert session["camera"] == {"source": "estimate", "fingerprint": calib.CAMERA.fingerprint()}
             back = cl.Scanner.restore(out, log=lambda *a: None)
             bases = {id(points.base) for points, _, _ in back.merged_data.values()}
@@ -991,3 +991,48 @@ def test_relock_is_off_once_the_scanner_looked_away():
     assert not s.step_due()
     s.start_piece(20)
     assert s.relock_due() and s.step_due()
+
+
+def test_raw_sources_follow_the_collection_when_moved():
+    import json
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    from tribuutscan import fusion
+
+    with tempfile.TemporaryDirectory() as tmp:
+        original = Path(tmp) / "original"
+        scan_dir = original / "capture-scan"
+        rec_dirs = [original / "sibling-rec", scan_dir / "nested-rec"]
+        for directory in rec_dirs:
+            directory.mkdir(parents=True)
+        sc = cl.Scanner(log=lambda *a: None, track_with="cpu")
+        empty = np.empty((0, 3), np.float32)
+        sc.keyframes = [(0, np.eye(4), empty, None, empty)]
+        sc.poses = [(0, np.eye(4))]
+        sc.merged_data = {0: (empty, empty, empty)}
+        sc.add_source(rec_dirs[0], 0)
+        sc.add_source(rec_dirs[1], 1)
+        sc.save(scan_dir)
+        session_path = scan_dir / "session.json"
+        session = json.loads(session_path.read_text())
+        assert [s["rec"] for s in session["sources"]] == ["../sibling-rec", "nested-rec"]
+
+        # Pre-existing absolute metadata still opens in place.
+        legacy = {**session, "sources": [{**s, "rec": str(path)} for s, path in zip(session["sources"], rec_dirs)]}
+        session_path.write_text(json.dumps(legacy))
+        old = cl.Scanner.restore(scan_dir, log=lambda *a: None)
+        assert old.sources == sc.sources
+        old.close()
+        session_path.write_text(json.dumps(session))
+
+        moved = original.rename(Path(tmp) / "moved")
+        reopened = cl.Scanner.restore(moved / scan_dir.name, log=lambda *a: None)
+        expected = [moved / p.relative_to(original) for p in rec_dirs]
+        assert [Path(s["rec"]) for s in reopened.sources] == expected
+        # Test the production raw replay path, not just the values written to JSON.
+        with patch("tribuutscan.frames.read_recording", side_effect=lambda p, yuyv: iter([{"path": p}])) as reader:
+            assert [frame["path"] for frame, _, _ in fusion.scan_frames(reopened)] == expected[:1]
+            assert [call.args[0] for call in reader.call_args_list] == expected
+        reopened.close()
+        sc.close()

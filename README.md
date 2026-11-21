@@ -114,8 +114,10 @@ right: Scanner, Capture, Scan, IMU and View.
   together after Stop. Looking away is fine: nothing else is taken for the object meanwhile. Click
   the object in the depth or colour view to show the scan where it is: before Start (the outline
   follows it), or while scanning, also when tracking is lost.
-  Tick *keep raw frames* to keep the frames the scan used, for replays. *Continue last* goes on
-  with the last saved scan.
+  Tick *keep raw frames* to keep the frames the scan used, for replays. Move or copy the scan and its
+  recordings together, keeping their folder layout. Older scans with absolute recording paths can
+  still use those paths and get relative references when saved again in this version.
+  *Continue last* goes on with the last saved scan if it used the same camera calibration and depth range.
 - **Scanning on a platform**: the scanner can also stand still while you turn the object on a
   platform.
   - The scan notices this after a few seconds, because the room behind stays put ("object turning,
