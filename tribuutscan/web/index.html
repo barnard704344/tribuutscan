@@ -32,7 +32,7 @@
   .menu li small { color: var(--muted); margin-left: 6px; }
   #status { margin-left: auto; color: var(--muted); font-size: 13px; }
   #status b { color: var(--good); font-weight: 600; }
-  aside { position: fixed; top: 52px; right: 12px; width: 250px; padding: 12px 14px; z-index: 2;
+  aside { position: fixed; top: 52px; right: 12px; width: 250px; max-height: calc(100dvh - 64px); overflow-y: auto; padding: 12px 14px; z-index: 2;
     background: rgba(31,34,38,.92); border: 1px solid var(--line); border-radius: 10px; }
   aside h2 { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 600;
     text-transform: uppercase; letter-spacing: .05em; }
@@ -44,6 +44,14 @@
   select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
     padding: 5px; font: inherit; }
   .hint { margin-top: 12px; color: var(--muted); font-size: 12px; }
+  #coverage-legend { margin: 10px 0 0; font-size: 12px; }
+  #coverage-legend ul { list-style: none; margin: 0; padding: 0; }
+  #coverage-legend li { margin: 3px 0; }
+  #coverage-legend .swatch { display: inline-block; vertical-align: -1px; margin-right: 5px;
+    width: 10px; height: 10px; border-radius: 50%; }
+  #coverage-legend .light { background: #ffc45c; }
+  #coverage-legend .repeat { background: #53b9ff; }
+  #coverage-legend .hint { margin-top: 6px; }
   .bad { color: #ff6b6b; font-weight: 600; }
   #empty { position: fixed; inset: 0; display: none; place-items: center; text-align: center;
     color: var(--muted); pointer-events: none; z-index: 1; padding: 0 24px; }
@@ -102,7 +110,8 @@
     <dt>Capture</dt><dd id="capture">–</dd>
     <dt>Tracking</dt><dd id="tracking">–</dd>
     <dt>Geometry</dt><dd id="geometry">–</dd>
-    <dt>Frames merged</dt><dd id="frames">–</dd>
+    <dt title="Views incorporated into the scan, out of all processed views">Accepted views</dt><dd id="frames">–</dd>
+    <dt id="last-view-label" hidden>Last accepted</dt><dd id="last-view" hidden>–</dd>
   </dl>
   <div class="hint" id="scanhint" hidden></div>
   <div id="piece-picker" hidden>
@@ -123,11 +132,19 @@
   <label for="mode">Colour</label>
   <select id="mode">
     <option value="rgb">Camera colour</option>
+    <option value="coverage">Scan coverage</option>
     <option value="grey">Grey (mesh shape)</option>
     <option value="seen">Times seen (blue few, red many)</option>
     <option value="height">Height</option>
   </select>
-  <div class="hint">Drag to orbit, right-drag to pan, scroll to zoom. Colour: grey shows the mesh's shape.</div>
+  <div id="coverage-legend" hidden>
+    <ul id="coverage-colours">
+      <li><span class="swatch light"></span>Amber · seen 1–2 times; take more views</li>
+      <li><span class="swatch repeat"></span>Blue · seen 3+ times</li>
+    </ul>
+    <p class="hint" id="coverage-note"></p>
+  </div>
+  <div class="hint">Drag to orbit, right-drag to pan, scroll to zoom.</div>
 </aside>
 <aside id="cropbox" hidden>
   <h2>Crop box</h2>
@@ -172,6 +189,16 @@ let pieceScan = null, selectedPiece = null, pieceSignature = "", pieceEpoch = 0,
 const shapes = { mesh: { obj: null, version: null, rgb: null }, solid: { obj: null, version: null, rgb: null } };
 const SHAPE_NAMES = { mesh: "Mesh", solid: "Solid" };  // the scanned surface; the closed solid (as the STL)
 const $ = (id) => document.getElementById(id);
+const livePreview = new URLSearchParams(location.search).get("live") === "1";
+const coverageRGB = {
+  light: new THREE.Color(0xffc45c).toArray(),
+  repeat: new THREE.Color(0x53b9ff).toArray(),
+};
+function coverageLevel(seen) { return seen >= 3 ? "repeat" : "light"; }
+if (livePreview) {
+  document.title = "triBUUTSCAN · Live 3D preview";
+  $("mode").value = "coverage";
+}
 
 renderer.localClippingEnabled = true;  // the crop box, while it is set up
 const cropGroup = new THREE.Group(), cropBox = new THREE.Box3();
@@ -203,10 +230,13 @@ function colours() {
     for (let i = 0; i < n * 3; i++) out[i] = data.rgb[i] / 255;
   } else if (mode === "grey") {
     out.fill(0.72);
+  } else if (mode === "coverage") {
+    if (!data.seen) out.fill(0.72); // coverage cannot be inferred from a cloud without observation counts
+    else for (let i = 0; i < n; i++) out.set(coverageRGB[coverageLevel(data.seen[i])], i * 3);
   } else if (mode === "seen" && data.seen) {
     let max = 1;
     for (let i = 0; i < n; i++) max = Math.max(max, data.seen[i]);
-    for (let i = 0; i < n; i++) out.set(ramp(Math.log(data.seen[i]) / Math.log(max)), i * 3);
+    for (let i = 0; i < n; i++) out.set(ramp(Math.log(Math.max(data.seen[i], 1)) / Math.log(Math.max(max, 2))), i * 3);
   } else {
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < n; i++) { lo = Math.min(lo, data.xyz[i * 3 + 1]); hi = Math.max(hi, data.xyz[i * 3 + 1]); }
@@ -259,6 +289,20 @@ function showWhich() {  // the cloud, the mesh or the solid
   if (points) points.visible = on === points;
   for (const kind in shapes) if (shapes[kind].obj) shapes[kind].obj.visible = shapes[kind].obj === on;
   $("sizebox").style.display = on === points ? "" : "none";
+  coverageLegend();
+}
+
+function coverageLegend() {
+  const coverage = $("mode").value === "coverage" && $("show").value === "cloud";
+  $("coverage-legend").hidden = !coverage;
+  if (!coverage) return;
+  const hasCounts = !!(data?.n && data.seen);
+  $("coverage-colours").hidden = !!data?.n && !hasCounts;
+  $("coverage-note").textContent = !data?.n
+    ? "Coverage appears as the scanner accepts views."
+    : hasCounts
+      ? "Colours count observations, not completeness. Unseen spots have no points to colour."
+      : "Observation counts are unavailable for this cloud.";
 }
 
 function frame(keepOrientation = false) {
@@ -444,19 +488,19 @@ async function poll() {
     session = info.session || {};
     const piece = updatePieces(info);
     const key = JSON.stringify([pieceScan, piece?.id ?? null, piece?.version ?? info.version]);
-    if (key !== cloudKey && await load(piece?.id ?? null)) {
-      cloudKey = key;
-      $("points").textContent = data.n.toLocaleString();
-      $("empty").classList.toggle("show", data.n === 0);
-    }
-    // Telemetry changes even when there is no new geometry to download.
+    // Show telemetry without waiting for a potentially large geometry download.
     const s = session, live = info.progress;
     pointMm = s.point_distance_mm || pointMm;
     material.size = pointMm / 1000 * $("size").value;
     $("name").textContent = info.name;
     $("pd").textContent = s.point_distance_mm ? `${s.point_distance_mm} mm (${s.preset})` : "–";
     $("raw").textContent = s.raw_points ? s.raw_points.toLocaleString() : "–";
-    $("frames").textContent = s.merged != null ? `${s.merged} of ${s.frames}` : "–";
+    const merged = live?.merged ?? s.merged, processed = live?.frames ?? s.frames;
+    $("frames").textContent = merged == null ? "–" : processed == null
+      ? merged.toLocaleString() : `${merged.toLocaleString()} / ${processed.toLocaleString()} processed`;
+    $("last-view-label").hidden = $("last-view").hidden = !live;
+    const age = live?.last_view_age_s;
+    $("last-view").textContent = age == null ? "–" : age < 2 ? "Just now" : `${Math.floor(age)} s ago`;
     $("capture").textContent = live ? live.capture : (info.phase === "paused" ? "Paused" : "–");
     $("tracking").textContent = live ? live.tracking : "–";
     $("tracking").classList.toggle("bad", !!live && live.tracking.startsWith("Lost"));
@@ -469,8 +513,17 @@ async function poll() {
     $("crop-open").classList.toggle("later", unfinished);
     if (info.phase === "paused")
       $("status").textContent = "Paused · rotate or zoom here · Resume or Stop & Save in the scanner";
-    else if (Date.now() - messageAt > 8000)  // a Process result stays readable for a while
-      $("status").innerHTML = info.phase === "optimising" ? "<b>●</b> optimising…" : "<b>●</b> connected";
+    else if (Date.now() - messageAt > 8000) {  // a Process result stays readable for a while
+      if (livePreview && info.phase === "scanning")
+        $("status").textContent = `Live 3D · ${live?.geometry || "Waiting for accepted views"}`;
+      else
+        $("status").innerHTML = info.phase === "optimising" ? "<b>●</b> optimising…" : "<b>●</b> connected";
+    }
+    if (key !== cloudKey && await load(piece?.id ?? null)) {
+      cloudKey = key;
+      $("points").textContent = data.n.toLocaleString();
+      $("empty").classList.toggle("show", data.n === 0);
+    }
     $("dl-ply").classList.toggle("later", info.phase === "paused" || !$("piece-picker").hidden);
     $("dl-mesh").classList.toggle("later", !info.mesh);
     $("dl-stl").classList.toggle("later", !info.stl);
@@ -489,7 +542,7 @@ async function poll() {
         if (!(await loadMesh(kind))) continue;
         shape.version = info[kind];
         reloaded = true;
-        if (kind === "mesh") { $("show").value = "mesh"; showWhich(); }  // a new mesh: show it
+        if (kind === "mesh" && !livePreview) { $("show").value = "mesh"; showWhich(); }
       } else if (!info[kind] && shape.obj) {
         dropShape(kind); shape.version = null;
         if ($("show").value === kind) $("show").value = "cloud";
@@ -508,6 +561,7 @@ $("mode").addEventListener("change", () => {
   if (points) points.geometry.setAttribute("color", new THREE.BufferAttribute(colours(), 3));
   for (const kind in shapes)
     if (shapes[kind].obj) shapes[kind].obj.geometry.setAttribute("color", new THREE.BufferAttribute(meshColours(kind), 3));
+  coverageLegend();
 });
 $("show").addEventListener("change", showWhich);
 $("piece").addEventListener("change", () => {
@@ -549,6 +603,7 @@ document.querySelectorAll(".menu > button").forEach((b) => b.addEventListener("c
 document.addEventListener("click", () => document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open")));
 
 (function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+coverageLegend();
 poll();
 </script>
 </body>
