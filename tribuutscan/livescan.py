@@ -172,8 +172,8 @@ class ScanProgress:
 
         capture = ("Waiting for a fresh frame" if self.last_frame is None else
                    "Frames arriving" if recent(self.last_frame) else "No recent processed frames")
-        recovery = ("Return to the last aligned view. Keep a known edge or the same markers in view, "
-                    "or another already scanned edge. The scanner tries shared features automatically; the model is held.")
+        recovery = ("Show an already scanned edge, texture or the same markers. "
+                    "The scanner tries matching features automatically; the existing model is held.")
         if self.last_frame is None:
             tracking = "Waiting after resume" if self.resuming else "Waiting"
             geometry = "On hold"
@@ -188,7 +188,7 @@ class ScanProgress:
             tracking, geometry, hint = "Lost", "On hold", recovery
             if self.cue.get("away"):
                 tracking = "Lost (target not matched)"
-                hint = "Check that the object has clear depth, then return to the last aligned view. The existing model is held."
+                hint = "Check that the object has clear depth, then show a part already scanned. The existing model is held."
         else:
             tracking = "Locked"
             geometry = ("Point count increasing" if recent(self.last_growth) else
