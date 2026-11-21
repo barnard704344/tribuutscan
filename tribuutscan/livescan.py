@@ -54,7 +54,7 @@ view_mask = cl.view_mask  # the same labels the scan keeps for fusing again
 
 class RawCopy:
     """frames.Recorder writes on a thread of their own (zlib and file writes release the GIL). put()
-    waits while QUEUE sets are pending, so no frame is left out; `error` is the DiskFull that stopped it."""
+    waits while QUEUE sets are pending; after a write error the thread still drains the queue."""
 
     QUEUE = 30
 
@@ -72,8 +72,8 @@ class RawCopy:
                         self.recorder.note_pick(*item[1:])
                     else:
                         self.recorder.write(*item[1:])
-                except fr.DiskFull as e:
-                    self.error = e
+                except OSError as e:
+                    self.error = e  # keep consuming messages through the close sentinel
 
     def put(self, bufs, stamps):
         self.queue.put(("set", bufs, stamps))
@@ -85,7 +85,11 @@ class RawCopy:
     def close(self):
         self.queue.put(None)
         self.thread.join()
-        self.recorder.close()
+        try:
+            self.recorder.close()
+        except OSError as e:  # buffered writes can fail during close, too
+            if self.error is None:
+                self.error = e
 
 
 class Reader(threading.Thread):
@@ -250,7 +254,7 @@ def run(commands, replies, port=view3d.PORT):
                     if recorder.error is not None:
                         raise recorder.error
                     recorder.put({"color": yuyv, "ir": grey, "depth": depth_buf}, {"color": t_c, "ir": t_i, "depth": t_d})
-                except fr.DiskFull as e:
+                except OSError as e:
                     keep_raw = False
                     if recorder is not None:
                         recorder.close()
@@ -280,6 +284,8 @@ def run(commands, replies, port=view3d.PORT):
         elif kind == "stop" and source.scanner is not None:
             if recorder is not None:
                 recorder.close()
+                if recorder.error is not None:
+                    replies.put(("log", f"raw copy incomplete: {recorder.error}"))
                 recorder = None
             with source.lock:
                 source.scanner.close()  # the GPU tracker's memory back (Optimise and the mesh come next)

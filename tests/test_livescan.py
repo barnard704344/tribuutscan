@@ -125,3 +125,40 @@ def test_stop_makes_the_mesh_after_optimise():
             os.environ.pop("TRIBUUTSCAN_CAMERA", None)
         else:
             os.environ["TRIBUUTSCAN_CAMERA"] = env
+
+
+def test_an_io_error_drains_the_raw_queue_instead_of_hanging_stop():
+    import errno
+    import queue
+    import threading
+    from unittest.mock import Mock
+
+    recorder = Mock()
+    recorder.write.side_effect = OSError(errno.EIO, "mock disk failed")
+    raw = livescan.RawCopy(recorder)
+    done = queue.Queue()
+
+    def write_and_close():
+        for _ in range(raw.QUEUE * 2):
+            raw.put({}, {})
+        raw.close()
+        done.put(raw.error)
+
+    thread = threading.Thread(target=write_and_close, daemon=True)
+    thread.start()
+    error = done.get(timeout=2)
+    assert error.errno == errno.EIO
+    recorder.write.assert_called_once()
+    recorder.close.assert_called_once()
+    assert not raw.thread.is_alive()
+
+
+def test_a_raw_flush_error_is_reported():
+    import errno
+    from unittest.mock import Mock
+
+    recorder = Mock()
+    recorder.close.side_effect = OSError(errno.ENOSPC, "mock disk full on flush")
+    raw = livescan.RawCopy(recorder)
+    raw.close()
+    assert raw.error.errno == errno.ENOSPC
