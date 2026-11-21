@@ -96,7 +96,7 @@ Debian/Ubuntu `python3 -m venv` needs `python3-venv`).
 Tested with Python 3.12 (numpy 1.26, OpenCV 4.10 and 4.11) and Python 3.14 (numpy 2.5, OpenCV 5.0, Tk 9),
 both with Open3D 0.20: the same results on every test and evaluation.
 
-The viewer shows Colour and IR on the left, Depth and the **Live 3D model** in the middle, and
+The viewer stacks Colour, IR and the **Live 3D model** on the left, with Depth in the middle and
 folding controls on the right. The 3D pane builds alongside the camera previews, with no browser
 required. Blue indicates 3 or more observations; amber indicates 1–2 observations. The live
 model is a sampled preview, not a completeness or accuracy check. Drag it to rotate, scroll to

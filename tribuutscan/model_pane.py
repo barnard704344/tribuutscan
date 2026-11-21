@@ -5,7 +5,7 @@ import tkinter as tk
 
 from . import panels
 
-WIDTH, HEIGHT = 600, 215
+HEIGHT = 215
 POLL_S = 0.30
 
 
@@ -70,11 +70,11 @@ class ModelState:
 
 class ModelPane(tk.Frame):
     """Live model in the same window as Colour, IR and Depth."""
-    def __init__(self, parent, renderer=None):
+    def __init__(self, parent, *, width, renderer=None):
         super().__init__(parent, bg=panels.SURFACE, bd=0)
         if renderer is None:
             from .coverage_preview import PreviewRenderer
-            renderer = PreviewRenderer(WIDTH, HEIGHT)
+            renderer = PreviewRenderer(width, HEIGHT)
         self.state = ModelState(renderer)
         self.drag = self.shown = None
         top = panels.frame(self)
@@ -84,15 +84,17 @@ class ModelPane(tk.Frame):
         self.piece_name = tk.StringVar(value="Piece 1")
         self.piece_menu = panels.menu(top, self.piece_name, ("Piece 1",), self.select_piece)
         self.piece_menu.pack(side="right")
+        legend = panels.frame(self)
+        legend.pack(fill="x", padx=8, pady=(2, 3))
         for label, colour in (("Amber: 1–2", "#ffc45c"), ("Blue: 3+ observations", "#53b9ff")):
-            tk.Label(top, text=label, bg=colour, fg=panels.INK, font=panels.BOLD,
-                     padx=5, pady=2).pack(side="right", padx=(0, 4))
+            tk.Label(legend, text=label, bg=colour, fg=panels.INK, font=panels.BOLD,
+                     padx=5, pady=2).pack(side="left", padx=(0, 4))
         self.piece_count = 1
-        self.blank = tk.PhotoImage(width=WIDTH, height=HEIGHT)
+        self.blank = tk.PhotoImage(width=width, height=HEIGHT)
         self.canvas = tk.Label(self, image=self.blank, bg="#101928", bd=0, highlightthickness=0)
         self.canvas.pack()
         self.photo = self.blank
-        self.caption = tk.Label(self, bg=panels.SURFACE, fg=panels.MUTED, anchor="w", wraplength=WIDTH,
+        self.caption = tk.Label(self, bg=panels.SURFACE, fg=panels.MUTED, anchor="w", wraplength=width,
                                 justify="left")
         self.caption.pack(fill="x", padx=8, pady=(2, 5))
         self.canvas.bind("<ButtonPress-1>", self.start_drag)

@@ -859,7 +859,7 @@ class App:
             stats.pack(fill="x", padx=8, pady=(2, 5))
             self.views[name] = (title, image, stats)
         from .model_pane import ModelPane
-        self.model_pane = ModelPane(middle)
+        self.model_pane = ModelPane(left, width=SIDE_W - 16)
         self.model_pane.pack(fill="x", padx=8, pady=(5, 0))
         self.note = tk.Label(root, anchor="w", bg=panels.SURFACE, fg=panels.INK, padx=8, pady=5,
                              font=("TkDefaultFont", 10))
