@@ -105,6 +105,11 @@
     <dt>Frames merged</dt><dd id="frames">–</dd>
   </dl>
   <div class="hint" id="scanhint" hidden></div>
+  <div id="piece-picker" hidden>
+    <label for="piece">Pieces</label>
+    <select id="piece" aria-describedby="piece-note"></select>
+    <div class="hint" id="piece-note">Unaligned pieces. Inspect one at a time.</div>
+  </div>
   <label for="show">Show</label>
   <select id="show">
     <option value="cloud">Cloud</option>
@@ -162,7 +167,8 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0x404048, 1.2));
 const headlight = new THREE.DirectionalLight(0xffffff, 1.6);
 camera.add(headlight);  // lights the mesh from where you look
 scene.add(camera);
-let points = null, data = null, version = null, pointMm = 1, framed = false, messageAt = 0, session = {};
+let points = null, data = null, cloudKey = null, pointMm = 1, framed = false, messageAt = 0, session = {};
+let pieceScan = null, selectedPiece = null, pieceSignature = "", pieceEpoch = 0, reframePiece = false;
 const shapes = { mesh: { obj: null, version: null, rgb: null }, solid: { obj: null, version: null, rgb: null } };
 const SHAPE_NAMES = { mesh: "Mesh", solid: "Solid" };  // the scanned surface; the closed solid (as the STL)
 const $ = (id) => document.getElementById(id);
@@ -255,22 +261,31 @@ function showWhich() {  // the cloud, the mesh or the solid
   $("sizebox").style.display = on === points ? "" : "none";
 }
 
-function frame() {
+function frame(keepOrientation = false) {
   const shown_ = shown();
   if (!shown_) return;
   shown_.geometry.computeBoundingSphere();
   const s = shown_.geometry.boundingSphere;
+  const direction = keepOrientation ? camera.position.clone().sub(controls.target).normalize()
+    : new THREE.Vector3(0, 0, 1);
+  const radius = Math.max(s.radius, 0.001);
   controls.target.copy(s.center);
-  camera.position.copy(s.center).add(new THREE.Vector3(0, 0, s.radius * 2.6));
-  camera.near = s.radius / 100; camera.far = s.radius * 100;
+  camera.position.copy(s.center).addScaledVector(direction, radius * 2.6);
+  camera.near = radius / 100; camera.far = radius * 100;
   camera.updateProjectionMatrix();
   controls.update();
 }
 
-async function load() {
-  const response = await fetch("cloud.bin");
+async function load(piece = null, scan = pieceScan, epoch = pieceEpoch) {
+  const query = new URLSearchParams();
+  if (piece !== null) {
+    query.set("piece", piece);
+    if (scan !== null) query.set("scan_id", scan);
+  }
+  const response = await fetch(piece === null ? "cloud.bin" : `cloud.bin?${query}`);
   if (!response.ok) throw new Error("could not load cloud");
   const buf = await response.arrayBuffer();
+  if (epoch !== pieceEpoch) return false;  // selection changed while this response was in flight
   const [n, hasSeen] = new Uint32Array(buf, 0, 2);
   const xyz = new Float32Array(buf, 8, n * 3);
   const rgbAt = 8 + n * 12, rgbLen = n * 3 + ((4 - (n * 3) % 4) % 4);
@@ -283,7 +298,51 @@ async function load() {
   points = new THREE.Points(geometry, material);
   scene.add(points);
   showWhich();
-  if (!framed && n > 0) { frame(); framed = true; }
+  if (n > 0 && (!framed || reframePiece)) {
+    frame(framed);  // an explicit selection can re-centre a separate coordinate frame without changing angle
+    framed = true;
+    reframePiece = false;
+  }
+  return true;
+}
+
+function updatePieces(info) {
+  const inspect = info.phase === "scanning" || info.phase === "paused";
+  const take = inspect ? info.scan_id ?? null : null;
+  const options = inspect && Array.isArray(info.piece_options) ? info.piece_options : [];
+  const primary = options.find((piece) => piece.id === info.default_piece) || options[0];
+  if (take !== pieceScan) {
+    // Finishing a take should return to the combined output, not silently keep inspecting an old piece.
+    reframePiece = pieceScan !== null && take === null && selectedPiece !== null;
+    if (take !== null) framed = false;
+    pieceScan = take;
+    selectedPiece = null;
+    pieceEpoch++;
+  } else if (selectedPiece !== null && !options.some((piece) => piece.id === selectedPiece)) {
+    selectedPiece = null;
+    reframePiece = true;
+    pieceEpoch++;
+  }
+  const picked = options.find((piece) => piece.id === selectedPiece) || primary;
+  const select = $("piece");
+  const signature = JSON.stringify([primary?.id, options.map((piece) => piece.id)]);
+  if (signature !== pieceSignature) {
+    select.replaceChildren(...options.map((piece) => {
+      const option = document.createElement("option");
+      option.value = String(piece.id);
+      option.textContent = `Piece ${piece.id}${piece.id === primary?.id ? " (primary)" : ""}`;
+      return option;
+    }));
+    pieceSignature = signature;
+  }
+  // Avoid rebuilding options on each frame or resetting an in-progress keyboard selection.
+  if (picked && select.value !== String(picked.id)) select.value = String(picked.id);
+  $("piece-picker").hidden = options.length < 2;
+  $("piece-note").textContent = options.length > 1
+    ? `Unaligned pieces. Showing piece ${picked.id} only.${info.active_piece != null && info.active_piece !== picked.id
+      ? ` Tracking is on piece ${info.active_piece}; use the picker to see it.` : ""}`
+    : "";
+  return picked;
 }
 
 function cropAxes() {  // the box's axes (rows, the page's axes): the saved crop's, else the scan's (server)
@@ -383,11 +442,12 @@ async function poll() {
     if (!response.ok) throw new Error("could not load scan info");
     const info = await response.json();
     session = info.session || {};
-    if (info.version !== version) {
-      await load();
-      version = info.version;
-      $("points").textContent = info.points.toLocaleString();
-      $("empty").classList.toggle("show", info.points === 0);
+    const piece = updatePieces(info);
+    const key = JSON.stringify([pieceScan, piece?.id ?? null, piece?.version ?? info.version]);
+    if (key !== cloudKey && await load(piece?.id ?? null)) {
+      cloudKey = key;
+      $("points").textContent = data.n.toLocaleString();
+      $("empty").classList.toggle("show", data.n === 0);
     }
     // Telemetry changes even when there is no new geometry to download.
     const s = session, live = info.progress;
@@ -411,7 +471,7 @@ async function poll() {
       $("status").textContent = "Paused · rotate or zoom here · Resume or Stop & Save in the scanner";
     else if (Date.now() - messageAt > 8000)  // a Process result stays readable for a while
       $("status").innerHTML = info.phase === "optimising" ? "<b>●</b> optimising…" : "<b>●</b> connected";
-    $("dl-ply").classList.toggle("later", info.phase === "paused");
+    $("dl-ply").classList.toggle("later", info.phase === "paused" || !$("piece-picker").hidden);
     $("dl-mesh").classList.toggle("later", !info.mesh);
     $("dl-stl").classList.toggle("later", !info.stl);
     $("dl-stl").querySelector("small").textContent = !info.stl ? "make a full mesh first"
@@ -450,7 +510,14 @@ $("mode").addEventListener("change", () => {
     if (shapes[kind].obj) shapes[kind].obj.geometry.setAttribute("color", new THREE.BufferAttribute(meshColours(kind), 3));
 });
 $("show").addEventListener("change", showWhich);
-$("reset").addEventListener("click", frame);
+$("piece").addEventListener("change", () => {
+  selectedPiece = Number($("piece").value);
+  pieceEpoch++;
+  reframePiece = true;
+  $("show").value = "cloud";
+  showWhich();
+});
+$("reset").addEventListener("click", () => frame());
 window.addEventListener("keydown", (e) => { if (e.key === "r" || e.key === "R") frame(); });
 $("dl-ply").addEventListener("click", () => { if (!$("dl-ply").classList.contains("later")) location.href = "cloud.ply"; });
 $("dl-mesh").addEventListener("click", () => { if (!$("dl-mesh").classList.contains("later")) location.href = "mesh.ply"; });
