@@ -162,3 +162,50 @@ def test_a_raw_flush_error_is_reported():
     raw = livescan.RawCopy(recorder)
     raw.close()
     assert raw.error.errno == errno.ENOSPC
+
+
+def test_continue_requires_the_saved_range_and_fingerprint():
+    import json
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    from tribuutscan import calib, cloud, viewer
+
+    class Stub:
+        def __init__(self):
+            self.messages = []
+
+        def log(self, message):
+            self.messages.append(message)
+
+    previous = calib.CAMERA.spec, calib.CAMERA.mode
+    try:
+        calib.use(calib.ESTIMATES)
+        calib.use_mode(calib.CLOSE)
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            metadata = directory / "session.json"
+            good = {"depth_mode": calib.CLOSE, "camera": {"fingerprint": calib.CAMERA.fingerprint()}}
+            for session, fragment in (({}, "no camera fingerprint"),
+                                      ({**good, "depth_mode": calib.LONG}, "switch back"),
+                                      ({**good, "camera": {"fingerprint": "another camera"}}, "calibration differs")):
+                metadata.write_text(json.dumps(session))
+                stub = Stub()
+                viewer.App.begin_scan(stub, directory)  # stops before starting a worker or changing scan state
+                assert fragment in stub.messages[0]
+                with patch.object(cloud.Scanner, "restore") as restore:
+                    try:
+                        cloud.Scanner.continue_from(directory)
+                    except ValueError as e:
+                        assert fragment in str(e)
+                    else:
+                        raise AssertionError("incompatible continuation was allowed")
+                    restore.assert_not_called()
+            metadata.write_text(json.dumps(good))
+            with patch.object(cloud.Scanner, "restore") as restore:
+                sc = cloud.Scanner.continue_from(directory)
+                restore.assert_called_once_with(directory, log=print, use_mode=False)
+                assert sc.refind_needed and sc.crop is None
+    finally:
+        calib.use(previous[0])
+        calib.use_mode(previous[1])

@@ -220,16 +220,22 @@ def run(commands, replies, port=view3d.PORT):
         timing["wait"] += time.perf_counter() - t_wait
         if kind == "start":
             timing, decoded_at_start = {k: 0 for k in timing}, reader.decode_s
-            _, preset, out_dir, keep_raw, continue_from, depth_mode, remove_base, *options = cmd
+            _, preset, next_dir, next_keep_raw, continue_from, depth_mode, remove_base, *options = cmd
             options = options[0] if options else {}
             options = {"tracker": options} if isinstance(options, str) else options
             capture = options.get("capture", {})
+            previous_mode = calib.CAMERA.mode
             calib.use_mode(depth_mode)  # the law of the scanner's mode, before any frame is turned into points
             recorder = None
             log = lambda m: replies.put(("log", m))
             with source.lock:
                 if continue_from:  # go on with a saved scan: it re-finds its place, then merges into it
-                    source.scanner = cl.Scanner.continue_from(continue_from, log=log)
+                    try:
+                        source.scanner = cl.Scanner.continue_from(continue_from, log=log)
+                    except (OSError, ValueError) as e:
+                        calib.use_mode(previous_mode)
+                        replies.put(("start_failed", f"cannot continue: {e}"))
+                        continue
                     source.scanner.remove_base = remove_base
                     log(f"continuing {Path(continue_from).name}: show the scanner a part it has seen")
                 else:
@@ -238,10 +244,11 @@ def run(commands, replies, port=view3d.PORT):
                                                 merge_process=True, aim=capture.get("aim"))
                 if capture:
                     source.scanner.stats["capture"] = capture  # (session.json takes every stats key)
+                out_dir, keep_raw = next_dir, next_keep_raw
                 source.scan_id += 1
                 source.name = f"live: {out_dir.name}"
                 source.phase, source.out_dir = "scanning", out_dir
-        elif kind == "frame" and source.scanner is not None:
+        elif kind == "frame" and source.phase == "scanning" and source.scanner is not None:
             _, yuyv, grey, depth_buf, bytesperline, (t_c, t_i, t_d), depth4, cleared = cmd
             t0 = time.perf_counter()
             if keep_raw:
@@ -281,7 +288,7 @@ def run(commands, replies, port=view3d.PORT):
                 source.scanner.pick(how, uv)
             if recorder is not None:
                 recorder.pick(how, uv)  # (a replay of the raw copy takes it at the same frame)
-        elif kind == "stop" and source.scanner is not None:
+        elif kind == "stop" and source.phase == "scanning" and source.scanner is not None:
             if recorder is not None:
                 recorder.close()
                 if recorder.error is not None:

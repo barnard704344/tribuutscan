@@ -1341,6 +1341,12 @@ class App:
         return None if piece is None or piece["at"] is None else [round(piece["at"][0], 1), round(piece["at"][1], 1)]
 
     def begin_scan(self, continue_from=None):
+        if continue_from:
+            try:
+                cloud.Scanner.check_continue_camera(continue_from)
+            except (OSError, ValueError) as e:
+                self.log(f"cannot continue: {e}")
+                return
         live = self.live
         if live["proc"] is None:
             self.start_worker()
@@ -1445,6 +1451,10 @@ class App:
                     live["gpu"] = "the CPU"
                 elif rest[0].startswith("merging on a thread"):
                     live["merging"] = "thread"
+            elif kind == "start_failed":
+                self.log(rest[0])
+                self.scan_state = "idle"
+                self.lighter(False)
             elif kind == "frame_done":
                 merged, frames, points, tracking, cue, view, model, model_t = (list(rest) + [None] * 8)[:8]
                 if self.scan_state == "scanning" and cue is not None:

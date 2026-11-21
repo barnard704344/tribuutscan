@@ -1180,9 +1180,23 @@ class Scanner:
         sc.remerge({})
         return sc
 
+    @staticmethod
+    def check_continue_camera(directory):
+        """Refuse to mix camera calibrations or ranges in a continued scan."""
+        session = json.loads((Path(directory) / "session.json").read_text())
+        noted, mode = session.get("camera") or {}, session.get("depth_mode") or CLOSE
+        fingerprint = noted.get("fingerprint")
+        if not fingerprint:
+            raise ValueError("the saved scan has no camera fingerprint; start a new scan")
+        if mode != CAMERA.mode:
+            raise ValueError(f"the saved scan used {mode}; switch back to that range or start a new scan")
+        if fingerprint != CAMERA.fingerprint():
+            raise ValueError("the camera calibration differs from the saved scan; restore it or start a new scan")
+
     @classmethod
     def continue_from(cls, directory, log=print):
         """A Scanner that goes on with a saved scan: restored, and re-finding its place first."""
+        cls.check_continue_camera(directory)
         sc = cls.restore(directory, log=log, use_mode=False)  # (the scanner's own mode goes on)
         sc.refind_needed = True
         sc.crop = None  # (it would hide what is scanned next)
