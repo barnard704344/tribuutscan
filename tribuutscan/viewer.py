@@ -1484,6 +1484,21 @@ class App:
                 self.scan_state = "idle"
 
 
+        proc = live["proc"]
+        if proc is not None and (code := proc.exitcode) is not None:
+            state, name = self.scan_state, live["name"]
+            for channel in (live["commands"], live["replies"]):
+                channel.cancel_join_thread()  # an unread frame can be stuck in the dead child's pipe
+                channel.close()
+            proc.join(timeout=0)
+            live.update(proc=None, commands=None, replies=None, feeder=None, url=None, open=False,
+                        last=None, gpu="", merging="")
+            self.scan_state, self.count = "idle", None
+            self.lighter(False)
+            scan_view.update(mask=None, lost=False, model=None)
+            interrupted = f" while {state}; check {name} for partial files" if state != "idle" and name else ""
+            self.log(f"scan worker exited (code {code}){interrupted}. Start a new scan to restart it.")
+
 class Feeder(threading.Thread):
     """The scan worker's frames and replies, off the Tk loop, for the worker's whole life. While scanning it hands
     over each new depth frame with its colour pair as soon as fewer than 2 are in flight, and passes every reply
@@ -1494,6 +1509,7 @@ class Feeder(threading.Thread):
     def __init__(self, app):
         super().__init__(daemon=True)
         self.app, self.out, self.lock = app, queue.Queue(), threading.Lock()
+        self.live = {key: app.live[key] for key in ("proc", "commands", "replies")}
         self.inflight, self.sent_stamp, self.raw = 0, 0.0, {}  # raw: depth buffers in work, by capture time
         self.stats = {"sent": 0, "t0": None, "t1": None, "lag": collections.deque(maxlen=4000)}  # lag: capture -> sent
 
@@ -1503,12 +1519,14 @@ class Feeder(threading.Thread):
             self.stats = {"sent": 0, "t0": None, "t1": None, "lag": collections.deque(maxlen=4000)}
 
     def run(self):
-        live, depth, color = self.app.live, self.app.depth, self.app.color
+        live, depth, color = self.live, self.app.depth, self.app.color
         while live["proc"] is not None and live["proc"].is_alive():
             try:
                 kind, *rest = live["replies"].get(timeout=0.004)
-            except (queue.Empty, EOFError, OSError):
+            except queue.Empty:
                 kind = None
+            except (EOFError, OSError, ValueError):  # the process or its queue has shut down
+                break
             if kind is not None:
                 raw = None
                 if kind == "frame_done":
@@ -1531,7 +1549,10 @@ class Feeder(threading.Thread):
             self.sent_stamp, self.inflight = d_t, self.inflight + 1
             self.raw = {t: r for t, r in self.raw.items() if t > d_t - 2.0}  # (for the live model view)
             self.raw[d_t] = d_raw
-        live["commands"].put(("frame", c_raw, None, d_raw, depth.cap.bytesperline, (c_t, 0.0, d_t)))
+        try:
+            live["commands"].put(("frame", c_raw, None, d_raw, depth.cap.bytesperline, (c_t, 0.0, d_t)))
+        except (OSError, ValueError):
+            return  # its worker died and Tk closed the queue
         now, st = time.monotonic(), self.stats
         st["sent"] += 1
         st["t0"], st["t1"] = st["t0"] or now, now

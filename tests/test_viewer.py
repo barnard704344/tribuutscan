@@ -424,3 +424,32 @@ def test_successful_reopen_replaces_all_three_streams():
     for stream, cap in ((app.color, color), (app.ir, ir), (app.depth, depth)):
         stream.resume.assert_called_once_with(cap)
         cap.close.assert_not_called()
+
+
+def test_a_dead_worker_clears_saving_and_can_be_replaced():
+    import queue
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    old = SimpleNamespace(exitcode=1, join=Mock())
+    commands, replies = Mock(), Mock()
+    live = {"proc": old, "commands": commands, "replies": replies,
+            "feeder": SimpleNamespace(out=queue.Queue()), "url": "old", "open": True, "name": "example-scan"}
+    logs = []
+    app = SimpleNamespace(live=live, scan_state="saving", lighter=Mock(), log=logs.append,
+                          switching={"busy": False}, lost=False, countdown=SimpleNamespace(get=lambda: True),
+                          start_worker=Mock())
+    with patch.dict(viewer.scan_view):
+        viewer.App.check_scan(app)
+    assert app.scan_state == "idle" and app.count is None
+    assert all(live[k] is None for k in ("proc", "commands", "replies", "feeder", "url"))
+    assert live["open"] is False
+    assert "code 1" in logs[-1] and "partial files" in logs[-1]
+    for channel in (commands, replies):
+        channel.cancel_join_thread.assert_called_once()
+        channel.close.assert_called_once()
+    old.join.assert_called_once_with(timeout=0)
+    app.lighter.assert_called_once_with(False)
+    viewer.App.toggle_scan(app)
+    app.start_worker.assert_called_once()
+    assert app.scan_state == "counting"
