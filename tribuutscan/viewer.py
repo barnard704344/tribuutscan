@@ -1315,7 +1315,7 @@ class App:
             self.start_worker()
         aim = None if continue_from else self.aim_for_start()
         capture = {"ir": self.ir_settings(), **({"aim": aim} if aim else {})}
-        out = fr.CAPTURES / (time.strftime("%Y%m%d-%H%M%S") + "-scan")
+        out = fr.capture_dir(fr.CAPTURES, "-scan", live=True)
         live["name"], live["last"], live["merging"] = out.name, None, ""
         live["done"].clear()
         scan_view.update(keep_base=not self.remove_base.get(), lost=False, model=None)

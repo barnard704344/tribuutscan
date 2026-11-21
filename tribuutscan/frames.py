@@ -6,6 +6,7 @@ Depth is 14-bit over USB (usbdepth.py) when allowed, else 10-bit over V4L2; deco
 Y10 scale either way, and recordings note which one they hold (depth_bytesperline). They also note the
 scanner's depth mode (close / long range), whose law calib.CAMERA then uses when they are read.
 """
+import itertools
 import json
 import os
 import select
@@ -24,6 +25,25 @@ from .image import depth_to_rgb, write_png, yuyv_to_rgb
 
 W, H = 1280, 800
 CAPTURES = Path(__file__).resolve().parent.parent / "captures"
+
+
+def capture_dir(root=CAPTURES, suffix="", *, live=False):
+    """Reserve a new capture folder, never writing into an existing take.
+
+    Live scans have their own stem: a recording replay also writes a -scan
+    folder with the recording's stem. Keep both kinds discoverable as *-scan.
+    """
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S") + ("-live" if live else "")
+    for take in itertools.count():
+        extra = f"-take{take:06d}" if take else ""
+        out = root / (stamp + extra + suffix)
+        try:
+            out.mkdir()
+        except FileExistsError:
+            continue
+        return out
 
 
 def decode(color_buf, ir_buf, depth_buf, depth_bytesperline, yuyv=False):
@@ -115,8 +135,7 @@ def save(frames, root=CAPTURES, extra=None):
 
     `extra` (e.g. the camera control values in use) is merged into info.json.
     """
-    out = Path(root) / time.strftime("%Y%m%d-%H%M%S")
-    out.mkdir(parents=True, exist_ok=True)
+    out = capture_dir(root)
     write_png(out / "color.png", frames["color"])
     write_png(out / "ir.png", frames["ir"])
     write_png(out / "depth_preview.png", depth_to_rgb(frames["depth"]))
@@ -168,8 +187,7 @@ class Recorder:
         self.free = free_gb(root)
         if self.free < self.FREE_FLOOR_GB:
             raise DiskFull(f"only {self.free:.1f} GB free (recording stops under {self.FREE_FLOOR_GB:.0f} GB)")
-        self.dir = Path(root) / (time.strftime("%Y%m%d-%H%M%S") + "-rec")
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self.dir = capture_dir(root, "-rec")
         self.streams, self.zlib = tuple(k for k in STREAMS if k in streams), compress_depth
         self.frame_bytes = {**FRAME_BYTES, "depth": depth_bytesperline * H}
         (self.dir / "info.json").write_text(json.dumps({
