@@ -24,6 +24,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import open3d as o3d
@@ -37,6 +38,7 @@ from . import pointcloud as pc
 from . import prep
 from .calib import CAMERA
 from .image import yuyv_pixels, yuyv_to_rgb
+from .mesh_exports import retire as retire_mesh
 
 VOXEL_MM = 0.5  # close range: a pixel covers 0.26 mm at 25 cm
 TRUNC_VOXELS = 3.0  # truncation 1.5 mm: thinner than a 1.8 mm plate, so both its faces stay apart
@@ -321,11 +323,11 @@ def write_mesh(directory, vertices, triangles, colours, printable=None):
         pc.write_mesh_ply(directory / "solid.ply.tmp", (xyz / 1000).astype(np.float32), rgb, triangles,
                           pc.vertex_normals(xyz, triangles))
         (directory / "solid.ply.tmp").replace(directory / "solid.ply")
-    elif (directory / "solid.ply").exists():
-        (directory / "solid.ply").unlink()  # (an older one: it no longer matches the mesh)
     mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(xyz), o3d.utility.Vector3iVector(triangles.astype(np.int32)))
     mesh.compute_triangle_normals()
-    o3d.io.write_triangle_mesh(str(directory / "mesh.tmp.stl"), mesh)  # Open3D picks the format by the extension
+    # Open3D picks the format by the extension, and can return False without raising.
+    if not o3d.io.write_triangle_mesh(str(directory / "mesh.tmp.stl"), mesh):
+        raise OSError("could not write the STL")
     (directory / "mesh.tmp.stl").replace(directory / "mesh.stl")
     tmp.replace(directory / "mesh.ply")
 
@@ -361,6 +363,8 @@ def make_mesh(directory, which="merged", voxel_mm=VOXEL_MM, min_weight=MIN_WEIGH
     """Fuse a scan and write mesh.ply (the scanned surface), mesh.stl (with `close`, the closed solid for
     printing: solid.close, cut flat at the base when it is left out) and mesh.json; returns the report (its
     "solid": the closing's, or why the STL stayed open)."""
+    directory = Path(directory)
+    retire_mesh(directory)
     if scanner is None:
         scanner = cl.Scanner.restore(directory, log=lambda m: None)
     vertices, triangles, colours, report = fuse_scan(directory, which, voxel_mm, min_weight=min_weight, force=force,
@@ -373,8 +377,16 @@ def make_mesh(directory, which="merged", voxel_mm=VOXEL_MM, min_weight=MIN_WEIGH
             printable = (v, t, c) if report["solid"]["edges_closed"] else None
         except Exception as e:  # (the scanned surface goes out as the STL then)
             report["solid"] = {"edges_closed": False, "error": str(e)}
-    write_mesh(directory, vertices, triangles, colours, printable)
-    (Path(directory) / "mesh.json").write_text(json.dumps(report, indent=2))
+    if not len(triangles):
+        raise ValueError("no triangles in the fused mesh")
+    # Generate every file first. A writer failure must not publish an incomplete replacement.
+    with TemporaryDirectory(prefix=".mesh-build-", dir=directory) as tmp:
+        staged = Path(tmp)
+        write_mesh(staged, vertices, triangles, colours, printable)
+        (staged / "mesh.json").write_text(json.dumps(report, indent=2))
+        # Publish the surface last: the viewer treats it as the active export set.
+        for path in sorted(staged.iterdir(), key=lambda p: p.name == "mesh.ply"):
+            path.replace(directory / path.name)
     return report
 
 

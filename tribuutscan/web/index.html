@@ -84,7 +84,7 @@
   <div class="menu"><button>Export</button><ul>
     <li id="dl-ply">Download cloud.ply</li>
     <li id="dl-mesh" class="later">Download mesh.ply<small>make a mesh first</small></li>
-    <li id="dl-stl" class="later">Download mesh.stl<small>mm, closed, for slicers</small></li>
+    <li id="dl-stl" class="later">Download mesh.stl<small>make a full mesh first</small></li>
     <li id="dl-solid" class="later">Download solid.ply<small>closed, with colour: Blender</small></li>
     <li id="dl-png">Save view as PNG</li>
   </ul></div>
@@ -215,7 +215,8 @@ function meshColours(kind) {  // camera colour, or plain grey for the shape
 
 async function loadMesh(kind) {  // "mesh" or "solid"
   const response = await fetch(`${kind}.bin`);
-  if (!response.ok) throw new Error(`could not load ${kind}`);
+  if (response.status === 404) return false;  // retired between this poll and the download
+  if (!response.ok) throw new Error(`mesh request failed: ${response.status}`);
   const buf = await response.arrayBuffer();
   const [n, m] = new Uint32Array(buf, 0, 2);
   const xyz = new Float32Array(buf, 8, n * 3);
@@ -231,6 +232,7 @@ async function loadMesh(kind) {  // "mesh" or "solid"
   shape.obj = new THREE.Mesh(geometry, meshMaterial);
   scene.add(shape.obj);
   showWhich();
+  return true;
 }
 
 function dropShape(kind) {
@@ -402,7 +404,11 @@ async function poll() {
     if (Date.now() - messageAt > 8000)  // a Process result stays readable for a while
       $("status").innerHTML = info.phase === "optimising" ? "<b>●</b> optimising…" : "<b>●</b> connected";
     $("dl-mesh").classList.toggle("later", !info.mesh);
-    $("dl-stl").classList.toggle("later", !info.mesh);
+    $("dl-stl").classList.toggle("later", !info.stl);
+    $("dl-stl").querySelector("small").textContent = !info.stl ? "make a full mesh first"
+      : info.stl_state === "closed" ? "mm, closed, for slicers"
+      : info.stl_state === "open" ? "mm, unsealed surface"
+      : "mm, closure not recorded";
     $("dl-solid").classList.toggle("later", !info.solid);
     $("crop-off").classList.toggle("later", !session.crop);
     let reloaded = false;
@@ -411,7 +417,7 @@ async function poll() {
       option.disabled = !info[kind];
       option.textContent = info[kind] ? SHAPE_NAMES[kind] : `${SHAPE_NAMES[kind]} (make a mesh first)`;
       if (info[kind] && info[kind] !== shape.version) {
-        await loadMesh(kind);
+        if (!(await loadMesh(kind))) continue;
         shape.version = info[kind];
         reloaded = true;
         if (kind === "mesh") { $("show").value = "mesh"; showWhich(); }  // a new mesh: show it

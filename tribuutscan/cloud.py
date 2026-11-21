@@ -31,6 +31,7 @@ from . import markers
 from . import pointcloud as pc
 from . import prep
 from .calib import CAMERA, CLOSE
+from .mesh_exports import retire as retire_mesh
 from .image import yuyv_pixels, yuyv_to_rgb
 
 PRESETS_MM = {"small": 0.5, "medium": 1.0, "large": 2.0}  # point distance; depth noise ~1 mm (estimate)
@@ -2106,6 +2107,7 @@ def save(directory, cloud, poses, stats, preset, min_seen=MIN_SEEN):
     """Write cloud.ply, poses.txt and session.json; returns (path, number of points)."""
     directory.mkdir(parents=True, exist_ok=True)
     xyz, rgb, normals, seen, min_seen = ply_arrays(cloud, poses, min_seen)
+    retire_mesh(directory)
     out = directory / "cloud.ply"
     pc.write_ply(out, xyz, rgb, normals=normals, seen=seen)
     write_poses(directory / "poses.txt", poses)
