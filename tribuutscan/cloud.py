@@ -1161,6 +1161,9 @@ class Scanner:
             sc.merged_data[int(index)] = (m["points"][a:b], m["rgb"][a:b], m["normals"][a:b])
         sc.pose = sc.last_merged = sc.poses[-1][1]
         sc.stats.update({k: session[k] for k in ("frames", "merged", "lost", "relocked", "shape_refinds") if k in session})
+        # Re-saving old geometry must not claim it was tracked with the current camera.
+        sc.stats["depth_mode"] = session.get("depth_mode") or CLOSE
+        sc.stats["camera"] = session.get("camera")
         sc.object_turns = sc.stats["object_turns"] = bool(session.get("object_turns", False))
         sc.crop = session.get("crop")
         sc.sources = [{**src, "rec": str((directory / src["rec"]).resolve())}
@@ -2114,8 +2117,8 @@ def save(directory, cloud, poses, stats, preset, min_seen=MIN_SEEN):
     (directory / "session.json").write_text(json.dumps({
         "preset": preset, "point_distance_mm": cloud.point_mm, "min_seen": min_seen, "mode": stats.get("mode"),
         "raw_points": cloud.raw_points, "cubes": len(cloud), "points_kept": len(xyz), **stats,
-        "depth_mode": CAMERA.mode,
-        "camera": {"source": CAMERA.source, "fingerprint": CAMERA.fingerprint()},
+        "depth_mode": stats.get("depth_mode", CAMERA.mode),
+        "camera": stats.get("camera", {"source": CAMERA.source, "fingerprint": CAMERA.fingerprint()}),
         "note": ("distances rest on the estimated depth law and field of view" if CAMERA.estimate
                  else f"camera: {CAMERA.source} calibration"),
     }, indent=2))

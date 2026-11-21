@@ -209,3 +209,35 @@ def test_continue_requires_the_saved_range_and_fingerprint():
     finally:
         calib.use(previous[0])
         calib.use_mode(previous[1])
+
+
+def test_worker_reports_a_rejected_continue_without_exiting():
+    import json
+    import queue
+    import sys
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    from tribuutscan import calib, view3d
+
+    commands, replies = queue.Queue(), queue.Queue()
+    before = calib.CAMERA.mode
+    with tempfile.TemporaryDirectory() as tmp:
+        old = Path(tmp) / "old-scan"
+        old.mkdir()
+        (old / "session.json").write_text(json.dumps({
+            "depth_mode": calib.CLOSE, "camera": {"fingerprint": "wrong fingerprint"},
+        }))
+        commands.put(("start", "small", Path(tmp) / "next-scan", False, old, calib.CLOSE, True))
+        commands.put(("quit",))
+        try:
+            # No network listener, scanner, or writer is needed to test the worker's error reply.
+            with patch.object(view3d, "serve"), patch.object(sys, "path", sys.path[:]):
+                livescan.run(commands, replies)
+            assert replies.get_nowait()[0] == "ready"
+            kind, reason = replies.get_nowait()
+            assert kind == "start_failed" and "camera calibration differs" in reason
+            assert calib.CAMERA.mode == before and replies.empty()
+            assert not (Path(tmp) / "next-scan").exists()
+        finally:
+            calib.use_mode(before)

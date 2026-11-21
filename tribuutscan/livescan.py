@@ -282,7 +282,7 @@ def run(commands, replies, port=view3d.PORT):
                          s.view_codes, t_d))
         elif kind == "frame":
             replies.put(("frame_done", 0, 0, 0))
-        elif kind == "pick" and source.scanner is not None:  # a click on the preview: the object is there
+        elif kind == "pick" and source.phase == "scanning" and source.scanner is not None:  # a click on the preview: the object is there
             _, how, uv = cmd
             with source.lock:
                 source.scanner.pick(how, uv)

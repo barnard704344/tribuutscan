@@ -1019,10 +1019,14 @@ def test_raw_sources_follow_the_collection_when_moved():
         assert [s["rec"] for s in session["sources"]] == ["../sibling-rec", "nested-rec"]
 
         # Pre-existing absolute metadata still opens in place.
-        legacy = {**session, "sources": [{**s, "rec": str(path)} for s, path in zip(session["sources"], rec_dirs)]}
+        legacy = {**session, "camera": {"source": "other", "fingerprint": "old fingerprint"},
+                  "sources": [{**s, "rec": str(path)} for s, path in zip(session["sources"], rec_dirs)]}
         session_path.write_text(json.dumps(legacy))
         old = cl.Scanner.restore(scan_dir, log=lambda *a: None)
         assert old.sources == sc.sources
+        old.save(scan_dir)
+        migrated = json.loads(session_path.read_text())
+        assert migrated["camera"] == legacy["camera"] and migrated["sources"] == session["sources"]
         old.close()
         session_path.write_text(json.dumps(session))
 
