@@ -1028,6 +1028,7 @@ class Scanner:
             if self.hold and self.unconfirmed and "object_anchor" in self.unconfirmed:
                 self.cue["object_recovery_pending"] = True
             if not self.hold:
+                self.cue.pop("object_recovery_pending", None)
                 confirmed = self.unconfirmed
                 self.unconfirmed = None
                 if confirmed and "object_anchor" in confirmed:
@@ -1772,6 +1773,10 @@ class Scanner:
             pts = []
             found, count = self.features.relative_pose(current, feat, self.feature_rng, pts, pairs=pairs)
             if found is None or count < REFIND_MIN_INLIERS or 2 * count <= len(pairs):
+                continue
+            # A single object's features cannot distinguish a symmetric opposite face.
+            # Allow a different angle, not a view facing away from its reference.
+            if found[2, 2] <= 0.0:
                 continue
             # A row of mutually matching keypoints is not a rigid spatial reference.
             source = pts[0]

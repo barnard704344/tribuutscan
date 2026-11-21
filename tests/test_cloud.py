@@ -1137,6 +1137,11 @@ def test_object_features_relock_cross_angle_but_reject_conflicts_and_bad_depth_f
         s.gpu_step.reset_mock()
         assert s.refind_object_features({"t": 4.}, None, current_pts, markers) is None
         s.gpu_step.assert_not_called()
+        opposite = np.diag([-1., 1., -1.])
+        s.feature_anchors.clear()
+        s.feature_anchors.append((4, np.eye(4), (current_pts @ opposite.T + [0., 0., 620.], desc)))
+        assert s.refind_object_features({"t": 8.}, None, current_pts, markers) is None
+        s.gpu_step.assert_not_called()  # appears reachable after a long loss, but could be the other face
         # Replicated descriptor cannot provide different anchors for one point.
         assert not features.mutual_matches(current, (ref_pts, np.repeat(desc[:1], len(desc), axis=0)))
     finally:
@@ -1160,7 +1165,16 @@ def test_object_feature_recovery_reports_success_only_after_consecutive_confirma
         s.accepted, s.odd_markers = Mock(return_value=False), Mock(return_value=False)
         s.relock, s.refind_anywhere, s.refind_shape = Mock(return_value=False), Mock(return_value=False), Mock(return_value=False)
         s.likeness = Mock(return_value="object")
-        s.refind_object_features = Mock(return_value=(2, 73))
+        def found(*args):
+            s.pose = np.eye(4)
+            s.pose[0, 3] = .02
+            return 2, 73
+        s.refind_object_features = Mock(side_effect=found)
+        old_cloud = s.cloud
+        old_pose = s.pose.copy()
+        # A confirmed reference survives loss of the provisional hypothesis.
+        anchor = (2, old_pose, (xyz[:50], None))
+        s.feature_anchors.append(anchor)
         with patch.object(cl, "frame_points", return_value=(xyz, None, pix)), \
                 patch.object(cl, "frame_shape", return_value=(800, 1280)), \
                 patch.object(cl, "isolate_mask", return_value=(np.ones(len(xyz), bool), None)) as isolate:
@@ -1169,7 +1183,8 @@ def test_object_feature_recovery_reports_success_only_after_consecutive_confirma
             assert not logs and s.stats["merged"] == 3
             isolate.return_value = np.zeros(len(xyz), bool), None
             assert not s.feed({"t": 3.05})
-            assert not logs and s.unconfirmed is None
+            assert not logs and s.unconfirmed is None and s.cloud is old_cloud
+            assert np.array_equal(s.pose, old_pose) and s.feature_anchors[0] is anchor
             isolate.return_value = np.ones(len(xyz), bool), None
             assert not s.feed({"t": 3.1})
             s.accepted.return_value = True
