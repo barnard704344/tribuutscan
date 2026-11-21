@@ -94,7 +94,7 @@ def test_stop_makes_the_mesh_after_optimise():
             commands, replies = ctx.Queue(), ctx.Queue()
             proc = ctx.Process(target=livescan.run, args=(commands, replies, 0), daemon=True)
             proc.start()
-            got = []
+            got, live_updates = [], []
 
             def reply(want):
                 while True:
@@ -103,11 +103,15 @@ def test_stop_makes_the_mesh_after_optimise():
                     except queue.Empty:
                         raise AssertionError(f"no {want} from the worker; got {got}")
                     got.append(kind)
+                    if kind == "coverage_update":
+                        live_updates.append(rest)
                     if kind == want:
                         return rest
 
             reply("ready")
             commands.put(("start", "small", Path(tmp) / "scan", True, None, calib.CAMERA.mode, True))
+            commands.put(("coverage_subscribe", 12, 1))
+            assert reply("coverage_update")[:2] == [12, 1]
             frames = 0
             for bufs in fr.read_raw(rec):
                 frame = ("frame", bufs["color"], None, bufs["depth"], bufs["bytesperline"], bufs["t"])
@@ -115,6 +119,9 @@ def test_stop_makes_the_mesh_after_optimise():
                 frames += 1
                 assert reply("frame_done")[1] == frames  # the same scanner/pose history continues
                 if frames == 15:
+                    if not any(len(update[-2]) for update in live_updates):
+                        reply("coverage_update")  # last accepted merge is sent even when the camera goes quiet
+                    assert any(update[:2] == [12, 1] and len(update[-2]) > 0 for update in live_updates)
                     commands.put(("pause",))
                     reply("paused")
                     commands.put(frame)  # defensive worker-side rejection of an out-of-phase frame
