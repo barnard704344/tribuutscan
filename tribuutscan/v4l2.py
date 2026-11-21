@@ -113,26 +113,31 @@ class Capture:
 
     def __init__(self, dev, fourcc, width, height, nbufs=4):
         self.fd = os.open(dev, os.O_RDWR)
-        fmt = bytearray(208)
-        struct.pack_into("<I", fmt, 0, BUF_TYPE_CAPTURE)
-        struct.pack_into("<III", fmt, 8, width, height, struct.unpack("<I", fourcc.ljust(4).encode())[0])
-        fcntl.ioctl(self.fd, VIDIOC_S_FMT, fmt)
-        self.width, self.height, fcc, _, self.bytesperline, self.sizeimage = struct.unpack_from("<IIIIII", fmt, 8)
-        self.fourcc = struct.pack("<I", fcc).decode()
-
-        req = bytearray(20)
-        struct.pack_into("<IIII", req, 0, nbufs, BUF_TYPE_CAPTURE, MEMORY_MMAP, 0)
-        fcntl.ioctl(self.fd, VIDIOC_REQBUFS, req)
         self._bufs = []
-        for i in range(struct.unpack_from("<I", req, 0)[0]):
-            b = self._buffer(i)
-            fcntl.ioctl(self.fd, VIDIOC_QUERYBUF, b)
-            length = struct.unpack_from("<I", b, 72)[0]
-            offset = struct.unpack_from("<I", b, 64)[0]
-            self._bufs.append(mmap.mmap(self.fd, length, mmap.MAP_SHARED, mmap.PROT_READ, offset=offset))
-            fcntl.ioctl(self.fd, VIDIOC_QBUF, b)
-        fcntl.ioctl(self.fd, VIDIOC_STREAMON, struct.pack("<I", BUF_TYPE_CAPTURE))
-        self._streaming = True
+        self._streaming = False
+        try:
+            fmt = bytearray(208)
+            struct.pack_into("<I", fmt, 0, BUF_TYPE_CAPTURE)
+            struct.pack_into("<III", fmt, 8, width, height, struct.unpack("<I", fourcc.ljust(4).encode())[0])
+            fcntl.ioctl(self.fd, VIDIOC_S_FMT, fmt)
+            self.width, self.height, fcc, _, self.bytesperline, self.sizeimage = struct.unpack_from("<IIIIII", fmt, 8)
+            self.fourcc = struct.pack("<I", fcc).decode()
+
+            req = bytearray(20)
+            struct.pack_into("<IIII", req, 0, nbufs, BUF_TYPE_CAPTURE, MEMORY_MMAP, 0)
+            fcntl.ioctl(self.fd, VIDIOC_REQBUFS, req)
+            for i in range(struct.unpack_from("<I", req, 0)[0]):
+                b = self._buffer(i)
+                fcntl.ioctl(self.fd, VIDIOC_QUERYBUF, b)
+                length = struct.unpack_from("<I", b, 72)[0]
+                offset = struct.unpack_from("<I", b, 64)[0]
+                self._bufs.append(mmap.mmap(self.fd, length, mmap.MAP_SHARED, mmap.PROT_READ, offset=offset))
+                fcntl.ioctl(self.fd, VIDIOC_QBUF, b)
+            fcntl.ioctl(self.fd, VIDIOC_STREAMON, struct.pack("<I", BUF_TYPE_CAPTURE))
+            self._streaming = True
+        except BaseException:
+            self.close()
+            raise
 
     @staticmethod
     def _buffer(index=0):
@@ -147,22 +152,31 @@ class Capture:
         Also sets `last_time` (kernel capture time, seconds on the CLOCK_MONOTONIC scale of
         time.monotonic(); time.monotonic() at dequeue if the driver gave none) and `last_sequence`.
         """
-        if not select.select([self.fd], [], [], timeout)[0]:
+        fd = self.fd
+        if fd is None:
+            raise OSError("capture closed")
+        if not select.select([fd], [], [], timeout)[0]:
             return None
         b = self._buffer()
-        fcntl.ioctl(self.fd, VIDIOC_DQBUF, b)
+        fcntl.ioctl(fd, VIDIOC_DQBUF, b)
         index = struct.unpack_from("<I", b, 0)[0]
         used = struct.unpack_from("<I", b, 8)[0]
-        data = bytes(self._bufs[index][:used])
+        try:
+            data = bytes(self._bufs[index][:used])
+        except ValueError:
+            if self.fd is None:
+                raise OSError("capture closed") from None
+            raise
         self.last_time, self.last_sequence = buffer_time(b)  # before QBUF: re-queueing clears these fields
-        fcntl.ioctl(self.fd, VIDIOC_QBUF, b)
+        fcntl.ioctl(fd, VIDIOC_QBUF, b)
         if not self.last_time:
             self.last_time = time.monotonic()
         return data
 
     def ready(self):
         """True if another frame is already waiting (reading it now would not block)."""
-        return bool(select.select([self.fd], [], [], 0)[0])
+        fd = self.fd
+        return fd is not None and bool(select.select([fd], [], [], 0)[0])
 
     def frames(self):
         while self._streaming:
@@ -176,15 +190,20 @@ class Capture:
                 yield data
 
     def close(self):
-        if self._streaming:
-            self._streaming = False
-            try:
-                fcntl.ioctl(self.fd, VIDIOC_STREAMOFF, struct.pack("<I", BUF_TYPE_CAPTURE))
-            except OSError:
-                pass  # the device is gone (the scanner reset itself): nothing left to stop
-            for m in self._bufs:
-                m.close()
-            os.close(self.fd)
+        if self.fd is None:
+            return
+        fd, streaming = self.fd, self._streaming
+        self._streaming, self.fd = False, None
+        try:
+            if streaming:
+                try:
+                    fcntl.ioctl(fd, VIDIOC_STREAMOFF, struct.pack("<I", BUF_TYPE_CAPTURE))
+                except OSError:
+                    pass  # unplugged or reset
+            for mapping in self._bufs:
+                mapping.close()
+        finally:
+            os.close(fd)
 
     def __enter__(self):
         return self

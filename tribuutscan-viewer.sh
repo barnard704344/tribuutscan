@@ -1,3 +1,4 @@
 #!/bin/sh
 # triBUUTSCAN live colour + IR + depth viewer (Creality Ferret Pro).
-cd "$HOME/Desktop/dev/tribuutscan" && exec python3 -m tribuutscan.viewer "$@"
+repo=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit
+cd -- "$repo" && exec python3 -m tribuutscan.viewer "$@"

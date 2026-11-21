@@ -15,10 +15,11 @@ Each frame is first cut down to the object: the depth window, then the table or 
 Writes captures/<stamp>-scan/: cloud.ply (metres, x right, y up, z toward the scanner),
 poses.txt (merged frames), frame_poses.txt (every tracked frame), labels.npz, session.json (with the
 camera model's source and fingerprint, and `sources`: the recordings the frame indices point into,
-so a scan can be fused again from its raw frames).
+relative to the saved scan folder so the paths survive moving the scan and recordings together).
 """
 import bisect
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -30,6 +31,7 @@ from . import markers
 from . import pointcloud as pc
 from . import prep
 from .calib import CAMERA, CLOSE
+from .mesh_exports import retire as retire_mesh
 from .image import yuyv_pixels, yuyv_to_rgb
 
 PRESETS_MM = {"small": 0.5, "medium": 1.0, "large": 2.0}  # point distance; depth noise ~1 mm (estimate)
@@ -60,6 +62,7 @@ GUESS_MAX_S = 0.3  # the motion guess extrapolates the last motion over at most 
                    # it ran on and on, 7 -> 177 mm at the object over 20 lost frames of the hand scan)
 REFIND_KEYFRAMES, REFIND_TRIES = 16, 3  # refind_anywhere: keyframes compared, best ones tried...
 REFIND_MIN_INLIERS = 50  # ...and the ORB inliers a pose found anywhere needs (the hand scan's had 141-245)...
+OBJECT_ANCHORS, OBJECT_ANCHOR_EVERY = 8, 8  # bounded in-memory confirmed RGB-D reference views
 REFIND_MIN_AWAY = 25  # ...this many of them on the still scene around the object, not on it: the synthetic plate
                       # (the same markers on both faces, a plain table) was re-found mirrored, 180 degrees off
 REFIND_MM_S, REFIND_DEG_S, REFIND_SLACK = 300.0, 60.0, (50.0, 15.0)  # ...and must be reachable in the time lost:
@@ -72,10 +75,6 @@ SHAPE_EVERY_S = 0.25  # refind_shape: at most one try per this much frame time w
 MARKER_CHECK_MM, MARKER_CHECK_DEG, MARKER_CHECK_MIN = 5.0, 2.0, 3  # marker_check: a solve this far from the markers' own
     # placement is redone from it, and must then hold this many of them
 TURN_AXIS_MIN_DEG = 20.0  # turn_axis: poses turned at least this far from the first one count
-PIECE_AFTER_S = 1.0  # lost this long (frame time, frames with depth) with every recovery failing, the scan goes on
-# in a new piece: a pose chain, scene and tracking volume of its own, joined to the others after Stop
-# (join_pieces). Lost frames were thrown away before (2026-11-05: a lost stretch of the 11-02 17:07 hand scan,
-# replayed as a fresh start, tracked 34 of its 35 frames)
 PIECE_MIN_KEYFRAMES = 5  # a piece with fewer keyframes is dropped as noise
 LOOK_FRAMES = 30  # the object's look (Scanner.look, look_of): its source in the last this many tracked frames...
 LOOK_SIZE, LOOK_POINTS, LOOK_NEAR = (0.5, 2.0), 0.35, (0.3, 100.0)  # ...and a lost frame's piece is "object" with
@@ -83,20 +82,14 @@ LOOK_SIZE, LOOK_POINTS, LOOK_NEAR = (0.5, 2.0), 0.35, (0.3, 100.0)  # ...and a l
 # max(30%, 100 mm) of the look's (likeness)...
 OTHER_SIZE, OTHER_POINTS = (1 / 3, 3.0), 0.1  # ...and "other" (clearly something else) with its r90 outside these
 # times, its points under this share, or its distance off by more than twice LOOK_NEAR; "unsure" in between. An
-# "other" frame starts PIECE_AFTER_S again and tries no recovery (orb_guess, relock, refind_anywhere, refind_shape
+# "other" frame tries no recovery (orb_guess, relock, refind_anywhere, refind_shape
 # all need the object in view). On 2026-11-06 the dev scan looked away (the shelf, the wall, the floor) and every
 # 1 s went on in a new piece on what was there, each next one taken where the last had its object, until one took
 # the boxes behind the hand (66 cm) when the hand came back; and the look-away ran at 6 fps, frames of 100 ms
 # median and 400 ms p90 (FPFH on the wall) against 33 ms tracked. The hand there: 4100-5665 points, r90 82-89 mm
 # at 345-380 mm; what it looked at: 9-786 points, r90 9-65 mm at 454-716 mm, or 11-20k points, r90 190-261 mm at
 # 651-678 mm
-BEYOND = True  # a lost "unsure" frame whose piece lies further than LOOK_NEAR from the object's distance starts the
-# piece clock again, its recoveries tried as before. The 11-06 18:39 scan (devclicks) swung from the hand to the shelf
-# (5.9x the points, r90 2.7x, 188 mm further; near 113) and later to the two hands at the left (their size, 1.4-1.5x
-# near further): "unsure" for 1 s each, and pieces began there (the shelf's 1.4M points, 700 mm across). Every piece
-# begun on lost frames in the other datasets was within 0.61 near. Evaluate (2026-11-12): devclicks GPU 9 -> 8 pieces,
-# CPU 11 -> 9, only the clicked ones left out; devaway, devplatform, handgap unchanged. Requiring 3x the points as well
-# kept the far hands' pieces; as "other" (no recovery, relock off for the loss) the GPU tracker lost devaway, devclicks
+BEYOND = True  # an "unsure" frame far beyond the object is not useful as a future piece seed
 GAP_S = 0.5  # the first frame tracked after this long without one (lost frames, or none came) is checked by shape:
     # its solve began at the last good pose, and a turn about a vertical axis hides in horizontal faces (the
     # synthetic block on a platform, 3 s left out: "tracked" 37 degrees off)
@@ -689,7 +682,7 @@ class Scanner:
     """
 
     def __init__(self, preset="small", log=print, mode="still", track_with="joint", remove_base=True,
-                 merge_min_s=None, live_view=False, merge_process=False, aim=None, picks=None):
+                 merge_min_s=None, live_view=False, merge_process=False, aim=None, picks=None, piece_starts=None):
         try:
             from . import fuse  # Open3D: frame-to-frame ICP
         except ImportError:
@@ -698,6 +691,7 @@ class Scanner:
         self.fuse, self.log, self.preset = fuse, log, preset
         self.rng = np.random.default_rng(0)
         self.cloud = VoxelCloud(PRESETS_MM[preset])
+        self.on_piece_finished = None  # optional read-only browser snapshot before the live cloud resets
         self.stride = max(1, int(PRESETS_MM[preset] / PIXEL_MM))
         self.pose, self.motion, self.prev, self.last_merged = np.eye(4), np.eye(4), None, None
         self.poses = []
@@ -792,6 +786,9 @@ class Scanner:
         self.lost_since = None  # frame time the current loss began (frames with depth only)
         self.last_source = None  # the last tracked source's centre (camera mm): where a new piece looks first
         import collections
+        self.feature_anchors = collections.deque(maxlen=OBJECT_ANCHORS)
+        self.feature_rng = np.random.default_rng(0)
+        self.feature_anchor_at = self.feature_retry_t = None
         self.look = collections.deque(maxlen=LOOK_FRAMES)  # look_of the look piece's last tracked sources (likeness)
         self.look_piece = 0  # the piece whose tracked frames teach the look: the first, or the last one a click started
         self.like_source = None  # centre (camera mm) of the last lost frame's piece that looked like the object
@@ -800,6 +797,7 @@ class Scanner:
         # Clicks on the viewer's preview while scanning ("the object is there", pick): the one the next frame takes,
         # and a replay's, by scanner index, from the raw copy's picks.csv (recording_picks)
         self.pick_due, self.planned_picks = None, dict(picks or {})
+        self.piece_pending, self.planned_piece_starts = False, set(piece_starts or ())
         self.reach_kept = None  # object_reach() when the last piece ended
         self.gpu_reset_due = False  # the tracking volume is emptied at the new piece's first frame
         self.stats["pieces"] = 1
@@ -823,12 +821,12 @@ class Scanner:
         seg = self.seg_stride  # the object / base search's grid (merging takes every self.stride-th pixel)
         all_xyz, _, all_pix = frame_points(frame, seg, colour=False)  # normals and colour only for merging
         picked = self.take_pick(index, all_xyz, all_pix)  # a click on the preview: the depth pixel it chose
-        if picked is not None and self.prev is not None and not self.lost_run:  # tracking: on what it follows?
-            if self.on_object_at(picked):
-                self.log("picked: that is the object the scan follows")
-                picked = None
-            else:  # something else: the scan goes on from there, in a piece of its own (joined after Stop)
-                self.start_piece(index, by_click=True)
+        if picked is not None and self.prev is not None and not self.lost_run:
+            # An aim click cannot change the target of a locked pose chain.
+            self.log("picked: tracking is locked; keeping the current model")
+            picked = None
+        # An explicit split uses the new view, not the old pose's projected object mask.
+        split = self.piece_pending or index in self.planned_piece_starts
         scene = self.scene
         t = frame.get("t")
         guess = self.motion
@@ -843,7 +841,9 @@ class Scanner:
             at = self.aim if self.prev is None and not self.refind_needed else None  # (the first frame only)
             if self.prev is None and len(self.pieces) > 1:  # a new piece's first frame: the object as last seen
                 seeds, at = self.piece_start_seeds(frame, all_xyz, all_pix)
-            if self.prev is not None:
+            if split:
+                seeds, at = self.piece_start_seeds(frame, all_xyz, all_pix)
+            elif self.prev is not None:
                 to_world = scene_transform(self.pose @ guess)
                 seeds = scene.core(all_xyz, to_world)
                 if self.lost_run and self.colours.ratio is not None:  # lost, the guess unsure: the object's colours
@@ -866,17 +866,27 @@ class Scanner:
                 self.frame_table = table_normal(all_xyz, plane)
         xyz, pix = all_xyz[keep], all_pix[keep]
         if len(xyz) < 500 // seg ** 2:
+            if self.unconfirmed is not None:
+                self.take_back()  # loss of depth also breaks consecutive confirmation
             stats["lost"] += 1
             stats["tracking"] = False
             self.lost_run += 1
             self.lost_since, self.cue["away"] = None, True  # (nothing like the object: no new piece from this)
-            if picked is not None and self.prev is None:  # a piece started by a click waits for depth there
+            if picked is not None and (self.prev is None or self.lost_run):  # wait for depth at the chosen target
                 self.pick_due = ("depth", picked)
             self.track_log.append((index, "too few points", None))
             if self.gpu is not None:
                 self.gpu_source(frame, xyz, pix)  # (what little there is, in orange over the shape)
                 self.show_ghost()
             return False
+        if split:
+            self.piece_pending = False
+            self.start_piece(index)
+            self.refind_needed = False
+            scene = self.scene
+            guess = self.motion
+            if scene.mode == "turntable":
+                scene.observe(all_xyz, all_pix, shape, np.eye(4))
         seen = look_of(xyz)  # (the piece's size and distance: likeness when lost, the object's look when tracked)
         status = "first" if self.prev is None else "tracked"
         if fuse is not None:
@@ -902,6 +912,7 @@ class Scanner:
                 if found is None:
                     stats["lost"] += 1
                     stats["tracking"] = False
+                    self.lost_run += 1
                     self.track_log.append((index, "lost", None))
                     return False
                 self.pose, self.motion, self.motion_s = found, np.eye(4), None
@@ -944,8 +955,11 @@ class Scanner:
                         self.view_codes = self.gpu.preview(self.gpu_base(), self.preview_weight())
                 elif self.step_due():
                     step, ok = self.joint_step(levels, xyz, marker_pts, guess, index)
-                else:  # (the CPU tracker after the scanner looked away: not from the last pose, a new piece)
+                else:  # the CPU tracker looked away: do not trust frame-to-frame tracking
                     step, ok = np.eye(4), False
+                confirming_object = self.unconfirmed is not None and "object_anchor" in self.unconfirmed
+                if confirming_object and status != "tracked":
+                    ok = False  # a different global pose is not confirmation of the object match
                 like = "object" if ok else self.likeness(seen)  # (a piece of something else: no recovery tried)
                 undo = None if ok or self.unconfirmed is not None else self.undo_point(index)
                 if ok and status != "tracked":  # (re-found by shape after a gap: no motion to go on from)
@@ -954,14 +968,19 @@ class Scanner:
                     self.motion = step
                     self.motion_s = (t - self.last_t) if (t is not None and self.last_t is not None) else None
                     self.pose = self.pose @ self.motion
-                elif like != "other" and self.relock_due() and self.relock(*self.relock_source(levels, xyz), marker_pts):
+                elif (not confirming_object and like != "other" and (self.relock_due() or (self.gpu is None and like == "object"))
+                      and self.relock(*self.relock_source(levels, xyz), marker_pts)):
                     stats["relocked"] += 1
                     status = "relocked"
-                elif like != "other" and self.refind_anywhere(frame, pix, xyz, marker_pts, feat):
+                elif (like != "other" and self.unconfirmed is None
+                      and (anchor := self.refind_object_features(frame, pix, xyz, marker_pts)) is not None):
+                    status = "re-found by object features"
+                    undo["object_anchor"] = anchor
+                elif not confirming_object and like != "other" and self.refind_anywhere(frame, pix, xyz, marker_pts, feat):
                     stats["relocked"] += 1
                     status = "re-found"
                     feat = self.refind_feat
-                elif like != "other" and self.refind_shape(xyz, marker_pts, t):
+                elif not confirming_object and like != "other" and self.refind_shape(xyz, marker_pts, t):
                     stats["relocked"] += 1
                     status = "re-found by shape"
                 else:
@@ -974,17 +993,15 @@ class Scanner:
                     self.cue["away"] = like == "other"  # (the viewer: the object is out of view)
                     self.track_log.append((index, "lost", None))
                     self.show_ghost()
-                    if picked is not None:  # clicked while lost, and not found again there: a new piece, at once,
-                        self.start_piece(index + 1, by_click=True)  # its first frame taken at the click
-                        self.pick_due = ("depth", picked)
-                    else:
-                        self.lost_long(t, index, like, xyz)
+                    self.lost_long(t, index, like, xyz)
                     return False
             if status.startswith("re-found") and self.track_with == "gpu" and undo is not None:
                 self.unconfirmed = undo
             self.last_t, self.lost_run, self.lost_since = t, 0, None
             self.last_source, self.like_source, self.away_frames = xyz.mean(0), None, 0
             self.cue.pop("away", None)
+            if self.unconfirmed is None:
+                self.feature_retry_t = None
             if len(self.pieces) - 1 == self.look_piece:  # the object's look, from the first piece (or a clicked one)
                 self.look.append(seen)
             self.prev = True if levels is None else levels
@@ -1008,8 +1025,17 @@ class Scanner:
             self.hold = REFIND_HOLD + 1
         if self.hold:  # a pose found anywhere is merged only once the frames after it have tracked from it
             self.hold -= 1
+            if self.hold and self.unconfirmed and "object_anchor" in self.unconfirmed:
+                self.cue["object_recovery_pending"] = True
             if not self.hold:
+                self.cue.pop("object_recovery_pending", None)
+                confirmed = self.unconfirmed
                 self.unconfirmed = None
+                if confirmed and "object_anchor" in confirmed:
+                    ref, inliers = confirmed["object_anchor"]
+                    stats["relocked"] += 1
+                    stats["object_feature_refinds"] = stats.get("object_feature_refinds", 0) + 1
+                    self.log(f"Reacquired using object features ({inliers} matches to frame {ref}).")
             return False
         self.since_merge = getattr(self, "since_merge", 0) + 1
         if self.last_merged is not None:
@@ -1043,6 +1069,8 @@ class Scanner:
         elif self.prev is not None and self.prev is not True:
             self.keyframes.append((index, self.pose.copy(), np.asarray(self.prev[-1].points) * 1000,
                                    self.prev_feat, marker_pts))
+        if self.gpu is not None and self.features is not None:
+            self.remember_object_features(frame, index, all_pix[self.last_view[1]])
         self.poses.append((index, self.pose.copy()))
         stats["merged"] += 1
         job = (frame, index, self.pose.copy(), pix, seg)
@@ -1056,7 +1084,7 @@ class Scanner:
 
     def add_source(self, rec, first_index):
         """Frames from `rec` (a Recorder directory) are fed from scanner index `first_index` on."""
-        self.sources.append({"rec": str(rec), "first_index": int(first_index)})
+        self.sources.append({"rec": str(Path(rec).absolute()), "first_index": int(first_index)})
 
     def frame_poses(self):
         """[(index, pose)] of every tracked frame (a scan saved before these were kept: its merged ones)."""
@@ -1159,9 +1187,13 @@ class Scanner:
             sc.merged_data[int(index)] = (m["points"][a:b], m["rgb"][a:b], m["normals"][a:b])
         sc.pose = sc.last_merged = sc.poses[-1][1]
         sc.stats.update({k: session[k] for k in ("frames", "merged", "lost", "relocked", "shape_refinds") if k in session})
+        # Re-saving old geometry must not claim it was tracked with the current camera.
+        sc.stats["depth_mode"] = session.get("depth_mode") or CLOSE
+        sc.stats["camera"] = session.get("camera")
         sc.object_turns = sc.stats["object_turns"] = bool(session.get("object_turns", False))
         sc.crop = session.get("crop")
-        sc.sources = list(session.get("sources", []))
+        sc.sources = [{**src, "rec": str((directory / src["rec"]).resolve())}
+                      for src in session.get("sources", [])]  # absolute legacy paths still work
         if session.get("piece_list"):  # a scan of joined pieces (their frames already in one world)
             sc.pieces = [dict(p) for p in session["piece_list"]]
             sc.piece_joins = [tuple(j) for j in session.get("piece_joins", [])]
@@ -1180,9 +1212,23 @@ class Scanner:
         sc.remerge({})
         return sc
 
+    @staticmethod
+    def check_continue_camera(directory):
+        """Refuse to mix camera calibrations or ranges in a continued scan."""
+        session = json.loads((Path(directory) / "session.json").read_text())
+        noted, mode = session.get("camera") or {}, session.get("depth_mode") or CLOSE
+        fingerprint = noted.get("fingerprint")
+        if not fingerprint:
+            raise ValueError("the saved scan has no camera fingerprint; start a new scan")
+        if mode != CAMERA.mode:
+            raise ValueError(f"the saved scan used {mode}; switch back to that range or start a new scan")
+        if fingerprint != CAMERA.fingerprint():
+            raise ValueError("the camera calibration differs from the saved scan; restore it or start a new scan")
+
     @classmethod
     def continue_from(cls, directory, log=print):
         """A Scanner that goes on with a saved scan: restored, and re-finding its place first."""
+        cls.check_continue_camera(directory)
         sc = cls.restore(directory, log=log, use_mode=False)  # (the scanner's own mode goes on)
         sc.refind_needed = True
         sc.crop = None  # (it would hide what is scanned next)
@@ -1354,6 +1400,19 @@ class Scanner:
             self.gpu.close()
             self.gpu = None
 
+    def discard(self):
+        """Release a cancelled take without flushing, saving, or exporting its geometry."""
+        try:
+            self.close()
+        finally:
+            try:
+                if self.merge_proc is not None:
+                    self.merge_proc.discard()
+                    self.merge_proc = None
+            finally:
+                self.merger.shutdown(wait=True, cancel_futures=True)
+                self.pending.clear()
+
     def marker_pairs(self, marker_pts, guess, ref):
         """(this frame's markers mm, their map positions in the target frame mm) for the markers matched
         at the predicted pose, or None; ref: the target's frame -> world."""
@@ -1408,6 +1467,7 @@ class Scanner:
         if self.marker_map is u["marker_map"]:
             self.marker_map.pos, self.marker_map.count = u["markers"]
         self.prev_feat, self.feat_pose = u["feat"]
+        self.cue.pop("object_recovery_pending", None)
         self.track_log = [(i, "taken back", None) if i >= u["index"] and p is not None else (i, st, p)
                           for i, st, p in self.track_log]
         self.stats["taken_back"] = self.stats.get("taken_back", 0) + 1
@@ -1420,12 +1480,7 @@ class Scanner:
         return abs(seen[2] - z0) > max(LOOK_NEAR[0] * z0, LOOK_NEAR[1])
 
     def lost_long(self, t, index, like="object", xyz=None):
-        """A lost frame with depth. Frames whose piece may be the object (likeness "object" or "unsure") run the
-        clock (frame time; 0.1 s a frame without stamps), a frame of something else ("other") starts it again; after
-        PIECE_AFTER_S the scan goes on in a new piece from the next frame (start_piece), taken where that piece was
-        (like_source). ("unsure" counts: devplatform on the CPU tracker lost the hand where the pass from above
-        began, a third of its points and half its size by then, "object" and "unsure" by turns; with only "object"
-        counting no piece began, relock tried on until it took a wrong pose and Optimise had to move 9.5 mm.)"""
+        """Keep recovery context, but never reset the model after an automatic tracking loss."""
         if like == "other":
             self.lost_since = None
             self.away_frames += 1
@@ -1438,15 +1493,20 @@ class Scanner:
         now = t if t is not None else 0.1 * self.stats["frames"]
         if self.lost_since is None:
             self.lost_since = now
-        elif now - self.lost_since >= PIECE_AFTER_S and self.stats["merged"]:
-            self.start_piece(index + 1)
+
+    def can_start_separate_piece(self):
+        """Require actual loss and a model in the current piece, not just an earlier piece."""
+        return bool(self.lost_run and not self.stats["tracking"] and self.last_merged is not None
+                    and not self.piece_pending)
+
+    def request_separate_piece(self):
+        if not self.can_start_separate_piece():
+            return False
+        self.piece_pending = True
+        return True
 
     def pick(self, kind, uv):
-        """A click on the viewer's preview while scanning: "the object is there". kind "depth" (a depth pixel) or
-        "colour" (a colour pixel), full size; the next frame takes it (take_pick, feed). On what tracking follows it
-        changes nothing; on something else the scan goes on there in a new piece; while lost, that frame's piece is
-        taken at the click and found again in the scan, else a new piece starts there at once. A piece started by a
-        click becomes the one whose look a lost frame is compared with (likeness)."""
+        """Use the selected depth/colour pixel to aim the first frame or guide recovery, never split."""
         self.pick_due = (kind, (float(uv[0]), float(uv[1])))
 
     def take_pick(self, index, xyz, pix):
@@ -1465,25 +1525,21 @@ class Scanner:
         self.stats["picks"] = self.stats.get("picks", 0) + 1
         return float(pix[i, 0]), float(pix[i, 1])
 
-    def on_object_at(self, uv):
-        """Is depth pixel uv on the object in the last tracked frame's labels (what the viewer showed), within one
-        label cell?"""
-        last = next((i for i, _, p in reversed(self.track_log) if p is not None), None)
-        labels = self.labels.get(last)
-        if labels is None:
-            return False
-        r, c = int(uv[1]) // LABEL_STEP, int(uv[0]) // LABEL_STEP
-        return bool((labels[max(0, r - 1):r + 2, max(0, c - 1):c + 2] == 2).any())
-
-    def start_piece(self, first_index, by_click=False):
+    def start_piece(self, first_index):
         """Go on in a new piece from scanner index `first_index`: the pose chain starts again (at the last good
         pose, so the new piece's world lies near the old one when the scanner barely moved), with a scene,
         marker map and tracking volume of its own and an empty live cloud. The merged frames, keyframes and
-        labels stay (global), the finished piece's scene and marker map are kept for the join (join_pieces).
-        `by_click`: a click on the preview started it (pick): its frames teach the object's look from now on."""
+        labels stay (global), the finished piece's scene and marker map are kept for the join (join_pieces)."""
         from .markermap import MarkerMap
         from .scene import Scene
         self.sync_merges()  # (the old piece's merges land in its cloud, before the reset)
+        if self.on_piece_finished is not None:
+            try:
+                xyz, rgb, seen = self.cloud_points(1)
+                keep = self.output_mask(xyz, connect=False)
+                self.on_piece_finished(len(self.pieces), (xyz[keep], rgb[keep], seen[keep]))
+            except (OSError, RuntimeError, ValueError, MemoryError) as e:
+                self.log(f"piece {len(self.pieces)} preview could not be frozen: {e}")
         self.piece_scenes.append(self.scene)
         self.piece_maps.append(self.marker_map)
         self.reach_kept = self.object_reach()
@@ -1496,6 +1552,8 @@ class Scanner:
         self.prev_feat = self.feat_pose = self.refind_feat = None
         self.hold, self.cue, self.unconfirmed = 0, {}, None
         self.shape_model, self.shape_t = None, None
+        self.feature_anchors.clear()
+        self.feature_anchor_at = self.feature_retry_t = None
         self.model, self.model_merged, self.model_levels, self.model_at = None, -1, None, -1
         self.last_merged, self.merge_t, self.since_merge = None, None, 0
         self.room_ref, self.room_t = None, None
@@ -1508,14 +1566,10 @@ class Scanner:
         self.points_kept = 0
         self.pieces.append({"first_index": int(first_index)})
         self.stats["pieces"] = len(self.pieces)
-        if by_click:
-            self.look_piece = len(self.pieces) - 1
-            self.look.clear()
-            self.log(f"picked: going on in piece {len(self.pieces)} from the object clicked; "
-                     "the pieces are joined after Stop")
-        else:
-            self.log(f"tracking lost for {PIECE_AFTER_S:.0f} s: going on in piece {len(self.pieces)}; "
-                     "the pieces are joined after Stop")
+        self.look_piece = len(self.pieces) - 1
+        self.look.clear()
+        self.log(f"started separate piece {len(self.pieces)} at frame {first_index}; "
+                 "it stays separate unless alignment succeeds after Stop")
 
     def piece_start_seeds(self, frame, xyz, pix):
         """(seeds, at) for a new piece's first frame: the object by its colours (colour.py) when they tell it
@@ -1681,6 +1735,70 @@ class Scanner:
         pts = [loc[0] for loc in markers.locate(self.depth_of(frame), found) if loc is not None]
         self.no_markers = 0 if pts else self.no_markers + 1
         return np.array(pts).reshape(-1, 3)
+
+    def object_features(self, frame, pix):
+        return self.features.extract(self.features.luma_of(frame), self.depth_of(frame), pix,
+                                     object_stride=self.seg_stride)
+
+    def remember_object_features(self, frame, index, pix):
+        """Keep only features from the confirmed object's mask, never base/background or a guessed pose."""
+        at = self.stats["merged"]
+        interval = OBJECT_ANCHOR_EVERY if self.feature_anchors else 2
+        if self.feature_anchor_at is not None and at - self.feature_anchor_at < interval:
+            return
+        self.feature_anchor_at = at
+        feat = self.object_features(frame, pix)
+        if len(feat[0]) >= REFIND_MIN_INLIERS:
+            self.feature_anchors.append((index, self.pose.copy(), feat))
+
+    def refind_object_features(self, frame, pix, xyz, marker_pts):
+        """Match live depth-backed object features to earlier confirmed views, then verify independently on the GPU."""
+        if self.gpu is None or self.features is None or not self.feature_anchors or not self.stats["merged"]:
+            return None
+        t = frame.get("t")
+        stamp = t if t is not None else 0.1 * self.stats["frames"]
+        if self.feature_retry_t is not None and 0 <= stamp - self.feature_retry_t < SHAPE_EVERY_S:
+            return None
+        self.feature_retry_t = stamp
+        current = self.object_features(frame, pix)
+        if len(current[0]) < REFIND_MIN_INLIERS:
+            return None
+        candidates = [(self.features.mutual_matches(current, feat), index, pose, feat)
+                      for index, pose, feat in self.feature_anchors]
+        candidates.sort(key=lambda c: (len(c[0]), c[1]), reverse=True)
+        from . import track
+        for pairs, index, pose, feat in candidates[:REFIND_TRIES]:
+            if len(pairs) < REFIND_MIN_INLIERS:
+                break
+            pts = []
+            found, count = self.features.relative_pose(current, feat, self.feature_rng, pts, pairs=pairs)
+            if found is None or count < REFIND_MIN_INLIERS or 2 * count <= len(pairs):
+                continue
+            # A single object's features cannot distinguish a symmetric opposite face.
+            # Allow a different angle, not a view facing away from its reference.
+            if found[2, 2] <= 0.0:
+                continue
+            # A row of mutually matching keypoints is not a rigid spatial reference.
+            source = pts[0]
+            spread = np.linalg.svd(source - source.mean(axis=0), compute_uv=False) / np.sqrt(count)
+            if spread[1] < self.features.INLIER_MM:
+                continue
+            seed = np.linalg.inv(self.pose) @ pose @ found
+            if not self.reachable(seed, xyz, t):
+                continue
+            step, info = self.gpu_step(xyz, marker_pts, seed)
+            if not (self.solve_ok(info, xyz) and info["fitness"] >= RELOCK_FITNESS
+                    and (info["degeneracy"] or 0.) >= track.DEGENERATE and self.floor_agrees(step)
+                    and self.reachable(step, xyz, t) and same_pose(seed, step, xyz)):
+                continue
+            if not info["markers_used"] and len(marker_pts) >= 3 and len(self.marker_map) >= 3:
+                known = self.marker_map.match_global(marker_pts)
+                if known is not None and not same_pose(seed, np.linalg.inv(self.pose) @ known, xyz,
+                                                      MARKER_CHECK_MM, MARKER_CHECK_DEG):
+                    continue
+            self.pose, self.motion, self.motion_s = self.pose @ step, np.eye(4), None
+            return index, count
+        return None
 
     def refind_anywhere(self, frame, pix, xyz, marker_pts, feat=None):
         """Lost, and not back near the last good pose (relock): find the frame anywhere in the scan by
@@ -1890,7 +2008,10 @@ class Scanner:
                 return False
             found = self.pose @ step
         jump = np.linalg.inv(self.pose) @ found  # current camera -> last good camera
-        if not plausible_step(jump, xyz, min(self.lost_run + 1, RELOCK_MAX_SCALE)):
+        # The CPU has no global re-find. After a look-away allow it to try the old
+        # cloud again, but only accept a close return, not a widened jump.
+        scale = 1 if self.gpu is None and self.away_frames else min(self.lost_run + 1, RELOCK_MAX_SCALE)
+        if not plausible_step(jump, xyz, scale):
             return False
         if not self.floor_agrees(jump):
             return False
@@ -1958,7 +2079,8 @@ class Scanner:
         self.flush()
         self.trim_table()
         self.stats["remove_base"], self.stats["base_found"] = self.remove_base, self.scene.plane is not None
-        self.stats["sources"] = self.sources
+        self.stats["sources"] = [{**src, "rec": os.path.relpath(src["rec"], Path(directory).resolve())}
+                                 for src in self.sources]
         self.stats["crop"], self.stats["crop_axes"] = self.crop, self.crop_axes().round(6).tolist()
         self.stats["piece_list"] = [{k: (bool(v) if k == "joined" else int(v)) for k, v in p.items()} for p in self.pieces]
         self.stats["piece_joins"] = [[int(a), int(b)] for a, b in self.piece_joins]
@@ -2050,11 +2172,17 @@ def recording_picks(directory):
     return picks
 
 
+def recording_piece_starts(directory):
+    """Raw-frame indices where the operator explicitly started a new piece."""
+    path = Path(directory) / "piece-starts.csv"
+    return {int(line) for line in path.read_text().splitlines()[1:]} if path.is_file() else set()
+
+
 def scan(directory, preset="small", log=print, remove_base=True, track_with="gpu"):
     """Merge a recording; returns the Scanner (its cloud, poses and stats; save() writes the result).
     Tracks on the GPU (gputrack) when there is one, else on the CPU (track.solve)."""
     scanner = Scanner(preset, log, remove_base=remove_base, track_with=track_with, aim=recording_aim(directory),
-                      picks=recording_picks(directory))
+                      picks=recording_picks(directory), piece_starts=recording_piece_starts(directory))
     scanner.add_source(Path(directory).resolve(), 0)
     try:
         for i, frame in enumerate(fr.read_recording(directory)):
@@ -2089,14 +2217,15 @@ def save(directory, cloud, poses, stats, preset, min_seen=MIN_SEEN):
     """Write cloud.ply, poses.txt and session.json; returns (path, number of points)."""
     directory.mkdir(parents=True, exist_ok=True)
     xyz, rgb, normals, seen, min_seen = ply_arrays(cloud, poses, min_seen)
+    retire_mesh(directory)
     out = directory / "cloud.ply"
     pc.write_ply(out, xyz, rgb, normals=normals, seen=seen)
     write_poses(directory / "poses.txt", poses)
     (directory / "session.json").write_text(json.dumps({
         "preset": preset, "point_distance_mm": cloud.point_mm, "min_seen": min_seen, "mode": stats.get("mode"),
         "raw_points": cloud.raw_points, "cubes": len(cloud), "points_kept": len(xyz), **stats,
-        "depth_mode": CAMERA.mode,
-        "camera": {"source": CAMERA.source, "fingerprint": CAMERA.fingerprint()},
+        "depth_mode": stats.get("depth_mode", CAMERA.mode),
+        "camera": stats.get("camera", {"source": CAMERA.source, "fingerprint": CAMERA.fingerprint()}),
         "note": ("distances rest on the estimated depth law and field of view" if CAMERA.estimate
                  else f"camera: {CAMERA.source} calibration"),
     }, indent=2))

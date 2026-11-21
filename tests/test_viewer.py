@@ -45,10 +45,10 @@ def test_depth_preview_dims_all_but_the_object():
     mask[:, :80] = 2  # object on the left, base top right, the rest bottom right
     mask[:50, 80:] = 1
     try:
-        viewer.scan_view.update(mask=mask, t=time.monotonic(), keep_base=True)
+        viewer.scan_view.update(active=True, preview=viewer.COVERAGE, mask=mask, t=time.monotonic(), keep_base=True)
         shaded = as_array(viewer.render_depth(Cap, buf)[0])
     finally:
-        viewer.scan_view.update(mask=None, t=0.0)
+        viewer.scan_view.update(active=False, preview=viewer.LIVE_DEPTH, mask=None, t=0.0)
     assert (shaded[:, :380] == plain[:, :380]).all()  # object unchanged (the centre mark aside)
     assert (shaded[300:, 450:] == plain[300:, 450:] // 4).all()  # other dimmed
     assert (shaded[:200, 450:] == plain[:200, 450:] // 2 + viewer.BASE_TINT).all()  # kept base tinted
@@ -78,6 +78,33 @@ def test_depth_preview_holds_depth_for_a_moment():
         hv.update(saved)
 
 
+def test_distance_does_not_use_held_or_tracked_preview_depth():
+    import time
+    from tribuutscan.depth import encode_y10
+
+    class Cap:
+        width, height, bytesperline = 1280, 800, 1600
+
+    hv, sv = viewer.hold_view, viewer.scan_view
+    saved_hold, saved_scan = dict(hv), dict(sv)
+    live = encode_y10(np.full((Cap.height, Cap.width), 300, np.uint16))
+    empty = encode_y10(np.zeros((Cap.height, Cap.width), np.uint16))
+    try:
+        sv.update(t=0, model=None)
+        hv.update(on=True, s=1, depth=None)
+        assert viewer.render_depth(Cap, live)[1]["centre_valid"] == 1
+        stats = viewer.render_depth(Cap, empty)[1]
+        assert stats["centre_cm"] is None and "100% held" in stats["text"]
+        sv.update(active=True, preview=viewer.COVERAGE, t=time.monotonic(), model=(np.ones((8, 8), dtype=np.uint8), live))
+        stats = viewer.render_depth(Cap, empty)[1]
+        assert stats["centre_cm"] is None and stats["centre_valid"] == 0
+    finally:
+        hv.clear()
+        hv.update(saved_hold)
+        sv.clear()
+        sv.update(saved_scan)
+
+
 def test_depth_preview_has_a_red_frame_while_tracking_is_lost():
     import time
     from tribuutscan.depth import encode_y10
@@ -90,9 +117,9 @@ def test_depth_preview_has_a_red_frame_while_tracking_is_lost():
     viewer.scan_view.update(mask=None, t=0.0)
     plain = as_array(viewer.render_depth(Cap, buf)[0])
     try:
-        viewer.scan_view.update(t=time.monotonic(), lost=True)
+        viewer.scan_view.update(active=True, t=time.monotonic(), lost=True)
         lost = as_array(viewer.render_depth(Cap, buf)[0])
-        viewer.scan_view.update(t=0.0)  # no frame for a second: not scanning any more
+        viewer.scan_view.update(active=False, t=0.0)  # scan ended
         idle = as_array(viewer.render_depth(Cap, buf)[0])
     finally:
         viewer.scan_view.update(mask=None, lost=False, t=0.0)
@@ -100,6 +127,49 @@ def test_depth_preview_has_a_red_frame_while_tracking_is_lost():
         assert (edge == viewer.LOST_RGB).all()
     assert (lost[100:400, 100:300] == plain[100:400, 100:300]).all()  # inside unchanged
     assert (idle == plain).all()
+
+
+def test_live_depth_is_undimmed_and_current_even_when_worker_overlay_is_delayed():
+    import time
+    from unittest.mock import patch
+    from tribuutscan.depth import encode_y10
+
+    class Cap:
+        width, height, bytesperline = 1280, 800, 1600
+
+    width = 128
+    newest_depth = np.zeros((Cap.height, Cap.width), np.uint16)
+    newest_depth[:, :Cap.width // 2] = 240  # opposite half is invalid
+    newest = encode_y10(newest_depth)
+    tracked = encode_y10(np.full_like(newest_depth, 400))
+    codes = np.full((8, 8), 255, np.uint8)
+    mask = np.zeros_like(codes)
+    with patch.dict(viewer.scan_view), patch.dict(viewer.hold_view), patch.dict(viewer.aim_view, idle=False):
+        viewer.scan_view.update(active=False)
+        viewer.hold_view.update(on=True, s=10, depth=None)
+        viewer.render_depth(Cap, tracked, width)  # seed held depth, which must not appear during the scan
+        app = viewer.App.__new__(viewer.App)
+        app.choose_depth_preview(viewer.LIVE_DEPTH)
+        for stamp in (0, time.monotonic()):
+            viewer.scan_view.update(active=True, t=stamp, mask=mask, model=(codes, tracked))
+            image, stats = viewer.render_depth(Cap, newest, width)
+            expected = viewer.depth_to_rgb(viewer.fit(newest_depth, width))
+            viewer.mark_centre(expected)
+            assert image == viewer.ppm(expected)
+            assert "live depth" in stats["text"] and viewer.MODEL_LEGEND not in stats["text"]
+        app.choose_depth_preview(viewer.COVERAGE)
+        image, stats = viewer.render_depth(Cap, newest, width)
+        assert image != viewer.ppm(expected) and viewer.MODEL_LEGEND in stats["text"]
+
+
+def test_status_shows_views_adding_even_when_point_count_stays_steady():
+    progress = viewer.livescan.ScanProgress()
+    progress.observe(40, 12, 50000, True, {}, now=10)
+    progress.observe(44, 14, 50000, True, {}, now=13)
+    assert "Views added: 14 · last just now" in viewer.progress_line(progress.status(now=13))
+    assert "50,000 pts" in viewer.progress_line(progress.status(now=13))
+    result = viewer.progress_line(progress.status(now=17))
+    assert "Views added: 14 · last 4 s ago" in result
 
 
 def test_depth_preview_paints_the_live_model_of_the_tracked_frame():
@@ -121,11 +191,12 @@ def test_depth_preview_paints_the_live_model_of_the_tracked_frame():
     codes[:, 320:480] = 1  # the object, not in the model yet
     mask = np.full((100, 160), 2, np.uint8)  # all object: nothing dimmed
     try:
-        viewer.scan_view.update(mask=mask, t=time.monotonic(), lost=False, model=(codes, tracked))
+        viewer.scan_view.update(active=True, preview=viewer.COVERAGE, mask=mask, t=time.monotonic(),
+                                lost=False, model=(codes, tracked))
         ppm, stats = viewer.render_depth(Cap, newest)
         shown = as_array(ppm)
     finally:
-        viewer.scan_view.update(mask=None, t=0.0, model=None)
+        viewer.scan_view.update(active=False, preview=viewer.LIVE_DEPTH, mask=None, t=0.0, model=None)
     assert (shown[:200, :150] == viewer.MODEL_DONE).all()
     assert (shown[:200, 210:390] == viewer.MODEL_THIN).all()
     want = (plain[:200, 410:590] * 0.3 + viewer.MODEL_MISSING * 0.7).astype(np.uint8)
@@ -236,20 +307,42 @@ def test_the_aim_outlines_the_centre_piece_and_follows_a_pick():
 
 
 def test_the_aim_hint_names_what_needs_doing():
-    from tribuutscan import calib
-    near, far = viewer.pointcloud.window_cm()
-    piece = {"z": (near + far) / 2 * 10, "coverage": 0.6, "plane": True, "at": None}
+    piece = {"z": 240, "coverage": 0.6, "plane": True, "at": None}
     text, colour = viewer.aim_hint(piece, {"clipped": 0.5}, None, False)
     assert colour == viewer.GOOD and "depth 60%" in text and not text.startswith("Picked")
     text, colour = viewer.aim_hint(dict(piece, coverage=0.1, plane=False, at=(1, 2)), {"clipped": 9.0},
                                    {"pitch": -30.0}, False)
     assert colour == viewer.BAD and text.startswith("Picked") and "try another angle" in text
     assert "IR clipping 9%" in text and "no base, 30° down (ok on a platform)" in text
-    far_piece = dict(piece, z=(far - 1) * 10)
-    text, colour = viewer.aim_hint(far_piece, {}, None, False)
-    assert colour == viewer.EDGE and "far edge" in text
-    assert ("Long range" in text) == (not calib.CAMERA.mode.startswith("Long"))
-    assert viewer.aim_hint(None, {}, None, False)[1] == viewer.BAD
+    assert "No object identified" in viewer.aim_hint(None, {}, None, False)[0]
+
+
+def test_distance_guide_uses_documented_targets_for_both_ranges():
+    for mode, near, far in ((viewer.calib.CLOSE, 18, 30), (viewer.calib.LONG, 30, 50)):
+        for cm, state, advice in ((near - 0.1, 0, "Move back"), (near, 1, "Hold this distance"),
+                                  (far, 1, "Hold this distance"), (far + 0.1, 2, "Move closer")):
+            # Fresh aim takes precedence over an unrelated centre patch.
+            piece = {"mode": mode, "z": cm * 10, "coverage": 0.6, "at": (10, 10)}
+            stats = {"centre_mode": mode, "centre_at": 10, "centre_valid": 1, "centre_cm": 100}
+            active, text = viewer.distance_guide(piece, stats, mode, True, 10)
+            assert active == state
+            assert text.startswith(f"Picked object: ~{cm:.1f} cm (estimate)")
+            assert advice in text and f"{near}–{far} cm" in text
+
+
+def test_distance_guide_falls_back_only_to_fresh_reliable_centre_depth():
+    mode = viewer.calib.CLOSE
+    stats = {"centre_mode": mode, "centre_at": 10, "centre_valid": 0.4, "centre_cm": 22}
+    poor = {"mode": mode, "z": 100, "coverage": 0.1}
+    old_mode = {"mode": viewer.calib.LONG, "z": 100, "coverage": 1}
+    for piece in (None, poor, old_mode):
+        active, text = viewer.distance_guide(piece, stats, mode, False, 10.5)
+        assert active == 1 and text.startswith("Centre") and "estimate" not in text
+    for invalid in ({}, dict(stats, centre_at=6), dict(stats, centre_valid=0.1),
+                    dict(stats, centre_cm=float("nan")), dict(stats, centre_mode=viewer.calib.LONG)):
+        active, text = viewer.distance_guide(None, invalid, mode, False, 10.5)
+        assert active is None and "No reliable depth" in text and "18–30 cm" in text
+        assert "Move back" not in text and "Move closer" not in text
 
 
 def test_the_countdown_starts_the_scan_at_zero_with_the_picked_aim():
@@ -385,3 +478,345 @@ def test_a_click_while_scanning_tells_the_worker_where_the_object_is():
     app.scan_state = "optimising"
     app.aim_click("Depth", 10, 10)
     assert app.live["commands"].empty()
+
+
+def test_start_separate_piece_is_explicit_and_requires_fresh_worker_eligibility():
+    import queue
+    import time
+    from types import SimpleNamespace
+
+    app = viewer.App.__new__(viewer.App)
+    progress = viewer.livescan.ScanProgress()
+    proc = SimpleNamespace(is_alive=lambda: True)
+    app.live = {"proc": proc, "progress": progress, "commands": queue.Queue()}
+    app.scan_state, app.lost, app.switching = "scanning", False, {"busy": False}
+    now = time.monotonic()
+    assert not app.start_separate_piece()
+    progress.observe(1, 1, 10, True, {"can_start_separate_piece": True}, now=now)
+    assert not app.start_separate_piece()  # even a cue racing a locked frame cannot enable it
+    progress.observe(2, 1, 10, False, {"can_start_separate_piece": False}, now=now)
+    assert not app.start_separate_piece()
+    progress.observe(3, 1, 10, False, {"can_start_separate_piece": True}, now=now)
+    assert not app.can_start_separate_piece(now + progress.RECENT_S + 1)
+    for phase in ("paused", "pausing", "resuming", "idle", "saving", "cancelling"):
+        app.scan_state = phase
+        assert not app.start_separate_piece()
+    app.scan_state = "scanning"
+    app.lost = True
+    assert not app.start_separate_piece()
+    app.lost, app.switching["busy"] = False, True
+    assert not app.start_separate_piece()
+    app.switching["busy"] = False
+    assert app.live["commands"].empty()
+    assert app.start_separate_piece()
+    assert app.live["commands"].get_nowait() == ("start_separate_piece",)
+
+
+def test_failed_reopen_closes_staged_sources_without_resuming_any_stream():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    old = {"depth": "d0", "color": "c0", "ir": "i0"}
+    new = {"depth": "d1", "color": "c1", "ir": "i1"}
+    logs = []
+    app = SimpleNamespace(nodes=old.copy(), targets=old.copy(), ir_auto=True, log=logs.append,
+                          color=Mock(), ir=Mock(), depth=Mock())
+    depth, color = Mock(), Mock()
+    with patch.object(viewer, "wait_for_scanner", return_value=new), patch.object(viewer, "ir_exposure_mode"), \
+            patch.object(viewer.fr, "open_depth", return_value=depth), \
+            patch.object(viewer.v4l2, "Capture", side_effect=(color, OSError("failed IR open"))):
+        assert not viewer.App.reopen(app)
+    depth.close.assert_called_once()
+    color.close.assert_called_once()
+    assert app.nodes == old and app.targets == old
+    for stream in (app.color, app.ir, app.depth):
+        stream.resume.assert_not_called()
+    assert "failed IR open" in logs[-1]
+
+
+def test_successful_reopen_replaces_all_three_streams():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    nodes = {"depth": "d1", "color": "c1", "ir": "i1"}
+    app = SimpleNamespace(nodes={}, targets={}, ir_auto=True, log=Mock(), color=Mock(), ir=Mock(), depth=Mock())
+    depth, color, ir = Mock(), Mock(), Mock()
+    with patch.object(viewer, "wait_for_scanner", return_value=nodes), patch.object(viewer, "ir_exposure_mode"), \
+            patch.object(viewer.fr, "open_depth", return_value=depth), \
+            patch.object(viewer.v4l2, "Capture", side_effect=(color, ir)):
+        assert viewer.App.reopen(app)
+    assert app.nodes == nodes and app.targets == nodes
+    for stream, cap in ((app.color, color), (app.ir, ir), (app.depth, depth)):
+        stream.resume.assert_called_once_with(cap)
+        cap.close.assert_not_called()
+
+
+def test_a_dead_worker_clears_saving_and_can_be_replaced():
+    import queue
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    old = SimpleNamespace(exitcode=1, join=Mock())
+    commands, replies = Mock(), Mock()
+    live = {"proc": old, "commands": commands, "replies": replies,
+            "feeder": SimpleNamespace(out=queue.Queue()), "url": "old", "open": True, "name": "example-scan"}
+    logs = []
+    app = SimpleNamespace(live=live, scan_state="saving", lighter=Mock(), log=logs.append,
+                          switching={"busy": False}, lost=False, countdown=SimpleNamespace(get=lambda: True),
+                          start_worker=Mock())
+    with patch.dict(viewer.scan_view):
+        viewer.App.check_scan(app)
+    assert app.scan_state == "idle" and app.count is None
+    assert all(live[k] is None for k in ("proc", "commands", "replies", "feeder", "url"))
+    assert live["open"] is False
+    assert "code 1" in logs[-1] and "partial files" in logs[-1]
+    for channel in (commands, replies):
+        channel.cancel_join_thread.assert_called_once()
+        channel.close.assert_called_once()
+    old.join.assert_called_once_with(timeout=0)
+    app.lighter.assert_called_once_with(False)
+    viewer.App.toggle_scan(app)
+    app.start_worker.assert_called_once()
+    assert app.scan_state == "counting"
+
+
+def test_pause_synchronises_with_frame_enqueue_and_resume_requires_fresh_pair():
+    import queue
+    import threading
+    from types import SimpleNamespace as NS
+    from unittest.mock import patch
+
+    commands, replies = queue.Queue(), queue.Queue()
+    depth = NS(raw=b"depth", stamp=10.0, cap=NS(bytesperline=1600))
+    colour = NS(nearest=lambda t: (b"colour", t - 0.1))
+    app = NS(live={"proc": None, "commands": commands, "replies": replies}, depth=depth, scan_state="scanning")
+    feeder = viewer.Feeder(app)
+    feeder.send(app.live, depth, colour)
+    selecting, selected = threading.Event(), threading.Event()
+
+    def slow_pair(t):
+        selecting.set()
+        assert selected.wait(1)
+        return b"colour", t
+
+    frame = threading.Thread(target=feeder.send, args=(app.live, depth, NS(nearest=slow_pair)), daemon=True)
+    frame.start()
+    assert selecting.wait(1)
+    feeder.transition("pausing", ("pause",))
+    selected.set()
+    frame.join(1)
+    assert not frame.is_alive()
+    assert commands.get_nowait()[0] == "frame" and commands.get_nowait() == ("pause",) and commands.empty()
+
+    feeder.transition("resuming", ("resume",))
+    with patch.object(viewer.time, "monotonic", return_value=20.0):
+        feeder.transition("scanning", fresh=True)
+    assert commands.get_nowait() == ("resume",)
+    feeder.send(app.live, depth, colour)  # stale depth
+    depth.stamp = 20.05
+    feeder.send(app.live, depth, colour)  # depth fresh but matching colour captured while paused
+    assert commands.empty()
+    depth.stamp = 20.2
+    feeder.send(app.live, depth, colour)
+    assert np.allclose(commands.get_nowait()[5], (20.1, 0.0, 20.2))
+
+
+def test_paused_acknowledgement_opens_inspection_and_stop_saves_the_same_session():
+    import queue
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock, patch
+
+    feeder = Mock(out=queue.Queue())
+    app = NS(live={"url": "http://localhost:8765/", "feeder": feeder, "proc": NS(exitcode=None)},
+             scan_state="scanning", lighter=Mock(), log=Mock(), mesh_after=NS(get=lambda: True))
+    viewer.App.toggle_pause_scan(app)
+    feeder.transition.assert_called_once_with("pausing", ("pause",))
+    app.scan_state = "pausing"
+    feeder.out.put(("paused", [], None))
+    with patch.object(viewer.webbrowser, "open") as open_page, patch.dict(viewer.scan_view):
+        viewer.App.check_scan(app)
+    open_page.assert_called_once_with("http://localhost:8765/")
+    assert app.scan_state == "paused"
+    viewer.App.toggle_scan(app)
+    feeder.transition.assert_called_with("saving", ("stop", True))
+
+
+def test_scan_panel_build_wires_separate_pause_and_stop_controls():
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock, patch
+    from tribuutscan import panels
+
+    app = NS(preset=None, toggle_scan=Mock(), toggle_pause_scan=Mock(), cancel_scan=Mock(),
+             start_separate_piece=Mock(), continue_scan=Mock(), open_view=Mock(),
+             remove_base=None, keep_raw=None, mesh_after=None, countdown=None, scan_state="paused")
+    panel = NS(app=app, set=Mock(), STATES=panels.ScanPanel.STATES)
+    with patch.object(panels, "frame", return_value=Mock()), patch.object(panels, "button", side_effect=lambda *a, **kw: Mock(**kw)), \
+            patch.object(panels, "checkbox", return_value=Mock()), patch.object(panels, "menu", return_value=Mock()):
+        panels.ScanPanel.build(panel, object())
+        panels.ScanPanel.refresh(panel)
+    assert panel.scan.command is app.toggle_scan and panel.pause.command is app.toggle_pause_scan
+    assert panel.cancel.command is app.cancel_scan and panel.separate.command is app.start_separate_piece
+    panel.set.assert_any_call(panel.separate, state="disabled")
+    panel.set.assert_any_call(panel.scan, text="Stop & Save (c)", state="normal")
+    panel.set.assert_any_call(panel.pause, text="Resume scan (p)", state="normal")
+
+
+def test_cancel_stops_new_scan_frames_and_acknowledgement_reenables_start():
+    import queue
+    from collections import deque
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock, patch
+
+    commands = queue.Queue()
+    proc = NS(exitcode=None)
+    live = {"proc": proc, "commands": commands, "replies": queue.Queue(), "name": "a-live-scan", "done": deque()}
+    app = NS(live=live, scan_state="paused", log=Mock(), lighter=Mock(), ticks=deque(),
+             lost=False, switching={"busy": False}, countdown=NS(get=lambda: True), start_worker=Mock())
+    feeder = live["feeder"] = viewer.Feeder(app)
+    viewer.App.cancel_scan(app)
+    assert app.scan_state == "cancelling"
+    assert commands.get_nowait() == ("cancel", "a-live-scan")
+    viewer.App.toggle_scan(app)
+    viewer.App.cancel_scan(app)
+    assert commands.empty() and app.scan_state == "cancelling"
+    feeder.out.put(("cancelled", ["/captures/.cancelled/first/a-live-scan", ""], None))
+    with patch.dict(viewer.scan_view):
+        viewer.App.check_scan(app)
+    assert app.scan_state == "idle" and app.live["proc"] is proc
+    assert "recovery files" in app.log.call_args.args[0]
+    viewer.App.toggle_scan(app)
+    assert app.scan_state == "counting"
+    app.start_worker.assert_not_called()
+
+
+def test_close_after_cancel_does_not_save_the_take():
+    import queue
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+
+    commands = queue.Queue()
+    app = NS(live={"proc": NS(join=Mock(), is_alive=lambda: False), "commands": commands, "feeder": Mock()},
+             scan_state="cancelling", rec={"recorder": None}, log=Mock(), imu_off=Mock(), streams={}, root=Mock())
+    viewer.App.close(app)
+    assert commands.get_nowait() == ("quit",) and commands.empty()
+    app.live["feeder"].transition.assert_not_called()
+    app.root.destroy.assert_called_once()
+
+
+def test_return_reference_keeps_acknowledged_buffer_and_object_outline():
+    from unittest.mock import patch
+    from tribuutscan.depth import encode_y10
+
+    w, h, stride = 128, 80, 160
+    depth = np.full((h, w), 300, np.uint16)
+    selected = np.zeros((10, 16), np.uint8)
+    selected[1:8, 3:9] = 2
+    original = encode_y10(depth)
+    other = encode_y10(np.full_like(depth, 400))
+    ref = viewer.TrackedReference()
+    with patch.object(viewer, "render_tracked_reference", wraps=viewer.render_tracked_reference) as render:
+        ref.observe(1, False, other, (w, h, stride), None)  # no aligned frame yet
+        assert ref.image() is None
+        ref.observe(1, True, original, (w, h, stride), selected)
+        assert ref.image() is None
+        ref.observe(1, False, other, (w, h, stride), None)
+        first = ref.image()
+        assert ref.image() is first
+        ref.observe(1, False, other, (w, h, stride), None)
+        assert ref.image() is first and render.call_count == 1
+        rgb = np.frombuffer(first[0].split(b"\n", 1)[1], np.uint8).reshape(160, 256, 3)
+        assert np.any((rgb == viewer.AIM_RGB).all(axis=-1))
+        assert np.all(rgb[5, 5] == viewer.depth_to_rgb(depth)[0, 0])
+        assert first[2] and np.isclose(first[1], viewer.pointcloud.depth_to_mm(300) / 10)
+        ref.observe(1, True, other, (w, h, stride), None)
+        assert ref.image() is None
+        ref.observe(1, False, original, (w, h, stride), None)
+        assert ref.image()[0] != first[0] and render.call_count == 2
+        ref.observe(2, False, original, (w, h, stride), None)
+        assert ref.image() is None  # cannot show the prior piece's view
+        ref.observe(2, True, original, (w, h, stride), None)
+        ref.clear()
+        assert ref.raw is None
+
+
+def test_return_overlay_keeps_current_depth_and_restores_selected_coverage():
+    import time
+    from unittest.mock import patch
+    from tribuutscan.depth import encode_y10
+
+    class Cap:
+        width, height, bytesperline = 128, 80, 160
+
+    now = np.full((Cap.height, Cap.width), 270, np.uint16)
+    tracked = np.full_like(now, 410)
+    mask = np.full((8, 8), 2, np.uint8)
+    codes = np.full_like(mask, 255)
+    with patch.dict(viewer.scan_view, active=True, preview=viewer.COVERAGE, t=time.monotonic(), mask=mask,
+                    model=(codes, encode_y10(tracked)), lost=True, return_guide=True):
+        _, stats = viewer.render_depth(Cap, encode_y10(now), width=Cap.width)
+        assert "compare with last tracked" in stats["text"] and viewer.MODEL_LEGEND not in stats["text"]
+        assert np.isclose(stats["centre_cm"], viewer.pointcloud.depth_to_mm(270) / 10)
+        image, _ = viewer.render_depth(Cap, encode_y10(now), width=Cap.width)
+        rgb = np.frombuffer(image.split(b"\n", 1)[1], np.uint8).reshape(Cap.height, Cap.width, 3)
+        assert np.all(rgb[15, 16] == viewer.depth_to_rgb(now)[15, 16])
+        assert np.all(rgb[0, 0] == viewer.LOST_RGB)
+        viewer.scan_view.update(return_guide=False, lost=False)
+        _, stats = viewer.render_depth(Cap, encode_y10(now), width=Cap.width)
+        assert viewer.MODEL_LEGEND in stats["text"]
+
+
+def test_return_panel_reuses_image_across_loss_and_hides_on_pause_or_disconnect():
+    from unittest.mock import Mock, patch
+    from tribuutscan.depth import encode_y10
+
+    app = viewer.App.__new__(viewer.App)
+    app.tracked_reference = ref = viewer.TrackedReference()
+    app.return_panel, app.return_image, app.return_note = Mock(), Mock(), Mock()
+    app.return_photo = app.shown_return = None
+    app.scan_state, app.lost, app.switching = "scanning", False, {"busy": False}
+    app.views = {"Colour": [Mock()]}
+    depth = np.full((80, 128), 300, np.uint16)
+    ref.observe(1, True, encode_y10(depth), (128, 80, 160), None)
+    ref.observe(1, False, None, (128, 80, 160), None)
+    with patch.object(viewer.tk, "PhotoImage", return_value=Mock()) as photo:
+        assert app.refresh_return_guide() and app.refresh_return_guide()
+        photo.assert_called_once()
+        app.scan_state = "paused"
+        assert not app.refresh_return_guide()
+        assert ref.raw is not None and app.return_photo is None
+        app.scan_state = "scanning"
+        assert app.refresh_return_guide()  # reference survives pause/resume
+        app.lost = True
+        assert not app.refresh_return_guide() and ref.raw is None
+
+
+def test_return_reference_uses_only_acknowledged_stable_frames_from_feeder():
+    import queue
+    from collections import deque
+    from types import SimpleNamespace as NS
+    from unittest.mock import patch
+    from tribuutscan.depth import encode_y10
+
+    app = viewer.App.__new__(viewer.App)
+    app.scan_state, app.lost, app.switching = "scanning", False, {"busy": False}
+    app.depth = NS(cap=NS(width=128, height=80, bytesperline=160), raw=b"current camera bytes")
+    app.tracked_reference = ref = viewer.TrackedReference()
+    out = queue.Queue()
+    app.live = {"feeder": NS(out=out), "proc": NS(exitcode=None), "done": deque(),
+                "progress": viewer.livescan.ScanProgress()}
+    one = encode_y10(np.full((80, 128), 300, np.uint16))
+    two = encode_y10(np.full((80, 128), 410, np.uint16))
+
+    def done(i, tracking, raw, stable=True):
+        cue = {"piece": 1, "reference_ok": stable}
+        out.put(("frame_done", (1, i, 250, tracking, cue, None, None, i), raw))
+        app.check_scan()
+
+    with patch.dict(viewer.scan_view):
+        done(1, True, one)
+        done(2, True, two, stable=False)
+        done(3, False, two)
+        assert ref.raw == one and ref.image() is not None
+        app.switching["busy"] = True
+        done(4, True, two)
+        assert ref.raw == one  # late reply from a previous capture cannot become the new reference

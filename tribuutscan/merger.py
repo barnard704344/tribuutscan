@@ -164,6 +164,18 @@ class MergeProcess:
         self.close()
         return out
 
+    def discard(self):
+        """Stop this take's merge process without waiting on queued geometry."""
+        if self.proc.is_alive():
+            self.proc.terminate()
+            self.proc.join(timeout=2)
+            if self.proc.is_alive():
+                self.proc.kill()
+        self.proc.join(timeout=2)
+        for channel in (self.jobs, self.replies):
+            channel.cancel_join_thread()  # the discarded child may not have read a queued frame
+            channel.close()
+
     def close(self):
         if self.proc.is_alive():
             self.jobs.put(("quit",))

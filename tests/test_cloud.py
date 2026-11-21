@@ -503,7 +503,7 @@ def test_a_saved_scan_keeps_what_fusing_again_needs():
             assert set(i for i, _ in tracked) <= set(sc.labels)
             sc.save(out)
             session = json.loads((out / "session.json").read_text())
-            assert session["sources"] == [{"rec": str(rec.resolve()), "first_index": 0}]
+            assert session["sources"] == [{"rec": "../t-rec", "first_index": 0}]
             assert session["camera"] == {"source": "estimate", "fingerprint": calib.CAMERA.fingerprint()}
             back = cl.Scanner.restore(out, log=lambda *a: None)
             bases = {id(points.base) for points, _, _ in back.merged_data.values()}
@@ -861,37 +861,79 @@ def test_a_lost_frame_is_judged_by_how_much_it_looks_like_the_object():
     assert s.likeness(cl.look_of(lump(rng, 1500, 70, 360))) == "unsure"  # the object half out of view
 
 
-def test_only_frames_like_the_object_start_a_new_piece():
-    """Lost frames of something else ("other": crumbs, a wall, a box far behind) or of too little depth never start a
-    piece, however long they go on, and each starts the clock again; PIECE_AFTER_S of frames that may be the object
-    ("object" or "unsure": seen from above, the dev scene's hand showed a third of its points) do, and the new piece
-    is taken where they saw it, not where the last tracked piece was."""
+def test_indefinite_loss_never_replaces_the_existing_model():
     rng = np.random.default_rng(1)
     s = cl.Scanner("small", log=lambda m: None)
-    s.stats["merged"] = 5
-    hand, shelf = lump(rng, 3000, 60, 360), lump(rng, 3000, 60, 500) + [200.0, 0, 0]
-    s.last_source = shelf.mean(0)  # (where a junk piece once was: not where the new piece is taken)
-    frames = iter(range(1000))
-    for like in ["other"] * 30 + ["unsure"] * 5 + ["object"] * 4 + ["other"] + ["unsure"] * 9:  # 0.1 s apart
-        i = next(frames)
-        s.lost_long(i / 10, i, like, hand)
-    assert len(s.pieces) == 1 and s.lost_since is not None
-    while len(s.pieces) == 1 and i < 60:
-        i = next(frames)
-        s.lost_long(i / 10, i, "unsure", hand)
-    assert len(s.pieces) == 2 and s.pieces[1]["first_index"] == i + 1 and i in (50, 51)  # (1 s after frame 40)
-    xyz = np.concatenate([shelf, hand])
-    pix = np.c_[np.arange(len(xyz)) % 1280, np.arange(len(xyz)) // 1280].astype(float)
-    _, at = s.piece_start_seeds({}, xyz, pix)
-    i = int(np.argmin(np.hypot(pix[:, 0] - at[0], pix[:, 1] - at[1])))
-    assert i >= len(shelf)  # on the hand
+    try:
+        s.stats["merged"] = 5
+        s.last_merged, s.lost_run = np.eye(4), 1
+        s.stats["tracking"] = False
+        hand = lump(rng, 3000, 60, 360)
+        cloud, scene, pose = s.cloud, s.scene, s.pose.copy()
+        for i in range(200):
+            s.lost_long(i * 30, i, ["other", "object", "unsure"][i % 3], hand)
+        assert len(s.pieces) == 1 and s.cloud is cloud and s.scene is scene
+        assert np.array_equal(s.pose, pose) and np.allclose(s.like_source, hand.mean(0))
+        assert s.can_start_separate_piece() and s.request_separate_piece()
+        assert not s.request_separate_piece()
+    finally:
+        s.discard()
+
+
+def test_hold_relocks_without_splitting_then_explicit_start_waits_for_depth():
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import Mock
+    from tribuutscan import calib, frames as fr, synth
+    previous = calib.CAMERA.spec
+    calib.use(calib.ESTIMATES)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            rec = Path(d) / "test-rec"
+            synth.generate(rec, n_frames=1)
+            good = next(iter(fr.read_recording(rec)))
+            bad = dict(good, depth=np.zeros_like(good["depth"]))
+            s = cl.Scanner(log=lambda _: None, track_with="joint", merge_min_s=0.0)
+            try:
+                assert s.feed(good)
+                s.sync_merges()
+                assert not s.request_separate_piece()
+                primary = s.cloud
+                s.joint_step = Mock(return_value=(np.eye(4), False))
+                s.likeness = Mock(return_value="object")
+                s.relock = Mock(return_value=False)
+                s.refind_anywhere = Mock(return_value=False)
+                s.refind_shape = Mock(return_value=False)
+                for i in range(1, 5):
+                    s.pick("depth", (640, 400))
+                    assert not s.feed(dict(good, t=float(i * 30)))
+                assert s.refind_shape.call_count == 4 and s.can_start_separate_piece()
+                assert len(s.pieces) == 1 and s.cloud is primary
+                s.away_frames = cl.AWAY_FRAMES  # CPU frame-to-frame tracking no longer allowed
+                assert not s.relock_due() and not s.step_due()
+                s.relock.return_value = True
+                s.feed(dict(good, t=130.0))
+                assert s.stats["relocked"] == 1 and s.stats["tracking"] and not s.request_separate_piece()
+                assert len(s.pieces) == 1 and s.cloud is primary
+                s.feed(dict(bad, t=131.0))
+                assert s.request_separate_piece()
+                s.feed(dict(bad, t=132.0))
+                assert s.piece_pending and not s.can_start_separate_piece() and s.cloud is primary
+                next_index = s.stats["frames"]
+                assert s.feed(dict(good, t=133.0))
+                assert not s.piece_pending and s.stats["tracking"] and not s.request_separate_piece()
+                assert len(s.pieces) == 2 and s.pieces[1]["first_index"] == next_index
+                assert s.cloud is not primary and len(primary)
+                s.sync_merges()
+                assert len(s.cloud)
+            finally:
+                s.discard()
+    finally:
+        calib.use(previous)
 
 
 def test_unsure_frames_at_another_distance_start_no_piece():
-    """An "unsure" lost frame whose piece lies further from the object's distance than LOOK_NEAR (the 11-06 18:39
-    scan's swings to the shelf, ~6x the points 18 cm further, and to a hand as big ~17 cm further) starts the piece
-    clock again, like "other"; it stays "unsure", so recoveries are still tried. The hand with the board under it
-    (4x the points at its own distance) runs the clock."""
+    """A faraway unsure view does not seed a future explicit piece; a nearby unsure view can."""
     rng = np.random.default_rng(3)
     s = cl.Scanner("small", log=lambda m: None)
     s.stats["merged"] = 5
@@ -906,7 +948,7 @@ def test_unsure_frames_at_another_distance_start_no_piece():
     assert not s.beyond(cl.look_of(board))
     for i in range(30, 45):
         s.lost_long(i / 10, i, "unsure", board)
-    assert len(s.pieces) == 2
+    assert len(s.pieces) == 1 and s.lost_since is not None
 
 
 def test_a_pose_found_anywhere_and_lost_at_once_is_taken_back():
@@ -991,3 +1033,166 @@ def test_relock_is_off_once_the_scanner_looked_away():
     assert not s.step_due()
     s.start_piece(20)
     assert s.relock_due() and s.step_due()
+
+
+def test_raw_sources_follow_the_collection_when_moved():
+    import json
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    from tribuutscan import fusion
+
+    with tempfile.TemporaryDirectory() as tmp:
+        original = Path(tmp) / "original"
+        scan_dir = original / "capture-scan"
+        rec_dirs = [original / "sibling-rec", scan_dir / "nested-rec"]
+        for directory in rec_dirs:
+            directory.mkdir(parents=True)
+        sc = cl.Scanner(log=lambda *a: None, track_with="cpu")
+        empty = np.empty((0, 3), np.float32)
+        sc.keyframes = [(0, np.eye(4), empty, None, empty)]
+        sc.poses = [(0, np.eye(4))]
+        sc.merged_data = {0: (empty, empty, empty)}
+        sc.add_source(rec_dirs[0], 0)
+        sc.add_source(rec_dirs[1], 1)
+        sc.save(scan_dir)
+        session_path = scan_dir / "session.json"
+        session = json.loads(session_path.read_text())
+        assert [s["rec"] for s in session["sources"]] == ["../sibling-rec", "nested-rec"]
+
+        # Pre-existing absolute metadata still opens in place.
+        legacy = {**session, "camera": {"source": "other", "fingerprint": "old fingerprint"},
+                  "sources": [{**s, "rec": str(path)} for s, path in zip(session["sources"], rec_dirs)]}
+        session_path.write_text(json.dumps(legacy))
+        old = cl.Scanner.restore(scan_dir, log=lambda *a: None)
+        assert old.sources == sc.sources
+        old.save(scan_dir)
+        migrated = json.loads(session_path.read_text())
+        assert migrated["camera"] == legacy["camera"] and migrated["sources"] == session["sources"]
+        old.close()
+        session_path.write_text(json.dumps(session))
+
+        moved = original.rename(Path(tmp) / "moved")
+        reopened = cl.Scanner.restore(moved / scan_dir.name, log=lambda *a: None)
+        expected = [moved / p.relative_to(original) for p in rec_dirs]
+        assert [Path(s["rec"]) for s in reopened.sources] == expected
+        # Test the production raw replay path, not just the values written to JSON.
+        with patch("tribuutscan.frames.read_recording", side_effect=lambda p, yuyv: iter([{"path": p}])) as reader:
+            assert [frame["path"] for frame, _, _ in fusion.scan_frames(reopened)] == expected[:1]
+            assert [call.args[0] for call in reader.call_args_list] == expected
+        reopened.close()
+        sc.close()
+
+
+def test_object_feature_provenance_excludes_background_and_depth_holes():
+    from tribuutscan import features
+    depth = np.full((22, 22), 350, np.uint16)
+    support = np.array([[x, y] for y in (4, 8, 12) for x in (4, 8, 12)])
+    depth[6, 6] = 800  # closer/farther surface inside projected mask
+    depth[6, 10] = 0
+    centres = np.array([[8, 8], [10, 10], [6, 6], [10, 6], [14, 10], [-1, 8]])
+    valid = np.array([True, True, True, False, True, False])
+    assert features.object_feature_mask(depth, centres, support, 4, valid).tolist() == [
+        True, True, False, False, False, False]
+
+
+def test_object_features_relock_cross_angle_but_reject_conflicts_and_bad_depth_fit():
+    from unittest.mock import Mock
+    from tribuutscan import features, track
+    rng = np.random.default_rng(20)
+    current_pts = rng.uniform([-38, -38, 270], [38, 38, 335], (120, 3))
+    desc = rng.integers(0, 256, (120, 32), dtype=np.uint8)
+    a = np.radians(28)
+    recovered = np.eye(4)
+    recovered[:3, :3] = [[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]]
+    recovered[:3, 3] = [-0.12, 0.02, 0.05]
+    ref_pts = current_pts @ recovered[:3, :3].T + recovered[:3, 3] * 1000
+    s = cl.Scanner(log=lambda _: None, track_with="joint")
+    current = current_pts, desc
+    try:
+        s.gpu, s.features = Mock(), features
+        s.stats["merged"] = 1
+        s.last_t = 0.
+        s.object_features = Mock(return_value=current)
+        s.feature_anchors.append((2, np.eye(4), (ref_pts, desc)))
+        info = dict(fitness=.9, rmse_mm=.5, markers_used=0, marker_rmse_mm=None,
+                    degeneracy=track.DEGENERATE * 2)
+        s.gpu_step = Mock(side_effect=lambda xyz, markers, guess: (guess, info))
+        markers = np.empty((0, 3))
+        assert s.refind_object_features({"t": 2.}, None, current_pts, markers) == (2, len(desc))
+        assert np.allclose(s.pose, recovered, atol=1e-6)
+        seed = s.gpu_step.call_args.args[-1]
+        assert np.allclose(seed, recovered, atol=1e-6)
+        assert len(s.pieces) == 1 and s.stats["merged"] == 1
+
+        s.pose = np.eye(4)
+        info["fitness"] = .01
+        assert s.refind_object_features({"t": 3.}, None, current_pts, markers) is None
+        assert np.array_equal(s.pose, np.eye(4))
+        info["fitness"] = .9
+        conflict = ref_pts.copy()
+        conflict[:60] += [25., 0., 0.]
+        s.feature_anchors.clear()
+        s.feature_anchors.append((3, np.eye(4), (conflict, desc)))
+        s.gpu_step.reset_mock()
+        assert s.refind_object_features({"t": 4.}, None, current_pts, markers) is None
+        s.gpu_step.assert_not_called()
+        opposite = np.diag([-1., 1., -1.])
+        s.feature_anchors.clear()
+        s.feature_anchors.append((4, np.eye(4), (current_pts @ opposite.T + [0., 0., 620.], desc)))
+        assert s.refind_object_features({"t": 8.}, None, current_pts, markers) is None
+        s.gpu_step.assert_not_called()  # appears reachable after a long loss, but could be the other face
+        # Replicated descriptor cannot provide different anchors for one point.
+        assert not features.mutual_matches(current, (ref_pts, np.repeat(desc[:1], len(desc), axis=0)))
+    finally:
+        s.gpu = None
+        s.discard()
+
+
+def test_object_feature_recovery_reports_success_only_after_consecutive_confirmation():
+    from unittest.mock import Mock, patch
+    logs = []
+    s = cl.Scanner(log=logs.append, track_with="joint")
+    try:
+        xyz = lump(np.random.default_rng(21), 1300, 50, 300)
+        pix = np.c_[np.arange(len(xyz)) % 640, np.arange(len(xyz)) // 640]
+        s.gpu, s.track_with, s.features = Mock(), "gpu", None
+        s.stats.update(merged=3, tracking=False)
+        s.prev, s.last_merged, s.last_t, s.lost_run = True, np.eye(4), 1., 8
+        s.gpu_source, s.note = Mock(), Mock()
+        s.frame_markers = Mock(return_value=np.empty((0, 3)))
+        s.gpu_step = Mock(return_value=(np.eye(4), {"markers_used": 0}))
+        s.accepted, s.odd_markers = Mock(return_value=False), Mock(return_value=False)
+        s.relock, s.refind_anywhere, s.refind_shape = Mock(return_value=False), Mock(return_value=False), Mock(return_value=False)
+        s.likeness = Mock(return_value="object")
+        def found(*args):
+            s.pose = np.eye(4)
+            s.pose[0, 3] = .02
+            return 2, 73
+        s.refind_object_features = Mock(side_effect=found)
+        old_cloud = s.cloud
+        old_pose = s.pose.copy()
+        # A confirmed reference survives loss of the provisional hypothesis.
+        anchor = (2, old_pose, (xyz[:50], None))
+        s.feature_anchors.append(anchor)
+        with patch.object(cl, "frame_points", return_value=(xyz, None, pix)), \
+                patch.object(cl, "frame_shape", return_value=(800, 1280)), \
+                patch.object(cl, "isolate_mask", return_value=(np.ones(len(xyz), bool), None)) as isolate:
+            assert not s.feed({"t": 3.})
+            assert s.unconfirmed is not None and s.hold == cl.REFIND_HOLD
+            assert not logs and s.stats["merged"] == 3
+            isolate.return_value = np.zeros(len(xyz), bool), None
+            assert not s.feed({"t": 3.05})
+            assert not logs and s.unconfirmed is None and s.cloud is old_cloud
+            assert np.array_equal(s.pose, old_pose) and s.feature_anchors[0] is anchor
+            isolate.return_value = np.ones(len(xyz), bool), None
+            assert not s.feed({"t": 3.1})
+            s.accepted.return_value = True
+            for i in range(cl.REFIND_HOLD):
+                assert not s.feed({"t": 3.12 + i * .02})
+            assert s.stats["object_feature_refinds"] == 1
+            assert logs == ["Reacquired using object features (73 matches to frame 2)."]
+            assert s.stats["merged"] == 3 and len(s.pieces) == 1
+    finally:
+        s.gpu = None
+        s.discard()

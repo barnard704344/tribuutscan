@@ -21,6 +21,7 @@ import numpy as np
 import open3d as o3d
 
 from . import track
+from .mesh_exports import retire as retire_mesh
 from .markermap import kabsch
 
 reg = o3d.pipelines.registration
@@ -364,6 +365,7 @@ def make_mesh(scanner, directory, depth=9):
     triangle count. Only for scans whose recordings are not at hand: fusion.py fuses the frames
     themselves (a TSDF), which is closer to the surface."""
     from . import cloud as cl
+    retire_mesh(directory)
     xyz, rgb, _, nrm = scanner.output_cloud().points(cl.MIN_SEEN, with_normals=True)  # as saved (base or not)
     ok = np.linalg.norm(nrm, axis=1) > 0.5
     if ok.sum() < 100:
@@ -376,7 +378,12 @@ def make_mesh(scanner, directory, depth=9):
     mesh.remove_vertices_by_mask(density < np.quantile(density, 0.05))
     mesh = mesh.crop(pcd.get_axis_aligned_bounding_box().scale(1.05, pcd.get_center()))
     mesh.compute_vertex_normals()
-    o3d.io.write_triangle_mesh(str(Path(directory) / "mesh.ply"), mesh)
+    if not len(mesh.triangles):
+        return 0
+    tmp = Path(directory) / "mesh.tmp.ply"
+    if not o3d.io.write_triangle_mesh(str(tmp), mesh):
+        raise OSError("could not write the rough mesh PLY")
+    tmp.replace(Path(directory) / "mesh.ply")
     return len(mesh.triangles)
 
 
@@ -407,7 +414,10 @@ def process(scanner, directory, action, log=print, box=None):
         try:
             report = fusion.make_mesh(directory, log=log, scanner=scanner)
         except (ValueError, FileNotFoundError) as e:  # no recordings noted or kept, or another camera
-            return f"{e}. Made a rough mesh from the cloud instead: {make_mesh(scanner, directory):,} triangles"
+            count = make_mesh(scanner, directory)
+            if count:
+                return f"{e}. Made a rough mesh from the cloud instead: {count:,} triangles (PLY only)"
+            return f"{e}. No mesh made: not enough usable points for a rough PLY either"
         closed = report.get("solid", {}).get("edges_closed")
         return (f"mesh: {report['triangles']:,} triangles from {report['frames']} frames in "
                 f"{report['fuse_s'] + report['extract_s'] + report.get('solid', {}).get('seconds', 0):.0f} s -> mesh.ply, "
@@ -419,6 +429,7 @@ def process(scanner, directory, action, log=print, box=None):
         _, kept = scanner.save(directory)
         return f"base {'removed' if scanner.remove_base else 'kept'}: {kept:,} points (make the mesh again)"
     if action in ("crop", "crop-off"):
+        had_mesh = (directory / "mesh.ply").is_file()
         if action == "crop":
             box = np.asarray([] if box is None else box, float)
             if box.shape != (6,) or not np.isfinite(box).all() or (box[:3] >= box[3:]).any():
@@ -429,7 +440,7 @@ def process(scanner, directory, action, log=print, box=None):
             scanner.crop = None
         _, kept = scanner.save(directory)
         message = f"{'cropped' if scanner.crop else 'crop cleared'}: {kept:,} points"
-        if (directory / "mesh.ply").exists():  # the mesh, its solid and the STL follow
+        if had_mesh:  # save retired the old mesh; make a fresh one for this crop
             message += "; " + process(scanner, directory, "mesh", log)
         return message
     raise ValueError(f"unknown action {action}")

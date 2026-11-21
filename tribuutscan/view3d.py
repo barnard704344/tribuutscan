@@ -18,6 +18,8 @@ from urllib.parse import parse_qs
 
 import numpy as np
 
+from .mesh_exports import stl_state
+
 WEB = Path(__file__).resolve().parent / "web"
 PORT = 8765
 FILES = {"/": ("index.html", "text/html"), "/three.module.min.js": ("three.module.min.js", "text/javascript"),
@@ -80,13 +82,19 @@ def pack_mesh(path):
 
 def mesh_version(path):
     """A token that changes when the mesh file does (None: no mesh)."""
-    return str(path.stat().st_mtime_ns) if path is not None and path.exists() else None
+    try:
+        return str(path.stat().st_mtime_ns) if path is not None else None
+    except FileNotFoundError:  # an export may be retired while the browser polls
+        return None
 
 
 def mesh_versions(mesh_path):
-    """info.json's "mesh" and "solid" (the closed solid beside the mesh, fusion.write_mesh) versions."""
-    return {"mesh": mesh_version(mesh_path),
-            "solid": mesh_version(None if mesh_path is None else mesh_path.with_name("solid.ply"))}
+    """Current downloads, independently: a rough mesh has a PLY, but no STL or solid."""
+    mesh = mesh_version(mesh_path)
+    solid = mesh_version(mesh_path.with_name("solid.ply")) if mesh else None
+    stl = mesh_version(mesh_path.with_suffix(".stl")) if mesh else None
+    return {"mesh": mesh, "solid": solid, "stl": stl,
+            "stl_state": stl_state(mesh_path.parent) if stl else None}
 
 
 def pack_arrays(xyz, rgb=None, seen=None):
@@ -108,6 +116,7 @@ class FileSource:
         self.session = self.ply.parent / "session.json"
         self.version, self.payload, self.info = None, b"", {}
         self.lock = threading.Lock()
+        self.busy = threading.Lock()
 
     def process(self, action, box=None):
         """A Process-menu action on the saved session (needs keyframes.npz and merged.npz)."""
@@ -115,8 +124,9 @@ class FileSource:
         from . import optimise
         if not (self.ply.parent / "merged.npz").exists():
             return "this session has no saved frames to process (scanned before sessions kept them)"
-        scanner = cl.Scanner.restore(self.ply.parent, log=lambda m: None)
-        return optimise.process(scanner, self.ply.parent, action, log=lambda m: None, box=box)
+        with self.busy:
+            scanner = cl.Scanner.restore(self.ply.parent, log=lambda m: None)
+            return optimise.process(scanner, self.ply.parent, action, log=lambda m: None, box=box)
 
     def mesh_path(self):
         return self.ply.parent / "mesh.ply"
@@ -148,10 +158,23 @@ class Handler(BaseHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def do_GET(self):
-        path = self.path.split("?")[0]
+        path, _, query = self.path.partition("?")
         if path in FILES:
             name, kind = FILES[path]
             return self.reply((WEB / name).read_bytes(), kind)
+        if path == "/cloud.bin" and query:
+            try:
+                params = parse_qs(query, keep_blank_values=True, max_num_fields=8)
+                if "piece" in params:
+                    piece = self.piece_number(params["piece"])
+                    scan_id = self.scan_token(params["scan_id"]) if "scan_id" in params else None
+                    fetch = getattr(self.source, "piece_payload", None)
+                    payload = fetch(piece, scan_id) if fetch is not None else None
+                    if payload is not None:
+                        return self.reply(payload, "application/octet-stream")
+                    return self.send_error(404)
+            except ValueError:
+                return self.send_error(400, "Invalid piece selection")
         version, payload, info = self.source.current()
         if path == "/info.json":
             return self.reply(json.dumps({"version": str(version), **info}).encode(), "application/json")
@@ -162,17 +185,31 @@ class Handler(BaseHTTPRequestHandler):
             if body is not None:
                 return self.reply(body, "application/octet-stream", f"{self.source.download_name()}.ply")
         mesh = self.source.mesh_path() if hasattr(self.source, "mesh_path") else None
-        if path in ("/mesh.ply", "/mesh.stl") and mesh is not None and mesh.with_suffix(path[-4:]).exists():
-            return self.reply(mesh.with_suffix(path[-4:]).read_bytes(), "application/octet-stream",
-                              f"{self.source.download_name()}-mesh{path[-4:]}")
-        if path == "/mesh.bin" and mesh is not None and mesh.exists():
-            return self.reply(pack_mesh(mesh), "application/octet-stream")
-        solid = None if mesh is None else mesh.with_name("solid.ply")
-        if path == "/solid.bin" and solid is not None and solid.exists():
-            return self.reply(pack_mesh(solid), "application/octet-stream")
-        if path == "/solid.ply" and solid is not None and solid.exists():
-            return self.reply(solid.read_bytes(), "application/octet-stream", f"{self.source.download_name()}-solid.ply")
+        endpoint = {"/mesh.ply": "mesh", "/mesh.bin": "mesh", "/mesh.stl": "stl",
+                    "/solid.bin": "solid", "/solid.ply": "solid"}.get(path)
+        if endpoint and info.get(endpoint) and mesh is not None:
+            artifact = {"mesh": mesh, "stl": mesh.with_suffix(".stl"), "solid": mesh.with_name("solid.ply")}[endpoint]
+            try:
+                packed = path.endswith(".bin")
+                body = pack_mesh(artifact) if packed else artifact.read_bytes()
+                filename = None if packed else f"{self.source.download_name()}-{artifact.name}"
+                return self.reply(body, "application/octet-stream", filename)
+            except FileNotFoundError:  # retired after current() took its snapshot
+                pass
         self.send_error(404)
+
+    @staticmethod
+    def piece_number(values):
+        if (len(values) != 1 or not 1 <= len(values[0]) <= 9 or not values[0].isascii()
+                or not values[0].isdigit() or int(values[0]) < 1):
+            raise ValueError("invalid piece number")
+        return int(values[0])
+
+    @staticmethod
+    def scan_token(values):
+        if len(values) != 1 or len(values[0]) != 32 or any(c not in "0123456789abcdef" for c in values[0]):
+            raise ValueError("invalid scan token")
+        return values[0]
 
     def do_POST(self):
         """/process/<action>[?box=6 numbers]: an optimise.process action on a finished scan."""

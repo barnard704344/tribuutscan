@@ -99,23 +99,42 @@ both with Open3D 0.20: the same results on every test and evaluation.
 The viewer shows depth large in the middle, colour and IR on the left, and folding panels on the
 right: Scanner, Capture, Scan, IMU and View.
 
-- **Start scan (c)**: stay 18-30 cm from the object in close range, 30-50 cm in long range (the
-  guide line under the images shows the distance), move steadily, keep markers in view if there are
-  any. **Stop scan (c)** saves `captures/<stamp>-scan/cloud.ply`, runs Optimise and makes the mesh
+- **Start scan (c)**: aim for 18-30 cm in close range or 30-50 cm in long range. The gauge below Depth
+  shows Too close, Optimum or Too far with the approximate distance; it uses a fresh aimed-object
+  reading or the centre of the live depth view as a fallback. If neither is reliable, aim at the
+  object rather than treating the missing reading as too near or too far. Move steadily and keep
+  markers in view if there are any. **Stop & Save (c)** saves `captures/<stamp>-scan/cloud.ply`, runs Optimise and makes the mesh
   (`mesh.ply`, `mesh.stl`, `solid.ply`; *Mesh after Stop*, on by default, about 15-20 s with a GPU). *Remove base* (on
-  by default) leaves the table under the object out of the result. While scanning, the depth view
-  dims everything that is not the object and, with a GPU, paints the scan so far over it, as seen
-  from where the scanner is: **grey** where the mesh will have the surface, **yellow** where it needs
-  more views, **orange** where the scanner sees the object but the scan has nothing yet. A red frame
-  means tracking is lost. The depth view then shows the scan so far where it was last seen. Move (or
-  turn the object) back until the live view lines up with that grey shape, and the scan goes on. It
-  also finds its place again by itself, by shape, when the scanner sees a part already scanned; if it
-  cannot, after a second of seeing the object it goes on in a new piece, and the pieces are put
-  together after Stop. Looking away is fine: nothing else is taken for the object meanwhile. Click
-  the object in the depth or colour view to show the scan where it is: before Start (the outline
-  follows it), or while scanning, also when tracking is lost.
-  Tick *keep raw frames* to keep the frames the scan used, for replays. *Continue last* goes on
-  with the last saved scan.
+  by default) leaves the table under the object out of the result. **Live depth** shows the latest
+  depth image without the model, held pixels or dimming while scanning. Select **Coverage** above
+  the depth preview to inspect the tracked object mask and, with a GPU, the accumulated model:
+  **grey** where the mesh has surface, **yellow** where it needs more views, **orange** where the
+  scanner sees surface not in the model yet. The status line shows views added and when the last
+  view was added, even if the shape and point count look unchanged. A red frame in either mode
+  means tracking is lost. When an aligned frame is available, **Last tracked view** appears beside
+  the latest Depth feed, with the captured outline and centre distance when available. Match the
+  shape and angle to return to the last aligned view; the model stays put in the meantime.
+  Click the target in the depth or colour preview to guide recovery, not to start another piece.
+  Use **Start separate piece** only if you deliberately want to capture a disconnected area instead
+  of recovering. It waits for usable depth. Pieces are not guaranteed to align after Stop.
+  Tick *keep raw frames* to keep the frames the scan used, for replays. Move or copy the scan and its
+  recordings together, keeping their folder layout. Older scans with absolute recording paths can
+  still use those paths and get relative references when saved again in this version.
+  *Continue last* goes on with the last saved scan if it used the same camera calibration and depth range.
+- **Pause & Inspect (p)** stops taking new frames into the scan. Once frames already accepted have
+  finished, the current point cloud opens in the local 3D view. Drag to rotate or zoom in; the scan
+  isn't saved or ended. The camera previews can keep running. Return to the scanner window and use
+  **Resume scan (p)** to continue the same scan (start from the last tracked view if you moved the
+  scanner), or **Stop & Save (c)** to finish normally. Process and Crop are for the finished scan.
+  Capture, Tracking and Geometry are shown separately: frames arriving doesn't mean tracking has
+  recovered or the point cloud is growing. If tracking remains lost, return to an overlapping view
+  of a known edge or the same markers. Check the depth image if the target isn't matched. Save the
+  usable scan if it won't recover; later pieces are not guaranteed to join.
+- **Cancel scan** abandons only the current take, whether scanning or paused, and leaves the viewer
+  open for another scan. It does not save a cloud, optimise, or export a mesh. Any raw files already
+  captured are recoverable under `captures/.cancelled/` (the Messages pane shows the path). They are
+  not listed by Continue or Replay, and are not automatically deleted. Earlier saved scans, including
+  the source of a continued scan, stay where they were.
 - **Scanning on a platform**: the scanner can also stand still while you turn the object on a
   platform.
   - The scan notices this after a few seconds, because the room behind stays put ("object turning,
@@ -137,6 +156,9 @@ right: Scanner, Capture, Scan, IMU and View.
   to the platform's turn). Six sliders move its faces in, and the view shows only what is inside.
   *Apply* keeps that in the cloud and makes the mesh, the STL and the solid again (the solid is cut
   flat at each face that cuts the object). *Clear crop* brings everything back.
+  Reprocessing the cloud retires old mesh exports into the scan's hidden `.mesh-history/` folder.
+  Run *Make mesh* to download a fresh STL; if only a rough reconstruction is possible, you get a
+  PLY instead. An unsealed STL is labelled as such.
 - **Save frame (s)** writes one colour + IR + depth set (and a `cloud.ply`) to `captures/<stamp>/`.
   **Record (r)** writes colour + depth sets at 30 (or 10) a second, plus the IMU's samples
   (`imu.csv`, 200 a second), for processing later. Depth is compressed losslessly and IR is left

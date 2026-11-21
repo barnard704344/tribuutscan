@@ -174,7 +174,29 @@ def test_a_scan_recording_keeps_its_clicks_for_replays():
             copy.put(bufs, {"color": float(t), "depth": float(t)})
         copy.pick("colour", (640.25, 412.0))
         copy.put(bufs, {"color": 2.0, "depth": 2.0})
+        copy.piece_start()
         copy.pick("depth", (100.0, 50.0))
         copy.close()
         assert cl.recording_picks(copy.recorder.dir) == {2: ("colour", (640.2, 412.0)), 3: ("depth", (100.0, 50.0))}
+        assert cl.recording_piece_starts(copy.recorder.dir) == {2}
         assert len(list(fr.read_recording(copy.recorder.dir))) == 3
+
+
+def test_cancelled_takes_do_not_replace_each_other_or_appear_in_normal_listing():
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        current = root / "same-live-scan"
+        previous = root / "previous-scan"
+        previous.mkdir()
+        for contents in (b"first", b"second"):
+            current.mkdir()
+            (current / "raw").write_bytes(contents)
+            moved = fr.stash_cancelled(current)
+            assert moved.parent.parent == root / ".cancelled"
+            assert (moved / "raw").read_bytes() == contents
+            assert not current.exists()
+        assert list(root.glob("*-scan")) == [previous]
+        assert sorted(p.read_bytes() for p in (root / ".cancelled").glob("*/*/raw")) == [b"first", b"second"]

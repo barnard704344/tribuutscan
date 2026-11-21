@@ -12,7 +12,7 @@ Commands:  ("start", preset, out_dir, keep_raw, continue_from or None, depth mod
            | ("frame", yuyv, grey or None, depth_buf, bytesperline, (t_colour, t_ir, t_depth))
            | ("pick", "depth" | "colour", (u, v))   (a click on that preview, full-size pixel: the object is
            there, cloud.Scanner.pick; noted in the raw copy's picks.csv)
-           | ("stop"[, mesh]) | ("quit",)   (times: camera capture times, seconds; mesh: make the mesh after
+           | ("pause",) | ("resume",) | ("cancel", take_name) | ("stop"[, mesh]) | ("quit",)   (times: camera capture times, seconds; mesh: make the mesh after
            Optimise, fusion on the GPU, so Stop ends with a finished model)
 Replies:   ("ready", url) | ("log", text) | ("optimised", message, a mesh follows) | ("meshed", message)
            | ("frame_done", merged, frames, points, tracking, cue, view, model, t_depth) | ("saved", path, points)
@@ -37,6 +37,8 @@ import sys
 import threading
 import time
 
+from uuid import uuid4
+
 import numpy as np
 
 from . import calib
@@ -54,7 +56,7 @@ view_mask = cl.view_mask  # the same labels the scan keeps for fusing again
 
 class RawCopy:
     """frames.Recorder writes on a thread of their own (zlib and file writes release the GIL). put()
-    waits while QUEUE sets are pending, so no frame is left out; `error` is the DiskFull that stopped it."""
+    waits while QUEUE sets are pending; after a write error the thread still drains the queue."""
 
     QUEUE = 30
 
@@ -65,15 +67,27 @@ class RawCopy:
         self.thread.start()
 
     def _write(self):
-        while (item := self.queue.get()) is not None:
-            if self.error is None:
-                try:
+        while True:
+            item = self.queue.get()
+            try:
+                if item is None:
+                    return
+                if self.error is None:
                     if item[0] == "pick":
                         self.recorder.note_pick(*item[1:])
+                    elif item[0] == "piece_start":
+                        self.recorder.note_piece_start()
                     else:
                         self.recorder.write(*item[1:])
-                except fr.DiskFull as e:
-                    self.error = e
+            except Exception as e:
+                # A failed writer must still consume through the close sentinel (and not strand Pause).
+                self.error = e if isinstance(e, OSError) else OSError(f"{type(e).__name__}: {e}")
+            finally:
+                self.queue.task_done()
+
+    def drain(self):
+        """Finish writing the accepted frames before acknowledging a pause."""
+        self.queue.join()
 
     def put(self, bufs, stamps):
         self.queue.put(("set", bufs, stamps))
@@ -82,10 +96,17 @@ class RawCopy:
         """A click while scanning, noted in order with the frames (frames.Recorder.note_pick)."""
         self.queue.put(("pick", kind, uv))
 
+    def piece_start(self):
+        self.queue.put(("piece_start",))
+
     def close(self):
         self.queue.put(None)
         self.thread.join()
-        self.recorder.close()
+        try:
+            self.recorder.close()
+        except OSError as e:  # buffered writes can fail during close, too
+            if self.error is None:
+                self.error = e
 
 
 class Reader(threading.Thread):
@@ -112,43 +133,204 @@ class Reader(threading.Thread):
                 return
 
 
+class ScanProgress:
+    """Separate frames reaching tracking, pose recovery, and the active piece's point count."""
+
+    RECENT_S = 2.5
+
+    def __init__(self):
+        self.frames = self.merged = self.points = 0
+        self.piece = 1
+        self.last_frame = self.last_merge = self.last_growth = None
+        self.tracking, self.resuming, self.cue = None, False, {}
+
+    def resume(self):
+        # Keep the same scan counters; only new post-resume frames can establish progress.
+        self.last_frame = self.last_merge = self.last_growth = None
+        self.tracking, self.resuming, self.cue = None, True, {}
+
+    def observe(self, frames, merged, points, tracking, cue, now=None):
+        now = time.monotonic() if now is None else now
+        piece = cue.get("piece", 1)
+        if frames > self.frames:
+            self.last_frame = now
+        # A larger disconnected piece is not growth of the previous piece.
+        if piece != self.piece:
+            self.last_growth = self.last_merge = None
+        elif points > self.points:
+            self.last_growth = now
+        if merged > self.merged:
+            self.last_merge = now
+        self.frames, self.merged, self.points, self.piece = frames, merged, points, piece
+        self.tracking, self.resuming, self.cue = tracking, False, cue
+
+    def status(self, now=None):
+        now = time.monotonic() if now is None else now
+
+        def recent(stamp):
+            return stamp is not None and now - stamp <= self.RECENT_S
+
+        capture = ("Waiting for a fresh frame" if self.last_frame is None else
+                   "Frames arriving" if recent(self.last_frame) else "No recent processed frames")
+        recovery = ("Show an already scanned edge, texture or the same markers. "
+                    "The scanner tries matching features automatically; the existing model is held.")
+        if self.last_frame is None:
+            tracking = "Waiting after resume" if self.resuming else "Waiting"
+            geometry = "On hold"
+            hint = "Hold the last aligned view until tracking locks." if self.resuming else "Aim at the object."
+        elif not recent(self.last_frame):
+            tracking, geometry = "Unknown (no recent reading)", "On hold"
+            hint = "Check the live colour/depth previews before moving."
+        elif self.cue.get("object_recovery_pending"):
+            tracking, geometry = "Checking object match", "On hold"
+            hint = "Hold steady while the scanner checks the matched view."
+        elif not self.tracking:
+            tracking, geometry, hint = "Lost", "On hold", recovery
+            if self.cue.get("away"):
+                tracking = "Lost (target not matched)"
+                hint = "Check that the object has clear depth, then show a part already scanned. The existing model is held."
+        else:
+            tracking = "Locked"
+            geometry = ("Point count increasing" if recent(self.last_growth) else
+                        "Taking views; point count steady" if recent(self.last_merge) else "No recent views added")
+            hint = ("Show a defined edge or markers while keeping overlap." if self.cue.get("flat") else
+                    "Move slowly towards a new angle and keep part of the scanned surface in view.")
+        unjoined = f"Piece {self.piece} is not joined to earlier pieces yet." if self.piece > 1 else ""
+        return dict(capture=capture, tracking=tracking, geometry=geometry, hint=hint,
+                    frames=self.frames, merged=self.merged, points=self.points, unjoined=unjoined,
+                    last_view_age_s=None if self.last_merge is None else max(0.0, now - self.last_merge))
+
+
 class LiveSource:
     """view3d source backed by the running Scanner (or the last one)."""
 
+    LIVE_PHASES = ("scanning", "paused")
+    EMPTY_PAYLOAD = view3d.pack_arrays(np.empty((0, 3)))
+
     def __init__(self):
         self.lock = threading.Lock()
-        self.scanner, self.name, self.scan_id = None, "no scan yet", 0
-        self.phase, self.out_dir, self.busy = "idle", None, threading.Lock()  # scanning / optimising / done
-        self.cached, self.built_key, self.built_at = ("0", view3d.pack_arrays(np.empty((0, 3))), {}), None, 0.0
+        self.scanner, self.name, self.scan_id = None, "no scan yet", uuid4().hex
+        self.phase, self.out_dir, self.busy = "idle", None, threading.Lock()
+        self.progress = ScanProgress()
+        self.clear_preview()
+
+    def clear_preview(self, piece_origin=1):
+        self.paused_points = None
+        self.cached, self.built_key, self.built_at = ("empty", self.EMPTY_PAYLOAD, {}), None, 0.0
+        self.piece_cache, self.piece_origin, self.piece_revision = {}, max(1, piece_origin), 0
+        self.piece_sampled_at, self.piece_sampled_key = float("-inf"), None
+        self.piece_requested = None
+
+    def reset(self):
+        """Clear the cancelled model but retain the same local viewer service."""
+        self.scanner, self.out_dir = None, None
+        self.phase, self.name = "idle", "no scan yet"
+        self.progress = ScanProgress()
+        self.clear_preview()
+
+    def piece_id(self, tracker_id=None):
+        # Continue starts with its previous joined model as local primary piece 1.
+        return max(1, (len(self.scanner.pieces) if tracker_id is None else tracker_id) - self.piece_origin + 1)
+
+    def store_piece(self, piece, points):
+        xyz, rgb, seen = points
+        payload = view3d.pack_arrays(xyz @ cl.FLIP.T / 1000, rgb, seen)
+        old = self.piece_cache.get(piece)
+        if old is None or old[1] != payload:
+            self.piece_revision += 1
+            self.piece_cache[piece] = (f"{self.scan_id}-piece-{piece}-{self.piece_revision}", payload, len(xyz))
+        return self.piece_cache[piece]
+
+    def remember_piece(self, tracker_id, points):
+        """Called before Scanner resets this piece's geometry. Caller already holds the source lock."""
+        self.store_piece(self.piece_id(tracker_id), points)
+        self.piece_sampled_at, self.piece_sampled_key = float("-inf"), None
+
+    def refresh_live_piece(self, requested=False):
+        piece, now = self.piece_id(), time.monotonic()
+        if self.phase == "paused":
+            if self.paused_points is not None and self.piece_sampled_at != float("inf"):
+                self.store_piece(piece, self.paused_points)
+                self.piece_sampled_at = float("inf")
+        elif piece == 1 or requested or self.piece_requested == piece:
+            # An unselected secondary piece needs no active binary build merely because info is polled.
+            # Once explicitly requested, keep its cache current without changing the default selection.
+            s = self.scanner
+            tracked_cache = getattr(getattr(s, "merge_proc", None), "points_cache", None)
+            key = (piece, s.stats["merged"], getattr(s, "points_kept", None), id(tracked_cache))
+            if key != self.piece_sampled_key and now - self.piece_sampled_at >= PAYLOAD_EVERY_S:
+                points = s.live_points(LIVE_MIN_SEEN)
+                if len(points[0]) or piece not in self.piece_cache:
+                    # The merge subprocess can momentarily have no fresh preview; retain the last real
+                    # snapshot of this same piece rather than blanking it on Resume.
+                    self.store_piece(piece, points)
+                self.piece_sampled_at, self.piece_sampled_key = now, key
+        return piece
+
+    def live_payload(self, piece):
+        return self.piece_cache.get(piece, (f"{self.scan_id}-piece-{piece}-empty", self.EMPTY_PAYLOAD, 0))
+
+    def piece_payload(self, piece, scan_id=None):
+        """Read only: a request changes no selection for this or any other tab."""
+        with self.lock:
+            if self.scanner is None or self.phase not in self.LIVE_PHASES:
+                return None
+            if scan_id is not None and scan_id != self.scan_id:
+                return None
+            active = self.piece_id()
+            if piece != active and piece not in self.piece_cache:
+                return None
+            if piece == active:
+                self.piece_requested = piece
+                self.refresh_live_piece(requested=True)
+            return self.live_payload(piece)[1]
 
     def current(self):
         with self.lock:
             s = self.scanner
             if s is None:
-                return "empty", self.cached[1], {"name": self.name, "points": 0, "session": {}, "phase": self.phase}
-            key = (self.scan_id, s.stats["merged"], s.stats["tracking"], s.cue.get("flat"), self.phase,
-                   id(s.cloud), s.cloud.point_mm, len(s.pieces))
-            if key != self.built_key and time.time() - self.built_at >= PAYLOAD_EVERY_S:
-                xyz, rgb, seen = s.live_points(LIVE_MIN_SEEN)  # region, base as chosen
-                payload = view3d.pack_arrays(xyz @ cl.FLIP.T / 1000, rgb, seen)
-                info = {"name": self.name, "points": len(xyz), "phase": self.phase, "session": {
-                    "preset": s.preset, "point_distance_mm": s.cloud.point_mm,
-                    "raw_points": s.cloud.raw_points,
-                    **{k: s.stats[k] for k in ("frames", "merged", "lost", "relocked", "tracking")},
-                    "pieces": len(s.pieces),  # (while scanning, the cloud shown is the current piece's)
-                    "cue": dict(s.cue), "crop": s.crop}}
-                if self.phase != "scanning":  # (turn_axis reads every tracked pose: only for a finished scan's Crop)
-                    info["session"]["crop_axes"] = s.crop_axes().round(6).tolist()
-                self.cached = ("-".join(map(str, key)), payload, info)
-                self.built_key, self.built_at = key, time.time()
-            return self.cached[0], self.cached[1], dict(self.cached[2], **view3d.mesh_versions(self.mesh_path()))
-
+                return "empty", self.EMPTY_PAYLOAD, {"name": self.name, "points": 0, "session": {}, "phase": self.phase}
+            live = self.phase in self.LIVE_PHASES
+            if live:
+                active = self.refresh_live_piece()
+                version, payload, count = self.live_payload(1)  # never jump to an unaligned piece
+            else:
+                key = (self.scan_id, s.stats["merged"], self.phase, id(s.cloud), s.cloud.point_mm, len(s.pieces))
+                if key != self.built_key and time.time() - self.built_at >= PAYLOAD_EVERY_S:
+                    xyz, rgb, seen = s.live_points(LIVE_MIN_SEEN)
+                    payload = view3d.pack_arrays(xyz @ cl.FLIP.T / 1000, rgb, seen)
+                    self.cached = ("-".join(map(str, key)), payload, {"points": len(xyz)})
+                    self.built_key, self.built_at = key, time.time()
+                version, payload, cache = self.cached
+                count = cache.get("points", 0)
+            # Even if the selected model is unchanged, incoming/lost frames and their status are new.
+            stats = {k: s.stats[k] for k in ("frames", "merged", "lost", "relocked", "tracking")}
+            session = dict(stats, preset=s.preset, point_distance_mm=s.cloud.point_mm, raw_points=s.cloud.raw_points,
+                           pieces=active if live else len(s.pieces), cue=dict(s.cue), crop=s.crop)
+            if self.phase == "done":  # Crop axes are for a finished scan; don't recalculate on every poll.
+                if "crop_axes" not in self.cached[2]:
+                    self.cached[2]["crop_axes"] = s.crop_axes().round(6).tolist()
+                session["crop_axes"] = self.cached[2]["crop_axes"]
+            info = dict(name=self.name, points=count, phase=self.phase, session=session,
+                        **view3d.mesh_versions(self.mesh_path()))
+            if live:
+                options = []
+                for piece in sorted({1, active, *self.piece_cache}):
+                    piece_version, _, piece_points = self.live_payload(piece)
+                    options.append(dict(id=piece, points=piece_points, version=piece_version, active=piece == active))
+                info.update(piece_options=options, active_piece=active, default_piece=1, scan_id=self.scan_id)
+            if self.phase == "scanning":
+                info["progress"] = self.progress.status()
+                info["can_start_separate_piece"] = s.can_start_separate_piece()
+                if s.piece_pending:
+                    info["progress"]["hint"] = "Separate piece requested. Hold the target in view until valid depth arrives."
+            return version, payload, info
 
     def process(self, action, box=None):
         """A Process-menu action from the page, on the last finished scan."""
+        if self.scanner is None or self.phase != "done":
+            return "not now: use Stop & Save in the scanner before processing"
         from . import optimise
-        if self.scanner is None or self.phase in ("scanning", "optimising"):
-            return "not now: no finished scan (or it is still being scanned or optimised)"
         with self.busy:
             self.phase = "optimising"
             try:
@@ -166,8 +348,8 @@ class LiveSource:
             return (self.out_dir / "cloud.ply").read_bytes()
         with self.lock:
             s = self.scanner
-            if s is None:
-                return None
+            if s is None or self.phase == "paused":
+                return None  # inspection is not an export or a save
             xyz, rgb, normals, seen, _ = cl.ply_arrays(s.output_cloud(), list(s.poses))
         buf = io.BytesIO()
         pc.write_ply(buf, xyz, rgb, normals=normals, seen=seen)
@@ -216,16 +398,31 @@ def run(commands, replies, port=view3d.PORT):
         timing["wait"] += time.perf_counter() - t_wait
         if kind == "start":
             timing, decoded_at_start = {k: 0 for k in timing}, reader.decode_s
-            _, preset, out_dir, keep_raw, continue_from, depth_mode, remove_base, *options = cmd
+            _, preset, next_dir, next_keep_raw, continue_from, depth_mode, remove_base, *options = cmd
+            next_dir = Path(next_dir)
+            if continue_from:
+                previous, current = Path(continue_from).resolve(), next_dir.resolve()
+                if previous == current or previous in current.parents or current in previous.parents:
+                    replies.put(("start_failed", "cannot continue: the new take needs a separate output folder"))
+                    continue
+            if next_dir.exists() and (next_dir.is_symlink() or not next_dir.is_dir() or any(next_dir.iterdir())):
+                replies.put(("start_failed", "cannot start: output folder is not a new empty take"))
+                continue
             options = options[0] if options else {}
             options = {"tracker": options} if isinstance(options, str) else options
             capture = options.get("capture", {})
+            previous_mode = calib.CAMERA.mode
             calib.use_mode(depth_mode)  # the law of the scanner's mode, before any frame is turned into points
             recorder = None
             log = lambda m: replies.put(("log", m))
             with source.lock:
                 if continue_from:  # go on with a saved scan: it re-finds its place, then merges into it
-                    source.scanner = cl.Scanner.continue_from(continue_from, log=log)
+                    try:
+                        source.scanner = cl.Scanner.continue_from(continue_from, log=log)
+                    except (OSError, ValueError) as e:
+                        calib.use_mode(previous_mode)
+                        replies.put(("start_failed", f"cannot continue: {e}"))
+                        continue
                     source.scanner.remove_base = remove_base
                     log(f"continuing {Path(continue_from).name}: show the scanner a part it has seen")
                 else:
@@ -234,10 +431,14 @@ def run(commands, replies, port=view3d.PORT):
                                                 merge_process=True, aim=capture.get("aim"))
                 if capture:
                     source.scanner.stats["capture"] = capture  # (session.json takes every stats key)
-                source.scan_id += 1
+                out_dir, keep_raw = next_dir, next_keep_raw
+                source.scan_id = uuid4().hex
                 source.name = f"live: {out_dir.name}"
                 source.phase, source.out_dir = "scanning", out_dir
-        elif kind == "frame" and source.scanner is not None:
+                source.clear_preview(piece_origin=len(source.scanner.pieces))
+                source.scanner.on_piece_finished = source.remember_piece
+                source.progress = ScanProgress()
+        elif kind == "frame" and source.phase == "scanning" and source.scanner is not None:
             _, yuyv, grey, depth_buf, bytesperline, (t_c, t_i, t_d), depth4, cleared = cmd
             t0 = time.perf_counter()
             if keep_raw:
@@ -250,7 +451,7 @@ def run(commands, replies, port=view3d.PORT):
                     if recorder.error is not None:
                         raise recorder.error
                     recorder.put({"color": yuyv, "ir": grey, "depth": depth_buf}, {"color": t_c, "ir": t_i, "depth": t_d})
-                except fr.DiskFull as e:
+                except OSError as e:
                     keep_raw = False
                     if recorder is not None:
                         recorder.close()
@@ -261,27 +462,95 @@ def run(commands, replies, port=view3d.PORT):
                               shape=(fr.H, fr.W), t=t_d, skew_ms=(t_c - t_d) * 1000)  # colour per point
             with source.lock:
                 s = source.scanner
+                before_piece = len(s.pieces)
                 s.feed(frame)
+                new_piece = len(s.pieces) != before_piece
                 points = s.points_kept  # (the cloud lock is held through each ~90 ms merge: no waiting for it)
+                cue = dict(s.cue, base=s.scene.plane is not None, turning=s.object_turns, piece=source.piece_id(),
+                           can_start_separate_piece=s.can_start_separate_piece(),
+                           reference_ok=getattr(s, "unconfirmed", None) is None)
+                source.progress.observe(s.stats["frames"], s.stats["merged"], points, s.stats["tracking"], cue)
+            if new_piece and recorder is not None:
+                recorder.piece_start()
             timing["raw"] += t2 - t0
             timing["feed"] += time.perf_counter() - t2
             timing["frames"] += 1
             replies.put(("frame_done", s.stats["merged"], s.stats["frames"], points, s.stats["tracking"],
-                         dict(s.cue, base=s.scene.plane is not None, turning=s.object_turns, piece=len(s.pieces)), view_mask(s.last_view),
+                         cue, view_mask(s.last_view),
                          s.view_codes, t_d))
         elif kind == "frame":
             replies.put(("frame_done", 0, 0, 0))
-        elif kind == "pick" and source.scanner is not None:  # a click on the preview: the object is there
+        elif kind == "pick" and source.phase == "scanning" and source.scanner is not None:  # a click on the preview: the object is there
             _, how, uv = cmd
             with source.lock:
                 source.scanner.pick(how, uv)
             if recorder is not None:
                 recorder.pick(how, uv)  # (a replay of the raw copy takes it at the same frame)
-        elif kind == "stop" and source.scanner is not None:
+        elif kind == "start_separate_piece":
+            with source.lock:
+                accepted = (source.phase == "scanning" and source.scanner is not None
+                            and source.scanner.request_separate_piece())
+            replies.put(("log", "Separate piece requested; waiting for usable depth." if accepted else
+                         "Separate piece not started: requires a live, lost scan with an existing model and no pending request."))
+        elif kind == "pause" and source.phase == "scanning" and source.scanner is not None:
+            with source.lock:
+                s = source.scanner
+                s.sync_merges()  # preserve the merge process and tracking state
+                xyz, rgb, seen = s.cloud_points(LIVE_MIN_SEEN)
+                keep = s.output_mask(xyz, connect=False)
+                source.paused_points = xyz[keep], rgb[keep], seen[keep]
+                source.phase, source.built_key, source.built_at = "paused", None, 0.0
+                source.piece_sampled_at = float("-inf")
+            if recorder is not None:
+                recorder.drain()
+            replies.put(("paused",))
+        elif kind == "resume" and source.phase == "paused":
+            with source.lock:
+                source.phase, source.built_key, source.built_at = "scanning", None, 0.0
+                source.paused_points = None
+                source.piece_sampled_at, source.piece_sampled_key = float("-inf"), None
+                source.progress.resume()
+            replies.put(("resumed",))
+        elif kind == "cancel":
+            _, take_name = cmd
+            if (source.phase not in ("scanning", "paused") or out_dir is None or out_dir.name != take_name):
+                replies.put(("cancelled", "", "No active matching take to cancel."))
+                continue
+            # Detach the scan before shutting down. A closing parent mustn't make it autosave.
+            with source.lock:
+                scanner, cancelled_dir = source.scanner, out_dir
+                source.reset()
+                out_dir, keep_raw = None, False
+            errors = []
+            if recorder is not None:
+                try:
+                    recorder.close()
+                    if recorder.error is not None:
+                        errors.append(f"raw data incomplete: {recorder.error}")
+                except Exception as e:
+                    errors.append(f"could not close raw recording: {e}")
+                recorder = None
+            try:
+                scanner.on_piece_finished = None
+                scanner.discard()
+            except Exception as e:
+                errors.append(f"could not release scan resources cleanly: {e}")
+            try:
+                moved = fr.stash_cancelled(cancelled_dir)
+            except OSError as e:
+                moved = cancelled_dir  # never delete; identify where recovery data stayed
+                errors.append(f"could not move recovery data: {e}")
+            replies.put(("cancelled", str(moved) if moved is not None else "", "; ".join(errors)))
+        elif kind == "stop" and source.phase in ("scanning", "paused") and source.scanner is not None:
             if recorder is not None:
                 recorder.close()
+                if recorder.error is not None:
+                    replies.put(("log", f"raw copy incomplete: {recorder.error}"))
                 recorder = None
             with source.lock:
+                source.paused_points = None
+                source.piece_cache.clear()
+                source.scanner.on_piece_finished = None
                 source.scanner.close()  # the GPU tracker's memory back (Optimise and the mesh come next)
                 if len(source.scanner.pieces) > 1:  # its pieces into one world first (what joins nothing: piece-N.ply)
                     try:
