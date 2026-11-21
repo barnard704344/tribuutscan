@@ -287,7 +287,7 @@ class LiveSource:
                 self.refresh_live_piece(requested=True)
             return self.live_payload(piece)[1]
 
-    def native_coverage(self, piece, last_version):
+    def native_coverage(self, piece, last_version, *, request_merge=True):
         """One bounded, read-only sample for the Tk pane; never wait for merge/render work."""
         empty = np.empty((0, 3), np.float32), np.empty(0, np.uint16)
         with self.lock:
@@ -303,13 +303,13 @@ class LiveSource:
                         if version != last_version:
                             sample = coverage_preview.from_browser_payload(payload, count)
                 else:
-                    self.refresh_native_coverage(s, active)
+                    self.refresh_native_coverage(s, active, request_merge)
                     if self.native_sample is not None and self.native_sample[0] == active:
                         _, version, sample = self.native_sample
             xyz, seen = (None, None) if version == last_version else sample
             return version, xyz, seen
 
-    def refresh_native_coverage(self, s, piece):
+    def refresh_native_coverage(self, s, piece, request_merge=True):
         merge = getattr(s, "merge_proc", None)
         paused = self.phase == "paused"
         if paused:
@@ -322,10 +322,11 @@ class LiveSource:
             # This rail samples in the merge process, only one request at a time.
             # A browser poll may concurrently have its own full point-cloud snapshot.
             try:
-                merge.poll()
-                request = piece, merge.done
-                if self.native_requested_at_merge != request and merge.ask_coverage():
-                    self.native_requested_at_merge = request
+                if request_merge:
+                    merge.poll()
+                    request = piece, merge.done
+                    if self.native_requested_at_merge != request and merge.ask_coverage():
+                        self.native_requested_at_merge = request
             except RuntimeError:
                 return  # do not make preview responsible for surfacing a failed merge process
             if merge.coverage_cache is None:
@@ -335,7 +336,7 @@ class LiveSource:
             already_masked = False
         else:
             # Fallback cloud: copy only a bounded sample and keep lock time short.
-            key = piece, self.phase, s.stats["merged"]
+            key = piece, self.phase, getattr(s.cloud, "frames", s.stats["merged"])
             if key == self.native_key:
                 return
             with s.cloud_lock:
@@ -430,6 +431,91 @@ class LiveSource:
         return self.out_dir.name if self.out_dir else "live-scan"
 
 
+class CoveragePush:
+    """Publish accepted geometry without a Tk poll loop or preview jobs between every merge."""
+    INTERVAL_S = 0.10
+
+    def __init__(self, source, replies):
+        self.source, self.replies = source, replies
+        self.token, self.piece, self.version, self.next_at = None, 1, None, 0.0
+        self.failed_merge = None
+
+    def set_stream(self):
+        s = self.source.scanner
+        merge = getattr(s, "merge_proc", None)
+        if merge is not None:
+            merge.coverage_stream = (self.token is not None and self.source.phase == "scanning"
+                                     and self.piece == self.source.piece_id())
+
+    def subscribe(self, token, piece):
+        self.token, self.piece, self.version, self.next_at = token, piece, None, 0.0
+        self.set_stream()
+        # Seed a stationary active model once if no completed merge sample was available yet.
+        self.publish(initial=True)
+
+    def clear(self):
+        self.token = None
+        self.set_stream()
+
+    def selected_live(self):
+        s = self.source.scanner
+        return (s if self.token is not None and self.source.phase == "scanning"
+                and s is not None and self.piece == self.source.piece_id() else None)
+
+    def changed(self, s):
+        merge = getattr(s, "merge_proc", None)
+        if merge is not None:
+            return (merge.coverage_cache is not None
+                    and self.source.native_key != (self.piece, "scanning", merge.coverage_serial))
+        return self.source.native_key != (self.piece, "scanning", getattr(s.cloud, "frames", s.stats["merged"]))
+
+    def has_pending(self):
+        if self.token is None:
+            return False
+        with self.source.lock:
+            s = self.selected_live()
+            if s is None:
+                return False
+            merge = getattr(s, "merge_proc", None)
+            if merge is not None:
+                return merge is not self.failed_merge and (
+                    self.changed(s) or merge.coverage_wanted or merge.coverage_stream_pending)
+            pending = getattr(s, "pending", ())
+            return self.changed(s) or bool(pending and not pending[-1].done())
+
+    def poll_completion(self):
+        with self.source.lock:
+            s = self.selected_live()
+            merge = getattr(s, "merge_proc", None)
+            if merge is not None:
+                try:
+                    merge.poll()
+                except RuntimeError:
+                    self.failed_merge = merge
+                    return  # the scanner's own path owns tracking/merge recovery
+        self.publish()
+
+    def publish(self, *, initial=False, paused=False):
+        if self.token is None:
+            return
+        now = time.monotonic()
+        if not initial and not paused:
+            if now < self.next_at:
+                return
+            s = self.selected_live()
+            if s is not None and not self.changed(s):
+                return
+            if s is None:
+                archived = self.source.piece_cache.get(self.piece)
+                if archived is None or archived[0] == self.version:
+                    return
+        self.next_at = now + self.INTERVAL_S
+        version, xyz, seen = self.source.native_coverage(self.piece, self.version, request_merge=initial)
+        if xyz is not None:
+            self.version = version
+            self.replies.put(("coverage_update", self.token, self.piece, version, xyz, seen))
+
+
 def run(commands, replies, port=view3d.PORT):
     """Worker process main loop."""
     # A spawned process inherits the parent's sys.path (system Python). Put this interpreter's own
@@ -439,6 +525,7 @@ def run(commands, replies, port=view3d.PORT):
         site.addsitedir(path)
     sys.path[:] = [path for path in sys.path if path in own] + [path for path in sys.path if path not in own]
     source = LiveSource()
+    coverage = CoveragePush(source, replies)
     try:
         server = view3d.serve(source, port)
     except OSError as e:
@@ -454,7 +541,7 @@ def run(commands, replies, port=view3d.PORT):
     while True:
         t_wait = time.perf_counter()
         try:
-            cmd = reader.out.get(timeout=1.0)
+            cmd = reader.out.get(timeout=0.05 if coverage.has_pending() else 1.0)
         except queue.Empty:
             if parent is not None and not parent.is_alive():  # viewer killed: don't linger holding the port
                 if source.scanner is not None and out_dir is not None and not (out_dir / "cloud.ply").exists():
@@ -464,6 +551,8 @@ def run(commands, replies, port=view3d.PORT):
                     recorder.close()
                 cmd = ("quit",)
             else:
+                if coverage.has_pending():  # no more camera frames: surface a completed queued merge
+                    coverage.poll_completion()
                 continue
         kind = cmd[0]
         timing["wait"] += time.perf_counter() - t_wait
@@ -506,6 +595,7 @@ def run(commands, replies, port=view3d.PORT):
                 source.scan_id = uuid4().hex
                 source.name = f"live: {out_dir.name}"
                 source.phase, source.out_dir = "scanning", out_dir
+                coverage.clear()
                 source.clear_preview(piece_origin=len(source.scanner.pieces))
                 source.scanner.on_piece_finished = source.remember_piece
                 source.progress = ScanProgress()
@@ -533,6 +623,7 @@ def run(commands, replies, port=view3d.PORT):
                               shape=(fr.H, fr.W), t=t_d, skew_ms=(t_c - t_d) * 1000)  # colour per point
             with source.lock:
                 s = source.scanner
+                coverage.set_stream()
                 before_piece = len(s.pieces)
                 s.feed(frame)
                 new_piece = len(s.pieces) != before_piece
@@ -550,8 +641,12 @@ def run(commands, replies, port=view3d.PORT):
             replies.put(("frame_done", s.stats["merged"], s.stats["frames"], points, s.stats["tracking"],
                          cue, view_mask(s.last_view),
                          s.view_codes, t_d))
+            coverage.publish()
         elif kind == "frame":
             replies.put(("frame_done", 0, 0, 0))
+        elif kind == "coverage_subscribe":
+            _, token, piece = cmd
+            coverage.subscribe(token, piece)
         elif kind == "coverage_preview":
             _, piece, previous_version = cmd
             version, xyz, seen = source.native_coverage(piece, previous_version)
@@ -580,12 +675,15 @@ def run(commands, replies, port=view3d.PORT):
             if recorder is not None:
                 recorder.drain()
             replies.put(("paused",))
+            coverage.set_stream()
+            coverage.publish(paused=True)
         elif kind == "resume" and source.phase == "paused":
             with source.lock:
                 source.phase, source.built_key, source.built_at = "scanning", None, 0.0
                 source.paused_points = None
                 source.piece_sampled_at, source.piece_sampled_key = float("-inf"), None
                 source.progress.resume()
+            coverage.set_stream()
             replies.put(("resumed",))
         elif kind == "cancel":
             _, take_name = cmd
@@ -595,6 +693,7 @@ def run(commands, replies, port=view3d.PORT):
             # Detach the scan before shutting down. A closing parent mustn't make it autosave.
             with source.lock:
                 scanner, cancelled_dir = source.scanner, out_dir
+                coverage.clear()
                 source.reset()
                 out_dir, keep_raw = None, False
             errors = []
@@ -618,6 +717,7 @@ def run(commands, replies, port=view3d.PORT):
                 errors.append(f"could not move recovery data: {e}")
             replies.put(("cancelled", str(moved) if moved is not None else "", "; ".join(errors)))
         elif kind == "stop" and source.phase in ("scanning", "paused") and source.scanner is not None:
+            coverage.clear()
             if recorder is not None:
                 recorder.close()
                 if recorder.error is not None:

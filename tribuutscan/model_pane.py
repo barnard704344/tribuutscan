@@ -1,51 +1,41 @@
 """Native, bounded live-model viewport with no browser dependency."""
 import math
-import time
 import tkinter as tk
 
 from . import panels
 
-POLL_S = 0.30
 
 
 class ModelState:
-    """Keep one sampled piece and one pending worker request; Tk owns this state."""
+    """Keep one sampled piece and a tagged worker subscription; Tk owns this state."""
     def __init__(self, renderer):
         self.renderer = renderer
-        self.pending = False
+        self.generation = 0
         self.reset(worker_gone=True)
 
     def reset(self, *, worker_gone=False):
-        if worker_gone:
-            self.pending = False
         self.renderer.reset_frame()
-        self.discard_pending = self.pending  # wait for the old reply; don't confuse it with the next take
+        self.generation += 1
+        self.subscribed = False
         self.piece = self.pieces = 1
         self.version = self.geometry = self.expected = self.first_serial = None
-        self.next_poll = 0.0
         self.yaw, self.pitch, self.zoom = 0.4, -0.25, 1.0
 
-    def request(self, now, commands):
-        if self.pending or now < self.next_poll:
-            return
-        commands.put(("coverage_preview", self.piece, self.version))
-        self.pending, self.next_poll = True, now + POLL_S
+    def subscribe(self, commands):
+        if not self.subscribed:
+            commands.put(("coverage_subscribe", self.generation, self.piece))
+            self.subscribed = True
 
     def choose(self, piece):
         if 1 <= piece <= self.pieces and piece != self.piece:
             self.piece = piece
             self.renderer.reset_frame()
             self.version = self.geometry = self.expected = self.first_serial = None
-            self.next_poll = 0.0
+            self.generation += 1
+            self.subscribed = False
 
-    def receive(self, piece, version, xyz_mm, seen):
-        if not self.pending:
-            return  # reply queued before a new take/reset
-        self.pending = False
-        if self.discard_pending:
-            self.discard_pending = False
-            return
-        if piece != self.piece or xyz_mm is None or seen is None:
+    def receive(self, generation, piece, version, xyz_mm, seen):
+        if not self.subscribed or generation != self.generation or piece != self.piece or version == self.version:
             return
         self.version = version
         self.geometry = (xyz_mm, seen) if len(xyz_mm) else None
@@ -165,7 +155,7 @@ class ModelPane(tk.Frame):
 
     def tick(self, phase, lost, commands):
         if commands is not None and phase in ("scanning", "pausing", "paused", "resuming"):
-            self.state.request(time.monotonic(), commands)
+            self.state.subscribe(commands)
         self.render_latest()
         self.update_caption(phase, lost)
 

@@ -854,12 +854,12 @@ def test_viewer_accepts_native_coverage_reply_even_while_paused():
 
     out = queue.Queue()
     state = Mock()
-    app = NS(live={"feeder": NS(out=out), "proc": NS(exitcode=None)}, scan_state="paused",
+    feeder = NS(out=out, take_coverage=lambda: (7, 1, "v1", [[1, 2, 3]], [2]))
+    app = NS(live={"feeder": feeder, "proc": NS(exitcode=None)}, scan_state="paused",
              model_pane=NS(state=state))
     out.put(("ready", ["http://localhost:8765/"], None))
-    out.put(("coverage_frame", [1, "v1", [[1, 2, 3]], [2]], None))
     viewer.App.check_scan(app)
-    state.receive.assert_called_once_with(1, "v1", [[1, 2, 3]], [2])
+    state.receive.assert_called_once_with(7, 1, "v1", [[1, 2, 3]], [2])
 
 
 def test_window_places_large_3d_on_left_and_keeps_all_three_feeds_beside_it():

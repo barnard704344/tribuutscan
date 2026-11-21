@@ -46,7 +46,7 @@ def run(jobs, replies, point_mm, stride, clean, spec, mode):
             return
         kind = msg[0]
         if kind == "merge":
-            _, frame, index, pose, pix, step, orb, frame_mode = msg
+            _, frame, index, pose, pix, step, orb, frame_mode, *preview = msg
             if frame_mode != calib.CAMERA.mode:
                 calib.use_mode(frame_mode)
             mxyz, mrgb, mnrm = cl.merge_points(frame, pix, step, stride, clean)
@@ -59,8 +59,12 @@ def run(jobs, replies, point_mm, stride, clean, spec, mode):
                 if features is None:
                     from . import features
                 feat = features.extract(features.luma_of(frame), frame["depth"], orb[1])
-            replies.put(("merged", index, int((cloud.seen >= cl.MIN_SEEN).sum()), cloud.raw_points, found,
-                         None if orb is None else orb[0], feat))
+            reply = ("merged", index, int((cloud.seen >= cl.MIN_SEEN).sum()), cloud.raw_points, found,
+                     None if orb is None else orb[0], feat)
+            if preview:
+                candidates = coverage_preview.cloud_candidates(cloud)
+                reply += (preview[0], coverage_preview.sample_points(*candidates, limit=coverage_preview.CANDIDATES))
+            replies.put(reply)
         elif kind == "points":
             replies.put(("points", cloud.points(msg[1])))
         elif kind == "coverage":
@@ -97,6 +101,7 @@ class MergeProcess:
         self.on_merged, self.sent, self.done = on_merged, 0, 0
         self.points_cache, self.points_asked = None, False  # latest snapshot (for the 3D page), one asked for
         self.coverage_cache, self.coverage_wanted, self.coverage_epoch, self.coverage_serial = None, False, 0, 0
+        self.coverage_stream, self.coverage_stream_pending = False, False
         try:  # started for real (imports, the camera) before any merge is sent: else the thread merges
             self.replies.get(timeout=READY_S)
         except queue.Empty:
@@ -106,7 +111,11 @@ class MergeProcess:
 
     def submit(self, frame, index, pose, pix, step, orb=None):
         from . import calib
-        self.jobs.put(("merge", frame, index, pose, pix, step, orb, calib.CAMERA.mode))
+        job = ("merge", frame, index, pose, pix, step, orb, calib.CAMERA.mode)
+        if self.coverage_stream and not self.coverage_stream_pending:
+            job += (self.coverage_epoch,)
+            self.coverage_stream_pending = True
+        self.jobs.put(job)
         self.sent += 1
 
     def poll(self, wait_for=None, timeout=None):
@@ -125,7 +134,10 @@ class MergeProcess:
                 continue
             if reply[0] == "merged":
                 self.done += 1
-                self.on_merged(reply)
+                self.on_merged(reply[:7])
+                if len(reply) > 7 and reply[7] == self.coverage_epoch:
+                    self.note_coverage(reply[7], reply[8])
+                    self.coverage_stream_pending = False
                 if wait_for == "merged" and self.done >= self.sent:
                     return reply
             elif reply[0] == "points":
@@ -133,11 +145,15 @@ class MergeProcess:
                 if wait_for == "points":
                     return reply[1]
             elif reply[0] == "coverage" and reply[1] == self.coverage_epoch:
-                self.coverage_cache = reply[2]
-                self.coverage_serial += 1
+                self.note_coverage(reply[1], reply[2])
                 self.coverage_wanted = False
             elif reply[0] == "state" and wait_for == "state":
                 return reply[1], reply[2]
+
+    def note_coverage(self, epoch, sample):
+        if epoch == self.coverage_epoch:
+            self.coverage_cache = sample
+            self.coverage_serial += 1
 
     def reset(self):
         """The cloud starts empty from the next job on (cloud.Scanner.start_piece); merged frames stay."""
@@ -145,6 +161,7 @@ class MergeProcess:
         self.points_cache = None
         self.coverage_cache, self.coverage_wanted = None, False
         self.coverage_epoch += 1
+        self.coverage_stream_pending = False
 
     def sync(self):
         """Wait until every job sent is merged."""

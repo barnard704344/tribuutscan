@@ -1752,10 +1752,6 @@ class App:
                 break
             if kind == "ready":
                 live["url"] = rest[0]
-            elif kind == "coverage_frame":
-                model = getattr(self, "model_pane", None)
-                if model is not None:
-                    model.state.receive(*rest)
             elif kind == "log":
                 self.log(rest[0])
                 if rest[0].startswith("tracking on the GPU: "):
@@ -1840,6 +1836,12 @@ class App:
                 self.scan_state = "idle"
 
 
+        model = getattr(self, "model_pane", None)
+        if model is not None and feeder is not None and self.scan_state in ("scanning", "pausing", "paused", "resuming"):
+            sample = feeder.take_coverage()
+            if sample is not None:
+                model.state.receive(*sample)
+
         proc = live["proc"]
         if proc is not None and (code := proc.exitcode) is not None:
             state, name = self.scan_state, live["name"]
@@ -1868,6 +1870,7 @@ class Feeder(threading.Thread):
         self.app, self.out, self.lock = app, queue.Queue(), threading.Lock()
         self.live = {key: app.live[key] for key in ("proc", "commands", "replies")}
         self.resume_after = 0.0
+        self.coverage_lock, self.coverage_latest = threading.Lock(), None
         self.inflight, self.sent_stamp, self.raw = 0, 0.0, {}  # raw: depth buffers in work, by capture time
         self.stats = {"sent": 0, "t0": None, "t1": None, "lag": collections.deque(maxlen=4000)}  # lag: capture -> sent
 
@@ -1887,6 +1890,15 @@ class Feeder(threading.Thread):
             if command is not None:
                 self.live["commands"].put(command)
 
+    def offer_coverage(self, sample):
+        with self.coverage_lock:
+            self.coverage_latest = sample
+
+    def take_coverage(self):
+        with self.coverage_lock:
+            sample, self.coverage_latest = self.coverage_latest, None
+            return sample
+
     def run(self):
         live, depth, color = self.live, self.app.depth, self.app.color
         while live["proc"] is not None and live["proc"].is_alive():
@@ -1896,6 +1908,9 @@ class Feeder(threading.Thread):
                 kind = None
             except (EOFError, OSError, ValueError):  # the process or its queue has shut down
                 break
+            if kind == "coverage_update":
+                self.offer_coverage(rest)  # replace stale preview work; never hold up a control reply
+                continue
             if kind is not None:
                 raw = None
                 if kind == "frame_done":
