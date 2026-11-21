@@ -125,8 +125,9 @@ right: Scanner, Capture, Scan, IMU and View.
   still use those paths and get relative references when saved again in this version.
   *Continue last* goes on with the last saved scan if it used the same camera calibration and depth range.
 - **Pause & Inspect (p)** stops taking new frames into the scan. Once frames already accepted have
-  finished, the current point cloud opens in the local 3D view. Drag to rotate or zoom in; the scan
-  isn't saved or ended. The camera previews can keep running. Return to the scanner window and use
+  finished, inspect the current point cloud in the live 3D preview. A window is requested if it
+  hasn't already been opened; use **Open live 3D preview** to reopen it if you closed it. Drag to
+  rotate or zoom in; the scan isn't saved or ended. The camera previews can keep running. Return to the scanner window and use
   **Resume scan (p)** to continue the same scan (start from the last tracked view if you moved the
   scanner), or **Stop & Save (c)** to finish normally. Process and Crop are for the finished scan.
   Capture, Tracking and Geometry are shown separately: frames arriving doesn't mean tracking has
@@ -148,7 +149,8 @@ right: Scanner, Capture, Scan, IMU and View.
   - Turn once with the scanner about level, then once more looking down at about 45°, from 30-35 cm.
     The second pass sees the top, and once the platform top shows depth it is found as the base and
     left out of the result.
-- **Open 3D view**: the scan in the browser. *Process* has Optimise again, merge again at
+- **Open live 3D preview**: requests a separate browser window that follows the scan as it builds,
+  while the native camera controls stay available. If you close it, use the same button to reopen it. *Process* has Optimise again, merge again at
   0.5 / 1 / 2 mm point distance, Make mesh, and Remove base / Keep base; *Show* switches between
   the cloud, the mesh and the solid (*Colour: Grey* shows the shape); *Export* downloads `cloud.ply`,
   `mesh.ply` (metres, like the cloud: the scanned surface), `mesh.stl` (millimetres, for

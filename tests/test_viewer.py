@@ -636,7 +636,10 @@ def test_paused_acknowledgement_opens_inspection_and_stop_saves_the_same_session
     feeder.out.put(("paused", [], None))
     with patch.object(viewer.webbrowser, "open") as open_page, patch.dict(viewer.scan_view):
         viewer.App.check_scan(app)
-    open_page.assert_called_once_with("http://localhost:8765/")
+        app.scan_state = "pausing"  # repeated pause reuses the window that already shows this model
+        feeder.out.put(("paused", [], None))
+        viewer.App.check_scan(app)
+    open_page.assert_called_once_with("http://localhost:8765/?live=1", new=1)
     assert app.scan_state == "paused"
     viewer.App.toggle_scan(app)
     feeder.transition.assert_called_with("saving", ("stop", True))
@@ -844,3 +847,36 @@ def test_coverage_status_does_not_report_old_or_lost_samples():
     assert "Last tracked view" in viewer.coverage_status(stats, 10.1, "scanning", False, True, True)
     assert "not ready" in viewer.coverage_status(stats, 10.1, "scanning", True, False, False)
     assert "during a live scan" in viewer.coverage_status(stats, 10.1, "paused", False, False, False)
+
+
+def test_open_live_3d_preview_uses_local_url_and_browser_window():
+    from unittest.mock import Mock, patch
+
+    log = Mock()
+    live = {"url": "http://127.0.0.1:8765/?foo=bar&live=0#part"}
+    with patch.object(viewer.webbrowser, "open", return_value=True) as open_page:
+        assert viewer.open_live_preview(live, log)
+        open_page.assert_called_once_with("http://127.0.0.1:8765/?foo=bar&live=1#part", new=1)
+        assert live["preview_open"]
+        assert not viewer.open_live_preview({"url": "https://example.com/"}, log)
+        assert open_page.call_count == 1
+
+
+def test_explicit_preview_opens_once_on_worker_ready_and_can_reopen():
+    import queue
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock, patch
+
+    app = viewer.App.__new__(viewer.App)
+    app.live = {"url": None, "proc": NS(exitcode=None), "feeder": NS(out=queue.Queue()), "open": False}
+    app.log = Mock()
+    with patch.object(viewer.webbrowser, "open", return_value=True) as open_page:
+        app.open_view()
+        app.open_view()
+        for _ in range(2):
+            app.live["feeder"].out.put(("ready", ["http://localhost:8765/"], None))
+            app.check_scan()
+        open_page.assert_called_once_with("http://localhost:8765/?live=1", new=1)
+        assert not app.live["open"]
+        app.open_view()  # user can reopen even if the prior browser window was closed
+        assert open_page.call_count == 2

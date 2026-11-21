@@ -12,7 +12,7 @@ Panels (panels.py, each folds):
   at 30 or 10 fps (and IMU samples, imu.csv) to captures/<timestamp>-rec/, stopping when the disk has
   under 5 GB free (frames.Recorder); `m` tracks, optimises and fuses the latest recording into
   <stamp>-scan/mesh.ply and mesh.stl (cloud.py --optimise --mesh, fusion.py, in the Open3D .venv).
-- Scan: `c` merges frames live into one compact cloud (cloud.py) in a worker process; Open 3D view
+- Scan: `c` merges frames live into one compact cloud (cloud.py) in a worker process; Open live 3D preview
   shows it growing in the browser. Stop saves captures/<timestamp>-scan/.
 - IMU: the scanner's accelerometer and gyroscope (imu.py): tilt from gravity, turn rate.
 - View: markers (white dot in a black ring) are found in the colour image a few times a second and
@@ -39,6 +39,7 @@ import tkinter.font
 import tkinter.messagebox
 import webbrowser
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import numpy as np
 
@@ -722,6 +723,27 @@ def progress_line(status):
     return f"{text}  |  {status['unjoined']}" if status["unjoined"] else text
 
 
+def open_live_preview(live, log):
+    """Request a separate browser window for the worker's local live coverage view."""
+    url = live.get("url")
+    if not url:
+        return False
+    try:
+        parts = urlsplit(url)
+        if parts.scheme != "http" or parts.hostname not in ("localhost", "127.0.0.1", "::1") or parts.username is not None:
+            log("Live 3D preview requires a local worker URL.")
+            return False
+        query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "live"]
+        target = urlunsplit(parts._replace(query=urlencode(query + [("live", "1")])))
+        if webbrowser.open(target, new=1):
+            live["preview_open"] = True
+            return True
+    except (ValueError, webbrowser.Error):
+        pass
+    log("Could not open the browser window. Try Open live 3D preview again.")
+    return False
+
+
 class App:
     """The viewer's state and actions. The panels (panels.py) call these methods; `tick` runs in the Tk
     thread about 30 times a second. The range switch and the record loop run in their own threads and
@@ -747,7 +769,7 @@ class App:
         self.record_rates = RECORD_RATES  # for the Capture panel
         self.record_rate = tk.StringVar(value=next(iter(RECORD_RATES)))
         self.job = {"process": None, "dir": None}
-        self.live = {"proc": None, "commands": None, "replies": None, "url": None, "open": False,
+        self.live = {"proc": None, "commands": None, "replies": None, "url": None, "open": False, "preview_open": False,
                      "feeder": None,  # (Feeder: frames out, replies in, off the Tk loop)
                      "done": collections.deque(maxlen=60), "last": None, "name": "", "gpu": "", "merging": "",
                      "progress": livescan.ScanProgress()}
@@ -1724,12 +1746,14 @@ class App:
     def open_view(self):
         live = self.live
         if live["url"]:
-            webbrowser.open(live["url"])
+            open_live_preview(live, self.log)  # explicit reopen also works if the user closed a window
+            return
+        if live.get("open"):
             return
         if live["proc"] is None:
             self.start_worker()
-        live["open"] = True  # opens when the worker reports ready
-        self.log("starting the 3D view ...")
+        live["open"] = True  # consume once when the worker reports ready
+        self.log("starting the live 3D preview ...")
 
     def lighter(self, scanning):
         """While scanning, the colour and IR previews and the marker ring update less often (the GIL is the
@@ -1749,8 +1773,12 @@ class App:
                 break
             if kind == "ready":
                 live["url"] = rest[0]
-                if live["open"] and rest[0]:
-                    webbrowser.open(rest[0])
+                if live.get("open"):
+                    live["open"] = False
+                    if rest[0]:
+                        open_live_preview(live, self.log)
+                    else:
+                        self.log("Live 3D preview is unavailable. The camera previews still work here.")
             elif kind == "log":
                 self.log(rest[0])
                 if rest[0].startswith("tracking on the GPU: "):
@@ -1791,8 +1819,9 @@ class App:
                 self.lighter(False)
                 scan_view.update(mask=None, lost=False, model=None)
                 if live["url"]:
-                    webbrowser.open(live["url"])
-                    self.log("scan paused; rotate the model in the 3D view")
+                    if not live.get("preview_open"):
+                        open_live_preview(live, self.log)
+                    self.log("scan paused; inspect the live 3D preview, or use Open live 3D preview to reopen it")
                 else:
                     self.log("scan paused; the 3D view is unavailable. Resume or Stop & Save here.")
             elif kind == "resumed" and self.scan_state == "resuming":
@@ -1843,7 +1872,7 @@ class App:
                 channel.close()
             proc.join(timeout=0)
             live.update(proc=None, commands=None, replies=None, feeder=None, url=None, open=False,
-                        last=None, gpu="", merging="")
+                        preview_open=False, last=None, gpu="", merging="")
             self.scan_state, self.count = "idle", None
             self.lighter(False)
             scan_view.update(mask=None, lost=False, model=None)
