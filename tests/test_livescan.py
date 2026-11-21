@@ -293,3 +293,52 @@ def test_pause_drains_accepted_raw_frames_without_closing_the_recording():
     finally:
         raw.close()
     recorder.close.assert_called_once()
+
+
+def test_scan_progress_distinguishes_post_resume_capture_tracking_and_point_growth():
+    progress = livescan.ScanProgress()
+    progress.observe(20, 6, 1400, True, {"piece": 3}, now=10)
+    progress.resume()
+    waiting = progress.status(now=20)
+    assert waiting["capture"] == "Waiting for a fresh frame" and waiting["tracking"] == "Waiting after resume"
+    assert waiting["geometry"] == "On hold" and waiting["frames"] == 20
+    assert "Piece 3" in waiting["unjoined"]
+
+    progress.observe(21, 6, 1400, False, {"piece": 3, "away": True}, now=21)
+    lost = progress.status(now=21)
+    assert lost["capture"] == "Frames arriving" and lost["tracking"] == "Lost (target not matched)"
+    assert lost["geometry"] == "On hold" and "clear depth" in lost["hint"]
+
+    progress.observe(22, 7, 2000, True, {"piece": 4}, now=22)
+    unjoined = progress.status(now=22)
+    assert unjoined["tracking"] == "Locked" and "steady" in unjoined["geometry"]
+    assert "Piece 4" in unjoined["unjoined"]  # 2000 > 1400, but another piece is not growth of Piece 3.
+    progress.observe(23, 8, 2100, True, {"piece": 4}, now=23)
+    assert progress.status(now=23)["geometry"] == "Point count increasing"
+    assert progress.status(now=26)["capture"] == "No recent processed frames"
+    assert progress.status(now=26)["tracking"].startswith("Unknown")
+
+
+def test_browser_telemetry_changes_without_rebuilding_stalled_geometry():
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+
+    source = livescan.LiveSource()
+    source.phase = "scanning"
+    points = Mock(return_value=(np.array([[1., 2., 3.]]), np.array([[4, 5, 6]], np.uint8), np.array([3], np.int32)))
+    source.scanner = NS(stats=dict(merged=3, frames=5, tracking=False, lost=2, relocked=0), cue={},
+                        cloud=NS(point_mm=1., raw_points=7), pieces=[1, 2], crop=None, preset="medium",
+                        live_points=points)
+    source.progress.observe(5, 3, 1, False, {"piece": 2})
+    v1, payload1, info1 = source.current()
+    source.scanner.stats.update(frames=7, lost=4)
+    source.scanner.cue["away"] = True
+    source.progress.observe(7, 3, 1, False, {"piece": 2, "away": True})
+    v2, payload2, info2 = source.current()
+    points.assert_called_once()
+    assert v1 == v2 and payload1 == payload2
+    assert info1["session"]["frames"] == 5 and info2["session"]["frames"] == 7
+    assert info2["progress"]["capture"] == "Frames arriving"
+    assert info2["progress"]["tracking"] == "Lost (target not matched)"
+    assert info2["progress"]["geometry"] == "On hold"
+    assert "Piece 2" in info2["progress"]["unjoined"]

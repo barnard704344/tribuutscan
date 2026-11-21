@@ -126,6 +126,70 @@ class Reader(threading.Thread):
                 return
 
 
+class ScanProgress:
+    """Separate frames reaching tracking, pose recovery, and the active piece's point count."""
+
+    RECENT_S = 2.5
+
+    def __init__(self):
+        self.frames = self.merged = self.points = 0
+        self.piece = 1
+        self.last_frame = self.last_merge = self.last_growth = None
+        self.tracking, self.resuming, self.cue = None, False, {}
+
+    def resume(self):
+        # Keep the same scan counters; only new post-resume frames can establish progress.
+        self.last_frame = self.last_merge = self.last_growth = None
+        self.tracking, self.resuming, self.cue = None, True, {}
+
+    def observe(self, frames, merged, points, tracking, cue, now=None):
+        now = time.monotonic() if now is None else now
+        piece = cue.get("piece", 1)
+        if frames > self.frames:
+            self.last_frame = now
+        # A larger disconnected piece is not growth of the previous piece.
+        if piece != self.piece:
+            self.last_growth = self.last_merge = None
+        elif points > self.points:
+            self.last_growth = now
+        if merged > self.merged:
+            self.last_merge = now
+        self.frames, self.merged, self.points, self.piece = frames, merged, points, piece
+        self.tracking, self.resuming, self.cue = tracking, False, cue
+
+    def status(self, now=None):
+        now = time.monotonic() if now is None else now
+
+        def recent(stamp):
+            return stamp is not None and now - stamp <= self.RECENT_S
+
+        capture = ("Waiting for a fresh frame" if self.last_frame is None else
+                   "Frames arriving" if recent(self.last_frame) else "No recent processed frames")
+        recovery = ("Return to the last aligned view. Keep a known edge or the same markers in view, "
+                    "and move slowly. If it stays lost, Stop & Save what you have.")
+        if self.last_frame is None:
+            tracking = "Waiting after resume" if self.resuming else "Waiting"
+            geometry = "On hold"
+            hint = "Hold the last aligned view until tracking locks." if self.resuming else "Aim at the object."
+        elif not recent(self.last_frame):
+            tracking, geometry = "Unknown (no recent reading)", "On hold"
+            hint = "Check the live colour/depth previews before moving."
+        elif not self.tracking:
+            tracking, geometry, hint = "Lost", "On hold", recovery
+            if self.cue.get("away"):
+                tracking = "Lost (target not matched)"
+                hint = "Check that the object has clear depth, then return to the last aligned view. If it stays lost, Stop & Save."
+        else:
+            tracking = "Locked"
+            geometry = ("Point count increasing" if recent(self.last_growth) else
+                        "Taking views; point count steady" if recent(self.last_merge) else "No recent views added")
+            hint = ("Show a defined edge or markers while keeping overlap." if self.cue.get("flat") else
+                    "Move slowly towards a new angle and keep part of the scanned surface in view.")
+        unjoined = f"Piece {self.piece} is not joined to earlier pieces yet." if self.piece > 1 else ""
+        return dict(capture=capture, tracking=tracking, geometry=geometry, hint=hint,
+                    frames=self.frames, merged=self.merged, points=self.points, unjoined=unjoined)
+
+
 class LiveSource:
     """view3d source backed by the running Scanner (or the last one)."""
 
@@ -134,6 +198,7 @@ class LiveSource:
         self.scanner, self.name, self.scan_id = None, "no scan yet", 0
         self.phase, self.out_dir, self.busy = "idle", None, threading.Lock()
         self.paused_points = None
+        self.progress = ScanProgress()
         self.cached, self.built_key, self.built_at = ("0", view3d.pack_arrays(np.empty((0, 3))), {}), None, 0.0
 
     def current(self):
@@ -146,17 +211,21 @@ class LiveSource:
             if key != self.built_key and time.time() - self.built_at >= PAYLOAD_EVERY_S:
                 xyz, rgb, seen = (self.paused_points if self.phase == "paused" else s.live_points(LIVE_MIN_SEEN))
                 payload = view3d.pack_arrays(xyz @ cl.FLIP.T / 1000, rgb, seen)
-                info = {"name": self.name, "points": len(xyz), "phase": self.phase, "session": {
-                    "preset": s.preset, "point_distance_mm": s.cloud.point_mm,
-                    "raw_points": s.cloud.raw_points,
-                    **{k: s.stats[k] for k in ("frames", "merged", "lost", "relocked", "tracking")},
-                    "pieces": len(s.pieces),  # (while scanning, the cloud shown is the current piece's)
-                    "cue": dict(s.cue), "crop": s.crop}}
-                if self.phase == "done":  # (turn_axis reads every tracked pose: only for a finished scan's Crop)
-                    info["session"]["crop_axes"] = s.crop_axes().round(6).tolist()
-                self.cached = ("-".join(map(str, key)), payload, info)
+                self.cached = ("-".join(map(str, key)), payload, {"points": len(xyz)})
                 self.built_key, self.built_at = key, time.time()
-            return self.cached[0], self.cached[1], dict(self.cached[2], **view3d.mesh_versions(self.mesh_path()))
+            # Even if the model is unchanged, incoming/lost frames and their status are new.
+            stats = {k: s.stats[k] for k in ("frames", "merged", "lost", "relocked", "tracking")}
+            session = dict(stats, preset=s.preset, point_distance_mm=s.cloud.point_mm, raw_points=s.cloud.raw_points,
+                           pieces=len(s.pieces), cue=dict(s.cue), crop=s.crop)
+            if self.phase == "done":  # Crop axes are for a finished scan; don't recalculate on every poll.
+                if "crop_axes" not in self.cached[2]:
+                    self.cached[2]["crop_axes"] = s.crop_axes().round(6).tolist()
+                session["crop_axes"] = self.cached[2]["crop_axes"]
+            info = dict(name=self.name, points=self.cached[2].get("points", 0), phase=self.phase, session=session,
+                        **view3d.mesh_versions(self.mesh_path()))
+            if self.phase == "scanning":
+                info["progress"] = self.progress.status()
+            return self.cached[0], self.cached[1], info
 
 
     def process(self, action, box=None):
@@ -260,6 +329,7 @@ def run(commands, replies, port=view3d.PORT):
                 source.name = f"live: {out_dir.name}"
                 source.phase, source.out_dir = "scanning", out_dir
                 source.paused_points, source.built_at = None, 0.0
+                source.progress = ScanProgress()
         elif kind == "frame" and source.phase == "scanning" and source.scanner is not None:
             _, yuyv, grey, depth_buf, bytesperline, (t_c, t_i, t_d), depth4, cleared = cmd
             t0 = time.perf_counter()
@@ -286,11 +356,13 @@ def run(commands, replies, port=view3d.PORT):
                 s = source.scanner
                 s.feed(frame)
                 points = s.points_kept  # (the cloud lock is held through each ~90 ms merge: no waiting for it)
+                cue = dict(s.cue, base=s.scene.plane is not None, turning=s.object_turns, piece=len(s.pieces))
+                source.progress.observe(s.stats["frames"], s.stats["merged"], points, s.stats["tracking"], cue)
             timing["raw"] += t2 - t0
             timing["feed"] += time.perf_counter() - t2
             timing["frames"] += 1
             replies.put(("frame_done", s.stats["merged"], s.stats["frames"], points, s.stats["tracking"],
-                         dict(s.cue, base=s.scene.plane is not None, turning=s.object_turns, piece=len(s.pieces)), view_mask(s.last_view),
+                         cue, view_mask(s.last_view),
                          s.view_codes, t_d))
         elif kind == "frame":
             replies.put(("frame_done", 0, 0, 0))
@@ -315,6 +387,7 @@ def run(commands, replies, port=view3d.PORT):
             with source.lock:
                 source.phase, source.built_key, source.built_at = "scanning", None, 0.0
                 source.paused_points = None
+                source.progress.resume()
             replies.put(("resumed",))
         elif kind == "stop" and source.phase in ("scanning", "paused") and source.scanner is not None:
             if recorder is not None:

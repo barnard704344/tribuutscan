@@ -611,6 +611,13 @@ def set_control(target, cid, value):
         v4l2.set_control(target, cid, value)
 
 
+def progress_line(status):
+    """One-line operational status; detailed recovery guidance appears below the depth preview."""
+    text = (f"Capture: {status['capture']} ({status['frames']})  |  Tracking: {status['tracking']}"
+            f"  |  Geometry: {status['geometry']} ({status['points']:,} pts)")
+    return f"{text}  |  {status['unjoined']}" if status["unjoined"] else text
+
+
 class App:
     """The viewer's state and actions. The panels (panels.py) call these methods; `tick` runs in the Tk
     thread about 30 times a second. The range switch and the record loop run in their own threads and
@@ -638,7 +645,8 @@ class App:
         self.job = {"process": None, "dir": None}
         self.live = {"proc": None, "commands": None, "replies": None, "url": None, "open": False,
                      "feeder": None,  # (Feeder: frames out, replies in, off the Tk loop)
-                     "done": collections.deque(maxlen=60), "last": None, "name": "", "gpu": "", "merging": ""}
+                     "done": collections.deque(maxlen=60), "last": None, "name": "", "gpu": "", "merging": "",
+                     "progress": livescan.ScanProgress()}
         # (done: when frames came back; last: (merged, frames, points, tracking); gpu / merging: from its log)
         self.scan_state = "idle"  # idle | counting | scanning | pausing | paused | resuming | saving | optimising | meshing
         self.imu, self.imu_note, self.imu_want = None, "", usbdepth.available()
@@ -710,7 +718,7 @@ class App:
                 bar = panels.frame(parent)
                 bar.pack(fill="x", padx=8, pady=(5, 0))
                 self.guide = tk.Label(bar, anchor="center", bg=panels.SURFACE, fg=panels.INK,
-                                      font=("TkDefaultFont", 11, "bold"))
+                                      font=("TkDefaultFont", 11, "bold"), wraplength=460)
                 self.guide.pack(side="left", fill="x", expand=True)
                 self.retry = panels.button(bar, text="Retry now", command=self.retry_now)  # shown while lost
             stats = tk.Label(parent, anchor="w", bg=panels.SURFACE, fg=panels.MUTED, font=("TkFixedFont", 9))
@@ -799,10 +807,13 @@ class App:
         else:
             self.distance.show(*distance_guide(fresh_aim(), self.depth.stats, calib.CAMERA.mode,
                                                calib.CAMERA.law_estimate, now))
+        progress = self.live["progress"].status(now) if self.scan_state == "scanning" else None
         if self.lost:
             wait = self.retry_at - now
             self.guide.configure(fg=BAD, text="Reconnecting to the scanner ..." if self.switching["busy"] or wait <= 0 else
                                  f"Scanner disconnected: plug it in or replug it. Next try in {wait:.0f} s")
+        elif progress is not None:
+            self.guide.configure(text=progress["hint"], fg=BAD if progress["tracking"].startswith("Lost") else MUTED_GUIDE)
         else:
             hint = self.check_countdown() if self.scan_state == "counting" else None
             if hint is None and aim_view["idle"] and time.monotonic() - aim_view["t"] <= AIM_FRESH_S:
@@ -821,7 +832,10 @@ class App:
             self.message = (f"REC {recorder.count} sets, {recorder.megabytes:.0f} MB"
                             + (f", {recorder.imu_rows} IMU samples" if recorder.imu_rows else "")
                             + f", {self.rec['missed']} missed, {recorder.free:.0f} GB free")
-        self.note.configure(text=self.message)
+        if self.scan_state == "scanning":  # recompute after consuming frame replies, even if geometry was unchanged
+            self.note.configure(text=progress_line(self.live["progress"].status()))
+        else:
+            self.note.configure(text=self.message)
         for panel in self.panels:
             panel.refresh()
         if time.monotonic() - self.info_at >= INFO_EVERY_S:
@@ -866,11 +880,16 @@ class App:
         elif self.switching["busy"]:
             now.append("switching the depth range (the images pause)")
         if self.scan_state == "scanning":
-            merged, frames, points, tracking = live["last"] or (0, 0, 0, True)
-            done = list(live["done"])
-            fps = (len(done) - 1) / (done[-1] - done[0]) if len(done) > 1 and done[-1] > done[0] else 0.0
-            now.append(f"scanning {live['name']}: {frames} frames ({fps:.1f} a second), {merged} merged, {points:,} points"
-                       + ("" if tracking else ", TRACKING LOST"))
+            progress = live.get("progress")
+            if progress is not None:
+                status = progress.status()
+                now.append(f"{live['name']}: {progress_line(status)}")
+            else:
+                merged, frames, points, tracking = live["last"] or (0, 0, 0, True)
+                done = list(live["done"])
+                fps = (len(done) - 1) / (done[-1] - done[0]) if len(done) > 1 and done[-1] > done[0] else 0.0
+                now.append(f"scanning {live['name']}: {frames} frames ({fps:.1f} a second), {merged} merged, {points:,} points"
+                           + ("" if tracking else ", TRACKING LOST"))
         elif self.scan_state == "pausing":
             now.append("pausing: finishing frames already accepted")
         elif self.scan_state == "paused":
@@ -1434,6 +1453,7 @@ class App:
         capture = {"ir": self.ir_settings(), **({"aim": aim} if aim else {})}
         out = fr.capture_dir(fr.CAPTURES, "-scan", live=True)
         live["name"], live["last"], live["merging"] = out.name, None, ""
+        live["progress"] = livescan.ScanProgress()
         live["done"].clear()
         scan_view.update(keep_base=not self.remove_base.get(), lost=False, model=None)
         live["feeder"].new_scan()
@@ -1548,29 +1568,18 @@ class App:
                 live["done"].clear()
                 self.ticks.clear()
                 self.lighter(True)
+                live["progress"].resume()
                 feeder.transition("scanning", fresh=True)
                 self.log("scan resumed; hold or return to the last tracked view")
             elif kind == "frame_done":
                 merged, frames, points, tracking, cue, view, model, model_t = (list(rest) + [None] * 8)[:8]
+                if self.scan_state in ("scanning", "pausing") and cue is not None:
+                    live["progress"].observe(frames, merged, points, tracking, cue)
                 if self.scan_state == "scanning" and cue is not None:
                     live["done"].append(time.monotonic())  # (the Status box: frames back a second)
                     live["last"] = (merged, frames, points, tracking)
                     scan_view.update(mask=view, t=time.monotonic(), lost=not tracking,
                                      model=None if model is None or raw is None else (model, raw))
-                    held = ", ".join(([f"{cue['markers']} markers"] if cue.get("markers") else [])
-                                     + (["features"] if cue.get("features") else [])) or "shape"
-                    turning = cue.get("turning")
-                    hint = ("   TRACKING LOST: the object is out of view: point back at it, or click it" if not tracking
-                            and cue.get("away") else
-                            "   TRACKING LOST: turn " + ("" if turning else "(or move) ") + "back until the live view "
-                            "lines up with the grey shape, or click the object" if not tracking else
-                            "   THIN VIEW: turn slowly here" if cue.get("flat") and turning else
-                            "   FLAT AREA: aim at an edge, a corner or markers" if cue.get("flat") else "")
-                    base = ("object turning, scanner standing | " if turning else "") + \
-                        ("base found" if cue.get("base") else "looking for the base")
-                    if cue.get("piece", 1) > 1:  # (cloud.Scanner.start_piece: lost too long, the scan went on)
-                        base = f"piece {cue['piece']}: keep scanning, it joins the others after Stop | " + base
-                    self.message = f"SCAN {merged} of {frames} frames merged, {points:,} points | held by {held} | {base}{hint}"
             elif kind == "saved":
                 path, points = rest
                 self.log(f"scan saved: {points:,} points -> {Path(path).parent.name}/cloud.ply; optimising ...")

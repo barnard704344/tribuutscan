@@ -99,9 +99,12 @@
     <dt>Points</dt><dd id="points">–</dd>
     <dt>Point distance</dt><dd id="pd">–</dd>
     <dt>Raw points</dt><dd id="raw">–</dd>
-    <dt>Frames merged</dt><dd id="frames">–</dd>
+    <dt>Capture</dt><dd id="capture">–</dd>
     <dt>Tracking</dt><dd id="tracking">–</dd>
+    <dt>Geometry</dt><dd id="geometry">–</dd>
+    <dt>Frames merged</dt><dd id="frames">–</dd>
   </dl>
+  <div class="hint" id="scanhint" hidden></div>
   <label for="show">Show</label>
   <select id="show">
     <option value="cloud">Cloud</option>
@@ -383,24 +386,23 @@ async function poll() {
     if (info.version !== version) {
       await load();
       version = info.version;
-      const s = info.session || {};
-      pointMm = s.point_distance_mm || pointMm;
-      material.size = pointMm / 1000 * $("size").value;
-      $("name").textContent = info.name;
       $("points").textContent = info.points.toLocaleString();
-      $("pd").textContent = s.point_distance_mm ? `${s.point_distance_mm} mm (${s.preset})` : "–";
-      $("raw").textContent = s.raw_points ? s.raw_points.toLocaleString() : "–";
-      $("frames").textContent = s.merged != null ? `${s.merged} of ${s.frames}` : "–";
-      const cue = s.cue || {};
-      const held = [cue.markers ? `${cue.markers} markers` : "", cue.features ? "features" : ""].filter(Boolean).join(", ") || "shape";
-      $("tracking").innerHTML = s.tracking == null ? "–" : !s.tracking
-        ? '<span class="bad">lost: move back slowly</span>'
-        : cue.flat ? '<span class="bad">flat area: aim at an edge or markers</span>'
-        : `ok, held by ${held}${s.relocked ? ` (re-found ${s.relocked}×)` : ""}`;
-      if (s.pieces > 1 && info.phase === "scanning")  // (cloud.Scanner.start_piece: the cloud shown is this piece's)
-        $("tracking").innerHTML += ` · piece ${s.pieces}: joins the others after Stop`;
       $("empty").classList.toggle("show", info.points === 0);
     }
+    // Telemetry changes even when there is no new geometry to download.
+    const s = session, live = info.progress;
+    pointMm = s.point_distance_mm || pointMm;
+    material.size = pointMm / 1000 * $("size").value;
+    $("name").textContent = info.name;
+    $("pd").textContent = s.point_distance_mm ? `${s.point_distance_mm} mm (${s.preset})` : "–";
+    $("raw").textContent = s.raw_points ? s.raw_points.toLocaleString() : "–";
+    $("frames").textContent = s.merged != null ? `${s.merged} of ${s.frames}` : "–";
+    $("capture").textContent = live ? live.capture : (info.phase === "paused" ? "Paused" : "–");
+    $("tracking").textContent = live ? live.tracking : "–";
+    $("tracking").classList.toggle("bad", !!live && live.tracking.startsWith("Lost"));
+    $("geometry").textContent = live ? live.geometry : (info.phase === "paused" ? "Frozen for inspection" : "–");
+    $("scanhint").hidden = !live;
+    $("scanhint").textContent = live ? [live.hint, live.unjoined].filter(Boolean).join(" ") : "";
     // Orbit/zoom remain unchanged when the scan freezes. Processing is for finished scans only.
     const unfinished = info.phase !== "done";
     document.querySelectorAll("[data-action]").forEach((li) => li.classList.toggle("later", unfinished));

@@ -125,6 +125,10 @@ right: Scanner, Capture, Scan, IMU and View.
   isn't saved or ended. The camera previews can keep running. Return to the scanner window and use
   **Resume scan (p)** to continue the same scan (start from the last tracked view if you moved the
   scanner), or **Stop & Save (c)** to finish normally. Process and Crop are for the finished scan.
+  Capture, Tracking and Geometry are shown separately: frames arriving doesn't mean tracking has
+  recovered or the point cloud is growing. If tracking remains lost, return to an overlapping view
+  of a known edge or the same markers. Check the depth image if the target isn't matched. Save the
+  usable scan if it won't recover; later pieces are not guaranteed to join.
 - **Scanning on a platform**: the scanner can also stand still while you turn the object on a
   platform.
   - The scan notices this after a few seconds, because the room behind stays put ("object turning,
