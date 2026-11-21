@@ -816,7 +816,9 @@ class App:
             self.guide.configure(fg=BAD, text="Reconnecting to the scanner ..." if self.switching["busy"] or wait <= 0 else
                                  f"Scanner disconnected: plug it in or replug it. Next try in {wait:.0f} s")
         elif progress is not None:
-            self.guide.configure(text=progress["hint"], fg=BAD if progress["tracking"].startswith("Lost") else MUTED_GUIDE)
+            hint = ("Tracking lost · Model held. Return to the last aligned view, or choose Start separate piece."
+                    if self.can_start_separate_piece(now) else progress["hint"])
+            self.guide.configure(text=hint, fg=BAD if progress["tracking"].startswith("Lost") else MUTED_GUIDE)
         else:
             hint = self.check_countdown() if self.scan_state == "counting" else None
             if hint is None and aim_view["idle"] and time.monotonic() - aim_view["t"] <= AIM_FRESH_S:
@@ -1433,6 +1435,25 @@ class App:
             self.live["feeder"].transition("resuming", ("resume",))
             self.log("resuming the same scan ...")
 
+    def can_start_separate_piece(self, now=None):
+        """Enable only when the worker reports a fresh, established scan holding after loss."""
+        if self.scan_state != "scanning" or self.lost or self.switching["busy"]:
+            return False
+        live = self.live
+        progress, proc = live.get("progress"), live.get("proc")
+        now = time.monotonic() if now is None else now
+        return (proc is not None and progress is not None and progress.tracking is False
+                and bool(progress.cue.get("can_start_separate_piece"))
+                and progress.last_frame is not None and 0 <= now - progress.last_frame <= progress.RECENT_S
+                and proc.is_alive())
+
+    def start_separate_piece(self):
+        """Request a disconnected piece explicitly; the worker rechecks eligibility."""
+        if not self.can_start_separate_piece():
+            return False
+        self.live["commands"].put(("start_separate_piece",))
+        return True
+
     def cancel_countdown(self):
         if self.scan_state == "counting":
             self.scan_state, self.count = "idle", None
@@ -1482,14 +1503,13 @@ class App:
 
     def aim_click(self, name, x, y):
         """A click on the depth or colour preview picks the piece there: for the aim while idle or counting down, and
-        while scanning for the scan itself, "the object is there" (the worker's cloud.Scanner.pick: found again
-        there, or a new piece from there)."""
+        while scanning to help reacquire the held model. A normal click never starts a separate piece."""
         if self.scan_state == "scanning":
             if self.live["proc"] is not None:
                 side = DEPTH_W if name == "Depth" else SIDE_W
                 uv = (x * fr.W / side, y * fr.H / (side * fr.H // fr.W))  # (full size: that preview's own pixels)
                 self.live["commands"].put(("pick", "depth" if name == "Depth" else "colour", uv))
-                self.log("picked: the scan takes the object there")
+                self.log("picked: try to reacquire the existing model here")
             return
         if self.scan_state not in ("idle", "counting"):
             return

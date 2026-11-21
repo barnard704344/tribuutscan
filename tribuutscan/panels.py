@@ -165,6 +165,9 @@ class ScanPanel(Panel):
         self.pause.pack(side="left", expand=True, fill="x", padx=(0, 5))
         self.cancel = button(row, text="Cancel scan", command=self.app.cancel_scan)
         self.cancel.pack(side="left", expand=True, fill="x")
+        self.separate = button(body, text="Start separate piece", state="disabled",
+                               command=self.app.start_separate_piece)
+        self.separate.pack(fill="x", pady=(2, 0))
         row = frame(body)
         row.pack(fill="x", pady=(2, 0))
         button(row, text="Continue last", command=self.app.continue_scan).pack(
@@ -188,6 +191,8 @@ class ScanPanel(Panel):
         self.set(self.pause, text=label, state="normal" if phase in ("scanning", "paused") else "disabled")
         can_cancel = phase in ("counting", "scanning", "pausing", "paused", "resuming")
         self.set(self.cancel, state="normal" if can_cancel else "disabled")
+        self.set(self.separate, state="normal" if phase == "scanning"
+                 and self.app.can_start_separate_piece() else "disabled")
 
 
 class ImuPanel(Panel):

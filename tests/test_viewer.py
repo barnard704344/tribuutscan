@@ -436,6 +436,38 @@ def test_a_click_while_scanning_tells_the_worker_where_the_object_is():
     assert app.live["commands"].empty()
 
 
+def test_start_separate_piece_is_explicit_and_requires_fresh_worker_eligibility():
+    import queue
+    import time
+    from types import SimpleNamespace
+
+    app = viewer.App.__new__(viewer.App)
+    progress = viewer.livescan.ScanProgress()
+    proc = SimpleNamespace(is_alive=lambda: True)
+    app.live = {"proc": proc, "progress": progress, "commands": queue.Queue()}
+    app.scan_state, app.lost, app.switching = "scanning", False, {"busy": False}
+    now = time.monotonic()
+    assert not app.start_separate_piece()
+    progress.observe(1, 1, 10, True, {"can_start_separate_piece": True}, now=now)
+    assert not app.start_separate_piece()  # even a cue racing a locked frame cannot enable it
+    progress.observe(2, 1, 10, False, {"can_start_separate_piece": False}, now=now)
+    assert not app.start_separate_piece()
+    progress.observe(3, 1, 10, False, {"can_start_separate_piece": True}, now=now)
+    assert not app.can_start_separate_piece(now + progress.RECENT_S + 1)
+    for phase in ("paused", "pausing", "resuming", "idle", "saving", "cancelling"):
+        app.scan_state = phase
+        assert not app.start_separate_piece()
+    app.scan_state = "scanning"
+    app.lost = True
+    assert not app.start_separate_piece()
+    app.lost, app.switching["busy"] = False, True
+    assert not app.start_separate_piece()
+    app.switching["busy"] = False
+    assert app.live["commands"].empty()
+    assert app.start_separate_piece()
+    assert app.live["commands"].get_nowait() == ("start_separate_piece",)
+
+
 def test_failed_reopen_closes_staged_sources_without_resuming_any_stream():
     from types import SimpleNamespace
     from unittest.mock import Mock, patch
@@ -570,7 +602,8 @@ def test_scan_panel_build_wires_separate_pause_and_stop_controls():
     from unittest.mock import Mock, patch
     from tribuutscan import panels
 
-    app = NS(preset=None, toggle_scan=Mock(), toggle_pause_scan=Mock(), cancel_scan=Mock(), continue_scan=Mock(), open_view=Mock(),
+    app = NS(preset=None, toggle_scan=Mock(), toggle_pause_scan=Mock(), cancel_scan=Mock(),
+             start_separate_piece=Mock(), continue_scan=Mock(), open_view=Mock(),
              remove_base=None, keep_raw=None, mesh_after=None, countdown=None, scan_state="paused")
     panel = NS(app=app, set=Mock(), STATES=panels.ScanPanel.STATES)
     with patch.object(panels, "frame", return_value=Mock()), patch.object(panels, "button", side_effect=lambda *a, **kw: Mock(**kw)), \
@@ -578,7 +611,8 @@ def test_scan_panel_build_wires_separate_pause_and_stop_controls():
         panels.ScanPanel.build(panel, object())
         panels.ScanPanel.refresh(panel)
     assert panel.scan.command is app.toggle_scan and panel.pause.command is app.toggle_pause_scan
-    assert panel.cancel.command is app.cancel_scan
+    assert panel.cancel.command is app.cancel_scan and panel.separate.command is app.start_separate_piece
+    panel.set.assert_any_call(panel.separate, state="disabled")
     panel.set.assert_any_call(panel.scan, text="Stop & Save (c)", state="normal")
     panel.set.assert_any_call(panel.pause, text="Resume scan (p)", state="normal")
 
