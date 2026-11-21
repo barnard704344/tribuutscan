@@ -701,3 +701,122 @@ def test_close_after_cancel_does_not_save_the_take():
     assert commands.get_nowait() == ("quit",) and commands.empty()
     app.live["feeder"].transition.assert_not_called()
     app.root.destroy.assert_called_once()
+
+
+def test_return_reference_keeps_acknowledged_buffer_and_object_outline():
+    from unittest.mock import patch
+    from tribuutscan.depth import encode_y10
+
+    w, h, stride = 128, 80, 160
+    depth = np.full((h, w), 300, np.uint16)
+    selected = np.zeros((10, 16), np.uint8)
+    selected[1:8, 3:9] = 2
+    original = encode_y10(depth)
+    other = encode_y10(np.full_like(depth, 400))
+    ref = viewer.TrackedReference()
+    with patch.object(viewer, "render_tracked_reference", wraps=viewer.render_tracked_reference) as render:
+        ref.observe(1, False, other, (w, h, stride), None)  # no aligned frame yet
+        assert ref.image() is None
+        ref.observe(1, True, original, (w, h, stride), selected)
+        assert ref.image() is None
+        ref.observe(1, False, other, (w, h, stride), None)
+        first = ref.image()
+        assert ref.image() is first
+        ref.observe(1, False, other, (w, h, stride), None)
+        assert ref.image() is first and render.call_count == 1
+        rgb = np.frombuffer(first[0].split(b"\n", 1)[1], np.uint8).reshape(160, 256, 3)
+        assert np.any((rgb == viewer.AIM_RGB).all(axis=-1))
+        assert np.all(rgb[5, 5] == viewer.depth_to_rgb(depth)[0, 0])
+        assert first[2] and np.isclose(first[1], viewer.pointcloud.depth_to_mm(300) / 10)
+        ref.observe(1, True, other, (w, h, stride), None)
+        assert ref.image() is None
+        ref.observe(1, False, original, (w, h, stride), None)
+        assert ref.image()[0] != first[0] and render.call_count == 2
+        ref.observe(2, False, original, (w, h, stride), None)
+        assert ref.image() is None  # cannot show the prior piece's view
+        ref.observe(2, True, original, (w, h, stride), None)
+        ref.clear()
+        assert ref.raw is None
+
+
+def test_return_overlay_keeps_current_depth_and_restores_selected_coverage():
+    import time
+    from unittest.mock import patch
+    from tribuutscan.depth import encode_y10
+
+    class Cap:
+        width, height, bytesperline = 128, 80, 160
+
+    now = np.full((Cap.height, Cap.width), 270, np.uint16)
+    tracked = np.full_like(now, 410)
+    mask = np.full((8, 8), 2, np.uint8)
+    codes = np.full_like(mask, 255)
+    with patch.dict(viewer.scan_view, active=True, preview=viewer.COVERAGE, t=time.monotonic(), mask=mask,
+                    model=(codes, encode_y10(tracked)), lost=True, return_guide=True):
+        _, stats = viewer.render_depth(Cap, encode_y10(now), width=Cap.width)
+        assert "compare with last tracked" in stats["text"] and viewer.MODEL_LEGEND not in stats["text"]
+        assert np.isclose(stats["centre_cm"], viewer.pointcloud.depth_to_mm(270) / 10)
+        image, _ = viewer.render_depth(Cap, encode_y10(now), width=Cap.width)
+        rgb = np.frombuffer(image.split(b"\n", 1)[1], np.uint8).reshape(Cap.height, Cap.width, 3)
+        assert np.all(rgb[15, 16] == viewer.depth_to_rgb(now)[15, 16])
+        assert np.all(rgb[0, 0] == viewer.LOST_RGB)
+        viewer.scan_view.update(return_guide=False, lost=False)
+        _, stats = viewer.render_depth(Cap, encode_y10(now), width=Cap.width)
+        assert viewer.MODEL_LEGEND in stats["text"]
+
+
+def test_return_panel_reuses_image_across_loss_and_hides_on_pause_or_disconnect():
+    from unittest.mock import Mock, patch
+    from tribuutscan.depth import encode_y10
+
+    app = viewer.App.__new__(viewer.App)
+    app.tracked_reference = ref = viewer.TrackedReference()
+    app.return_panel, app.return_image, app.return_note = Mock(), Mock(), Mock()
+    app.return_photo = app.shown_return = None
+    app.scan_state, app.lost, app.switching = "scanning", False, {"busy": False}
+    app.views = {"Colour": [Mock()]}
+    depth = np.full((80, 128), 300, np.uint16)
+    ref.observe(1, True, encode_y10(depth), (128, 80, 160), None)
+    ref.observe(1, False, None, (128, 80, 160), None)
+    with patch.object(viewer.tk, "PhotoImage", return_value=Mock()) as photo:
+        assert app.refresh_return_guide() and app.refresh_return_guide()
+        photo.assert_called_once()
+        app.scan_state = "paused"
+        assert not app.refresh_return_guide()
+        assert ref.raw is not None and app.return_photo is None
+        app.scan_state = "scanning"
+        assert app.refresh_return_guide()  # reference survives pause/resume
+        app.lost = True
+        assert not app.refresh_return_guide() and ref.raw is None
+
+
+def test_return_reference_uses_only_acknowledged_stable_frames_from_feeder():
+    import queue
+    from collections import deque
+    from types import SimpleNamespace as NS
+    from unittest.mock import patch
+    from tribuutscan.depth import encode_y10
+
+    app = viewer.App.__new__(viewer.App)
+    app.scan_state, app.lost, app.switching = "scanning", False, {"busy": False}
+    app.depth = NS(cap=NS(width=128, height=80, bytesperline=160), raw=b"current camera bytes")
+    app.tracked_reference = ref = viewer.TrackedReference()
+    out = queue.Queue()
+    app.live = {"feeder": NS(out=out), "proc": NS(exitcode=None), "done": deque(),
+                "progress": viewer.livescan.ScanProgress()}
+    one = encode_y10(np.full((80, 128), 300, np.uint16))
+    two = encode_y10(np.full((80, 128), 410, np.uint16))
+
+    def done(i, tracking, raw, stable=True):
+        cue = {"piece": 1, "reference_ok": stable}
+        out.put(("frame_done", (1, i, 250, tracking, cue, None, None, i), raw))
+        app.check_scan()
+
+    with patch.dict(viewer.scan_view):
+        done(1, True, one)
+        done(2, True, two, stable=False)
+        done(3, False, two)
+        assert ref.raw == one and ref.image() is not None
+        app.switching["busy"] = True
+        done(4, True, two)
+        assert ref.raw == one  # late reply from a previous capture cannot become the new reference

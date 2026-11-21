@@ -111,7 +111,9 @@ right: Scanner, Capture, Scan, IMU and View.
   **grey** where the mesh has surface, **yellow** where it needs more views, **orange** where the
   scanner sees surface not in the model yet. The status line shows views added and when the last
   view was added, even if the shape and point count look unchanged. A red frame in either mode
-  means tracking is lost. Return to the last aligned view. While tracking is lost, the model stays put.
+  means tracking is lost. When an aligned frame is available, **Last tracked view** appears beside
+  the latest Depth feed, with the captured outline and centre distance when available. Match the
+  shape and angle to return to the last aligned view; the model stays put in the meantime.
   Click the target in the depth or colour preview to guide recovery, not to start another piece.
   Use **Start separate piece** only if you deliberately want to capture a disconnected area instead
   of recovering. It waits for usable depth. Pieces are not guaranteed to align after Stop.

@@ -194,7 +194,7 @@ found_markers = {"on": True, "list": [], "stamp": 0.0, "hz": MARKER_HZ}  # list 
 # tracker it also sends the live model view of that frame (gpu.preview_codes), painted over the object
 # (paint_model); the preview then shows the frame the worker tracked, so model and depth agree.
 LIVE_DEPTH, COVERAGE = "Live depth", "Coverage"
-scan_view = {"active": False, "preview": LIVE_DEPTH, "mask": None, "t": 0.0,
+scan_view = {"active": False, "return_guide": False, "preview": LIVE_DEPTH, "mask": None, "t": 0.0,
              "keep_base": False, "lost": False, "model": None}  # model: (codes, depth raw)
 # Outside a scan the depth preview holds each pixel's last depth for a moment (display only: scans take the
 # real frames). On some surfaces the scanner drops whole regions from one frame to the next (2026-11-05, the
@@ -265,7 +265,8 @@ def render_depth(cap, buf, width=DEPTH_W):
     now = time.monotonic()
     view_state = scan_view.copy()
     scanning = view_state["active"]
-    coverage = scanning and view_state["preview"] == COVERAGE
+    returning = scanning and view_state["return_guide"]
+    coverage = scanning and not returning and view_state["preview"] == COVERAGE
     fresh_coverage = coverage and now - view_state["t"] < 1.0
     model = view_state["model"] if fresh_coverage else None
     h, w, stride = cap.height, cap.width, cap.bytesperline
@@ -309,7 +310,7 @@ def render_depth(cap, buf, width=DEPTH_W):
         stats["text"] += ("   coverage: object mask" if view is not None else
                           "   coverage: waiting for a processed view")
     elif scanning:
-        stats["text"] += "   live depth"
+        stats["text"] += "   live depth · compare with last tracked view" if returning else "   live depth"
     piece = None if scanning else fresh_aim()
     if piece is not None:  # the aim: the piece a scan would start on, outlined; the rest dimmed
         mask = piece_mask(piece["pix"], rgb.shape[:2], (cap.height, cap.width), grow_px=2)
@@ -511,6 +512,53 @@ def distance_guide(piece, stats, mode, estimated, now):
     return i, f"{source}: ~{cm:.1f} cm{estimate} · {advice} · {target}"
 
 
+def render_tracked_reference(raw, dimensions, view, width=256):
+    """A thumbnail of an acknowledged frame; optional outline is the worker's object mask."""
+    w, h, stride = dimensions
+    depth = decode_depth(raw, w, h, stride)
+    rows = depth[h * 3 // 8:h * 5 // 8:2, w * 3 // 8:w * 5 // 8:2]
+    centre_valid = rows[rows > 0]
+    cm = (float(pointcloud.depth_to_mm(np.median(centre_valid))) / 10
+          if rows.size and centre_valid.size >= rows.size * 0.2 else None)
+    rgb = depth_to_rgb(fit(depth, width))
+    outlined = False
+    if view is not None:
+        # The compact view mask uses 2 for tracked object and 1 for base.
+        mask = view[np.ix_(preview_index(view.shape[0], rgb.shape[0]), preview_index(view.shape[1], width))] == 2
+        outlined = bool(mask.any() and not mask.all())
+        if outlined:
+            paint_outline(rgb, mask, width=1)
+    mark_centre(rgb)
+    return ppm(rgb), cm, outlined
+
+
+class TrackedReference:
+    """One in-memory frame from this take and piece. Render lazily, once per loss."""
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.piece = self.raw = self.dimensions = self.view = self.thumbnail = None
+        self.lost = False
+
+    def observe(self, piece, tracking, raw, dimensions, view):
+        if piece != self.piece:
+            self.clear()
+            self.piece = piece
+        self.lost = not tracking
+        if tracking:
+            self.thumbnail = None
+            if raw is not None and len(raw) >= dimensions[1] * dimensions[2]:
+                self.raw, self.dimensions, self.view = raw, dimensions, view
+
+    def image(self):
+        if not self.lost or self.raw is None:
+            return None
+        if self.thumbnail is None:
+            self.thumbnail = render_tracked_reference(self.raw, self.dimensions, self.view)
+        return self.thumbnail
+
+
 class DistanceGauge(tk.Frame):
     """Text and a three-zone strip give the reading without requiring colour perception."""
     def __init__(self, parent):
@@ -682,6 +730,8 @@ class App:
         self.countdown, self.count = tk.BooleanVar(value=True), None  # the Scan panel's "Countdown"; its end
         self.ticks, self.tick_at = collections.deque(maxlen=20000), None  # Tk tick intervals while scanning
         self.panels, self.images, self.shown = [], {}, {}
+        self.tracked_reference = TrackedReference()
+        self.return_photo, self.shown_return = None, None
 
     # --- window ---------------------------------------------------------------------------------
     def build_window(self):
@@ -718,6 +768,14 @@ class App:
             text.pack(fill="both", expand=True)
             self.info[name] = text
         boxes.rowconfigure(0, weight=1)
+        self.return_panel = panels.frame(left)
+        tk.Label(self.return_panel, text="Last tracked view", bg=panels.SURFACE, fg=panels.INK,
+                 font=panels.BOLD).pack(anchor="w", padx=8, pady=(4, 0))
+        self.return_image = tk.Label(self.return_panel, bg="#101928", bd=0, highlightthickness=0)
+        self.return_image.pack(padx=8, pady=4)
+        self.return_note = tk.Label(self.return_panel, anchor="w", justify="left", wraplength=SIDE_W - 16,
+                                    bg=panels.SURFACE, fg=panels.INK)
+        self.return_note.pack(fill="x", padx=8, pady=(0, 5))
         self.views = {}
         for name, parent, width in (("Colour", left, SIDE_W), ("IR (flipped)", left, SIDE_W), ("Depth", middle, DEPTH_W)):
             title_parent = parent
@@ -856,7 +914,8 @@ class App:
             self.retry.pack_forget()
         self.check_mesh()
         self.check_scan()
-        scan_view["active"] = self.scan_state in ("scanning", "pausing", "resuming")
+        scan_view.update(active=self.scan_state in ("scanning", "pausing", "resuming"),
+                         return_guide=self.refresh_return_guide())
         recorder = self.rec["recorder"]
         if recorder:
             self.message = (f"REC {recorder.count} sets, {recorder.megabytes:.0f} MB"
@@ -876,6 +935,29 @@ class App:
             self.ticks.append(now - self.tick_at)  # (how often the window got to run: logged at Stop)
         self.tick_at = now
         self.root.after(33, self.tick)
+
+    def refresh_return_guide(self):
+        """Compare a frozen acknowledged frame with Depth; never save or log the image."""
+        blocked = self.lost or self.switching["busy"]
+        if blocked or self.scan_state not in ACTIVE_SCAN_STATES:
+            self.tracked_reference.clear()
+        shown = self.tracked_reference.image() if self.scan_state == "scanning" and not blocked else None
+        if shown is None:
+            if self.return_photo is not None:
+                self.return_panel.pack_forget()
+                self.return_image.configure(image="")
+                self.return_photo, self.shown_return = None, None
+            return False
+        if self.shown_return is not shown:
+            image, cm, outlined = shown
+            self.return_photo = tk.PhotoImage(data=image, format="PPM")
+            self.shown_return = shown
+            self.return_image.configure(image=self.return_photo)
+            matched = "Match the cyan outline" if outlined else "Match the visible shape"
+            distance = "" if cm is None else f" Centre was ~{cm:.1f} cm."
+            self.return_note.configure(text=f"{matched} and angle in live Depth.{distance} Move slowly.")
+            self.return_panel.pack(fill="x", before=self.views["Colour"][0], pady=(0, 5))
+        return True
 
     # --- the Status and Messages boxes ---------------------------------------------------------------
     def refresh_info(self):
@@ -1519,7 +1601,9 @@ class App:
         live["name"], live["last"], live["merging"] = out.name, None, ""
         live["progress"] = livescan.ScanProgress()
         live["done"].clear()
-        scan_view.update(active=True, keep_base=not self.remove_base.get(), mask=None, t=0.0, lost=False, model=None)
+        self.tracked_reference.clear()
+        scan_view.update(active=True, return_guide=False, keep_base=not self.remove_base.get(),
+                         mask=None, t=0.0, lost=False, model=None)
         live["feeder"].new_scan()
         self.ticks.clear()
         live["commands"].put(("start", self.preset.get(), out, self.keep_raw.get(), continue_from, calib.CAMERA.mode,
@@ -1661,6 +1745,11 @@ class App:
                 merged, frames, points, tracking, cue, view, model, model_t = (list(rest) + [None] * 8)[:8]
                 if self.scan_state in ("scanning", "pausing") and cue is not None:
                     live["progress"].observe(frames, merged, points, tracking, cue)
+                    if not self.lost and not self.switching["busy"]:
+                        cap = self.depth.cap
+                        accepted = raw if cue.get("reference_ok", True) else None
+                        self.tracked_reference.observe(cue.get("piece", 1), tracking, accepted,
+                                                       (cap.width, cap.height, cap.bytesperline), view)
                 if self.scan_state == "scanning" and cue is not None:
                     live["done"].append(time.monotonic())  # (the Status box: frames back a second)
                     live["last"] = (merged, frames, points, tracking)
