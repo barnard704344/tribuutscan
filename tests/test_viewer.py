@@ -40,13 +40,13 @@ def test_depth_preview_dims_all_but_the_object():
 
     buf = encode_y10(np.full((800, 1280), 400, np.uint16))
     as_array = lambda ppm: np.frombuffer(ppm.split(b"\n", 1)[1], np.uint8).reshape(500, 800, 3).astype(int)
-    plain = as_array(viewer.render_depth(Cap, buf)[0])
+    plain = as_array(viewer.render_depth(Cap, buf, width=800)[0])
     mask = np.zeros((100, 160), np.uint8)
     mask[:, :80] = 2  # object on the left, base top right, the rest bottom right
     mask[:50, 80:] = 1
     try:
         viewer.scan_view.update(active=True, preview=viewer.COVERAGE, mask=mask, t=time.monotonic(), keep_base=True)
-        shaded = as_array(viewer.render_depth(Cap, buf)[0])
+        shaded = as_array(viewer.render_depth(Cap, buf, width=800)[0])
     finally:
         viewer.scan_view.update(active=False, preview=viewer.LIVE_DEPTH, mask=None, t=0.0)
     assert (shaded[:, :380] == plain[:, :380]).all()  # object unchanged (the centre mark aside)
@@ -115,12 +115,12 @@ def test_depth_preview_has_a_red_frame_while_tracking_is_lost():
     buf = encode_y10(np.full((800, 1280), 400, np.uint16))
     as_array = lambda ppm: np.frombuffer(ppm.split(b"\n", 1)[1], np.uint8).reshape(500, 800, 3)
     viewer.scan_view.update(mask=None, t=0.0)
-    plain = as_array(viewer.render_depth(Cap, buf)[0])
+    plain = as_array(viewer.render_depth(Cap, buf, width=800)[0])
     try:
         viewer.scan_view.update(active=True, t=time.monotonic(), lost=True)
-        lost = as_array(viewer.render_depth(Cap, buf)[0])
+        lost = as_array(viewer.render_depth(Cap, buf, width=800)[0])
         viewer.scan_view.update(active=False, t=0.0)  # scan ended
-        idle = as_array(viewer.render_depth(Cap, buf)[0])
+        idle = as_array(viewer.render_depth(Cap, buf, width=800)[0])
     finally:
         viewer.scan_view.update(mask=None, lost=False, t=0.0)
     for edge in (lost[0], lost[-1], lost[:, 0], lost[:, -1]):
@@ -184,7 +184,7 @@ def test_depth_preview_paints_the_live_model_of_the_tracked_frame():
     as_array = lambda ppm: np.frombuffer(ppm.split(b"\n", 1)[1], np.uint8).reshape(500, 800, 3).astype(int)
     tracked, newest = encode_y10(np.full((800, 1280), 400, np.uint16)), encode_y10(np.full((800, 1280), 100, np.uint16))
     viewer.scan_view.update(mask=None, t=0.0)
-    plain = as_array(viewer.render_depth(Cap, tracked)[0])
+    plain = as_array(viewer.render_depth(Cap, tracked, width=800)[0])
     codes = np.zeros((400, 640), np.uint8)
     codes[:, :160] = 255  # done, facing the scanner
     codes[:, 160:320] = 127  # seen too few times, facing
@@ -193,7 +193,7 @@ def test_depth_preview_paints_the_live_model_of_the_tracked_frame():
     try:
         viewer.scan_view.update(active=True, preview=viewer.COVERAGE, mask=mask, t=time.monotonic(),
                                 lost=False, model=(codes, tracked))
-        ppm, stats = viewer.render_depth(Cap, newest)
+        ppm, stats = viewer.render_depth(Cap, newest, width=800)
         shown = as_array(ppm)
     finally:
         viewer.scan_view.update(active=False, preview=viewer.LIVE_DEPTH, mask=None, t=0.0, model=None)
@@ -775,13 +775,14 @@ def test_return_panel_reuses_image_across_loss_and_hides_on_pause_or_disconnect(
     app.return_panel, app.return_image, app.return_note = Mock(), Mock(), Mock()
     app.return_photo = app.shown_return = None
     app.scan_state, app.lost, app.switching = "scanning", False, {"busy": False}
-    app.views = {"Colour": [Mock()]}
+    app.model_pane = Mock()
     depth = np.full((80, 128), 300, np.uint16)
     ref.observe(1, True, encode_y10(depth), (128, 80, 160), None)
     ref.observe(1, False, None, (128, 80, 160), None)
     with patch.object(viewer.tk, "PhotoImage", return_value=Mock()) as photo:
         assert app.refresh_return_guide() and app.refresh_return_guide()
         photo.assert_called_once()
+        app.return_panel.pack.assert_called_once_with(fill="x", after=app.model_pane, pady=(4, 0))
         app.scan_state = "paused"
         assert not app.refresh_return_guide()
         assert ref.raw is not None and app.return_photo is None
@@ -859,3 +860,44 @@ def test_viewer_accepts_native_coverage_reply_even_while_paused():
     out.put(("coverage_frame", [1, "v1", [[1, 2, 3]], [2]], None))
     viewer.App.check_scan(app)
     state.receive.assert_called_once_with(1, "v1", [[1, 2, 3]], [2])
+
+
+def test_window_places_large_3d_on_left_and_keeps_all_three_feeds_beside_it():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    from tribuutscan import model_pane
+
+    app = viewer.App.__new__(viewer.App)
+    app.root, app.preview_mode = Mock(), Mock()
+    app.depth, app.panels, app.images = SimpleNamespace(cap=Mock()), [], {}
+    labels = []
+
+    def frame(parent, **kwargs):
+        widget = Mock()
+        widget.parent = parent
+        return widget
+
+    def label(parent, **kwargs):
+        widget = frame(parent)
+        labels.append((kwargs.get("text"), widget))
+        return widget
+
+    with (patch.object(viewer.tk, "Frame", side_effect=frame),
+          patch.object(viewer.tk, "Label", side_effect=label),
+          patch.object(viewer.tk, "PhotoImage"), patch.object(viewer.tk, "Text"),
+          patch.object(viewer.tkinter.font, "nametofont"), patch.object(viewer, "DistanceGauge"),
+          patch.object(viewer, "depth_title", return_value="Depth"), patch.object(viewer, "PANELS", []),
+          patch.object(viewer.panels, "frame", side_effect=frame),
+          patch.object(viewer.panels, "configure_styles"), patch.object(viewer.panels, "button"),
+          patch.object(viewer.panels, "menu"), patch.object(model_pane, "ModelPane") as make_model):
+        app.build_window()
+    model_parent = make_model.call_args.args[0]
+    assert model_parent.grid.call_args.kwargs["column"] == 0
+    assert make_model.call_args.kwargs == {"width": viewer.MODEL_W, "height": viewer.MODEL_H}
+    feeds = dict(labels)
+    depth_parent = feeds["Depth"].parent.parent
+    feed_column = depth_parent.parent
+    assert feed_column.grid.call_args.kwargs["column"] == 1
+    assert feeds["Colour"].parent.parent.parent is feeds["IR (flipped)"].parent.parent.parent is feed_column
+    assert viewer.MODEL_W * viewer.MODEL_H > viewer.DEPTH_W ** 2 * viewer.fr.H // viewer.fr.W
+    assert viewer.MODEL_W + viewer.DEPTH_W <= 1200  # no camera/model expansion over the previous layout

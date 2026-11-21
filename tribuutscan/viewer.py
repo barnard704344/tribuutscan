@@ -46,7 +46,8 @@ from . import calib, cloud, gpu, imu, livescan, markers, panels, pointcloud, sys
 from .depth import decode_depth, decode_strided, garbled
 from .image import depth_to_rgb, ppm, yuyv_pixels
 
-SIDE_W, DEPTH_W = 400, 800  # preview widths: colour and IR on the left, depth in the middle
+SIDE_W, DEPTH_W = 272, 552  # Colour and IR side by side underneath Depth
+MODEL_W, MODEL_H = 580, 450
 PREVIEW_FPS = 15  # previews redraw at most this often; every frame is still captured and paired
 SCAN_SIDE_FPS = 5  # the colour and IR previews while scanning (the depth preview, the live model, stays at 15)
 
@@ -786,11 +787,13 @@ class App:
         root.columnconfigure(1, weight=1)
         main.columnconfigure(1, weight=1)
         left, middle = panels.frame(main), panels.frame(main)
-        left.grid(row=0, column=0, sticky="n", padx=(0, 4))
+        left.grid(row=0, column=0, sticky="new", padx=(0, 4))
         middle.grid(row=0, column=1, sticky="n", padx=(4, 0))
-        boxes = tk.Frame(main, bg=panels.BG)  # (they take the room the right-hand panels leave under the previews)
-        boxes.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(2, 0))
-        main.rowconfigure(1, weight=1)
+        from .model_pane import ModelPane
+        self.model_pane = ModelPane(left, width=MODEL_W, height=MODEL_H)
+        self.model_pane.pack(fill="x")
+        boxes = tk.Frame(left, bg=panels.BG)
+        boxes.pack(fill="both", expand=True, pady=(6, 0))
         self.info = {}
         mono = tkinter.font.nametofont("TkFixedFont").copy()  # (("TkFixedFont", 9) is not monospace: a family name)
         mono.configure(size=9)
@@ -800,7 +803,7 @@ class App:
             boxes.columnconfigure(col, weight=1, uniform="info")
             tk.Label(box, text=name, bg=panels.SURFACE, fg=panels.INK, font=panels.BOLD).pack(
                 anchor="w", padx=8, pady=(5, 0))
-            text = tk.Text(box, width=40, height=9, wrap="word", font=mono, relief="flat", padx=8, pady=4,
+            text = tk.Text(box, width=30, height=7, wrap="word", font=mono, relief="flat", padx=8, pady=4,
                            bg=panels.SURFACE, fg=panels.INK, highlightthickness=0, bd=0,
                            state="disabled", takefocus=0)
             text.tag_configure("hang", lmargin2=mono.measure(indent))  # wrapped lines start under the text
@@ -812,11 +815,19 @@ class App:
                  font=panels.BOLD).pack(anchor="w", padx=8, pady=(4, 0))
         self.return_image = tk.Label(self.return_panel, bg="#101928", bd=0, highlightthickness=0)
         self.return_image.pack(padx=8, pady=4)
-        self.return_note = tk.Label(self.return_panel, anchor="w", justify="left", wraplength=SIDE_W - 16,
+        self.return_note = tk.Label(self.return_panel, anchor="w", justify="left", wraplength=MODEL_W - 16,
                                     bg=panels.SURFACE, fg=panels.INK)
         self.return_note.pack(fill="x", padx=8, pady=(0, 5))
         self.views = {}
-        for name, parent, width in (("Colour", left, SIDE_W), ("IR (flipped)", left, SIDE_W), ("Depth", middle, DEPTH_W)):
+        depth = panels.frame(middle)
+        depth.pack(fill="x")
+        cameras = panels.frame(middle)
+        cameras.pack(fill="x", pady=(6, 0))
+        colour, ir = panels.frame(cameras), panels.frame(cameras)
+        colour.pack(side="left")
+        ir.pack(side="right")
+        for name, parent, width in (("Colour", colour, SIDE_W), ("IR (flipped)", ir, SIDE_W),
+                                    ("Depth", depth, DEPTH_W)):
             title_parent = parent
             if name == "Depth":
                 title_parent = panels.frame(parent)
@@ -858,9 +869,6 @@ class App:
             stats = tk.Label(parent, anchor="w", bg=panels.SURFACE, fg=panels.MUTED, font=("TkFixedFont", 9))
             stats.pack(fill="x", padx=8, pady=(2, 5))
             self.views[name] = (title, image, stats)
-        from .model_pane import ModelPane
-        self.model_pane = ModelPane(left, width=SIDE_W - 16)
-        self.model_pane.pack(fill="x", padx=8, pady=(5, 0))
         self.note = tk.Label(root, anchor="w", bg=panels.SURFACE, fg=panels.INK, padx=8, pady=5,
                              font=("TkDefaultFont", 10))
         self.note.grid(row=1, column=0, columnspan=3, sticky="we", padx=8, pady=(0, 8))
@@ -1020,7 +1028,7 @@ class App:
             matched = "Match the cyan outline" if outlined else "Match the visible shape"
             distance = "" if cm is None else f" Centre was ~{cm:.1f} cm."
             self.return_note.configure(text=f"{matched} and angle in live Depth.{distance} Move slowly.")
-            self.return_panel.pack(fill="x", before=self.views["Colour"][0], pady=(0, 5))
+            self.return_panel.pack(fill="x", after=self.model_pane, pady=(4, 0))
         return True
 
     # --- the Status and Messages boxes ---------------------------------------------------------------

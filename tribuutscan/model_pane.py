@@ -5,7 +5,6 @@ import tkinter as tk
 
 from . import panels
 
-HEIGHT = 215
 POLL_S = 0.30
 
 
@@ -70,11 +69,11 @@ class ModelState:
 
 class ModelPane(tk.Frame):
     """Live model in the same window as Colour, IR and Depth."""
-    def __init__(self, parent, *, width, renderer=None):
+    def __init__(self, parent, *, width, height, renderer=None):
         super().__init__(parent, bg=panels.SURFACE, bd=0)
         if renderer is None:
             from .coverage_preview import PreviewRenderer
-            renderer = PreviewRenderer(width, HEIGHT)
+            renderer = PreviewRenderer(width, height)
         self.state = ModelState(renderer)
         self.drag = self.shown = None
         top = panels.frame(self)
@@ -90,7 +89,7 @@ class ModelPane(tk.Frame):
             tk.Label(legend, text=label, bg=colour, fg=panels.INK, font=panels.BOLD,
                      padx=5, pady=2).pack(side="left", padx=(0, 4))
         self.piece_count = 1
-        self.blank = tk.PhotoImage(width=width, height=HEIGHT)
+        self.blank = tk.PhotoImage(width=width, height=height)
         self.canvas = tk.Label(self, image=self.blank, bg="#101928", bd=0, highlightthickness=0)
         self.canvas.pack()
         self.photo = self.blank
