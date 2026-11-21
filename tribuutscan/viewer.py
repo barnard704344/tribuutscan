@@ -81,6 +81,19 @@ def latest_recording():
     return recordings[-1] if recordings else None
 
 
+def mesh_scope(log):
+    """Use a capped scope only when this session can reach its user service manager."""
+    if not shutil.which("systemd-run"):
+        return []
+    try:
+        subprocess.run(["systemctl", "--user", "show", "--property=Version", "--value"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=1)
+    except (OSError, subprocess.SubprocessError):
+        log("systemd user session unavailable: meshing will run without the separate memory limit")
+        return []
+    return ["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=8G"]
+
+
 def preview_index(size, out):
     """Source indices that sample `size` pixels down (or up) to `out` (nearest neighbour)."""
     return np.arange(out) * size // out
@@ -1227,7 +1240,7 @@ class App:
         if not VENV_PYTHON.exists():
             self.log("meshing needs Open3D in .venv (README: uv sync --all-extras)")
             return
-        scope = ["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=8G"] if shutil.which("systemd-run") else []
+        scope = mesh_scope(self.log)
         job["process"] = subprocess.Popen(
             scope + [str(VENV_PYTHON), "-m", "tribuutscan.cloud", str(directory), "--optimise", "--mesh"], cwd=REPO,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
