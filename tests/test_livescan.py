@@ -340,6 +340,8 @@ def test_browser_telemetry_changes_without_rebuilding_stalled_geometry():
     source.scanner = NS(stats=dict(merged=3, frames=5, tracking=False, lost=2, relocked=0), cue={},
                         cloud=NS(point_mm=1., raw_points=7), pieces=[1, 2], crop=None, preset="medium",
                         live_points=points)
+    source.remember_piece(1, points.return_value)
+    source.piece_payload(2)  # this tab explicitly asked to inspect the active piece
     source.progress.observe(5, 3, 1, False, {"piece": 2})
     v1, payload1, info1 = source.current()
     source.scanner.stats.update(frames=7, lost=4)
@@ -444,3 +446,104 @@ def test_cancel_active_and_paused_takes_preserves_raw_and_allows_restart():
                 worker.join(timeout=5)
     assert not worker.is_alive()
     server.shutdown.assert_called_once()
+
+
+def test_piece_split_keeps_primary_and_public_selection_is_read_only():
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+
+    def model(xs):
+        n = len(xs)
+        return np.column_stack((xs, np.zeros((n, 2)))), np.zeros((n, 3), np.uint8), np.ones(n, np.int32)
+
+    source = livescan.LiveSource()
+    source.phase, source.scan_id = "scanning", 7
+    points = Mock(return_value=model([1]))
+    source.scanner = NS(stats=dict(merged=3, frames=5, tracking=True, lost=0, relocked=0), cue={},
+                        cloud=NS(point_mm=1., raw_points=7), pieces=[{}], crop=None, preset="medium",
+                        live_points=points)
+    primary_v, _, _ = source.current()
+    points.assert_called_once()
+    # Captured before cloud reset, even if no browser poll happens at that moment.
+    source.remember_piece(1, model([1, 2]))
+    source.scanner.pieces.append({})
+    points.return_value = model([9, 10, 11])
+    primary_v2, primary, info = source.current()
+    assert primary_v2 != primary_v and info["points"] == 2
+    assert info["default_piece"] == 1 and info["active_piece"] == 2
+    assert [p["id"] for p in info["piece_options"]] == [1, 2]
+    points.assert_called_once()  # an unselected second piece isn't sampled by polling
+    other = source.piece_payload(2, scan_id=7)
+    assert other != primary and source.piece_payload(1, scan_id=7) == primary
+    assert source.piece_payload(10) is None and source.piece_payload(2, scan_id=8) is None
+    # No global selection mutation: plain default still served after explicitly reading an unaligned piece.
+    version, payload, info = source.current()
+    assert (version, payload) == (primary_v2, primary) and info["points"] == 2
+    assert [p["points"] for p in info["piece_options"]] == [2, 3]
+
+    source.phase, source.paused_points, source.piece_sampled_at = "paused", model([9, 10, 11, 12]), float("-inf")
+    points.reset_mock()
+    version, payload, info = source.current()
+    assert (version, payload) == (primary_v2, primary)
+    frozen = source.piece_payload(2)
+    assert frozen != other and [p["points"] for p in info["piece_options"]] == [2, 4]
+    assert source.current()[2]["piece_options"] == info["piece_options"]
+    points.assert_not_called()
+    source.reset()
+    assert source.piece_payload(1) is None
+
+
+def test_continue_inherits_joined_model_as_local_piece_one():
+    from types import SimpleNamespace as NS
+
+    source = livescan.LiveSource()
+    source.scanner = NS(pieces=[{}, {}, {}])  # three historical joined pieces loaded into one cloud
+    source.clear_preview(piece_origin=3)
+    assert source.piece_id() == 1
+    source.remember_piece(3, (np.array([[1., 0., 0.]]), np.zeros((1, 3), np.uint8), np.ones(1)))
+    source.scanner.pieces.append({})
+    assert source.piece_id() == 2 and source.live_payload(1)[2] == 1
+
+
+def test_scanner_calls_piece_snapshot_before_resetting_old_cloud():
+    from unittest.mock import patch
+
+    scanner = livescan.cl.Scanner(log=lambda _: None)
+    try:
+        old = scanner.cloud
+        captured = []
+        def remember(piece, points):
+            assert scanner.cloud is old  # the precise boundary, not the new empty cloud
+            captured.append((piece, points[0].copy()))
+        scanner.on_piece_finished = remember
+        xyz = np.array([[1., 0., 0.], [2., 0., 0.]])
+        with patch.object(scanner, "cloud_points", return_value=(xyz, np.zeros((2, 3)), np.ones(2))), \
+                patch.object(scanner, "output_mask", return_value=np.array([True, False])):
+            scanner.start_piece(11)
+        assert len(captured) == 1 and captured[0][0] == 1
+        assert np.array_equal(captured[0][1], xyz[:1])
+        assert scanner.cloud is not old and len(scanner.pieces) == 2
+    finally:
+        scanner.discard()
+
+
+def test_piece_endpoint_binds_read_to_requested_piece_and_scan():
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+    from tribuutscan import view3d
+
+    source = NS(piece_payload=Mock(return_value=b"one-piece"), current=Mock())
+    req = NS(path="/cloud.bin?piece=2&scan_id=7", source=source, reply=Mock(), send_error=Mock(),
+             piece_number=view3d.Handler.piece_number)
+    view3d.Handler.do_GET(req)
+    source.piece_payload.assert_called_once_with(2, 7)
+    source.current.assert_not_called()
+    req.reply.assert_called_once_with(b"one-piece", "application/octet-stream")
+    for query in ("piece=0", "piece=-2", "piece=2&piece=3", "piece=", "piece=1&scan_id=blah"):
+        req.path = "/cloud.bin?" + query
+        view3d.Handler.do_GET(req)
+        assert req.send_error.call_args.args[0] == 400
+    req.path = "/cloud.bin?piece=8"
+    source.piece_payload.return_value = None
+    view3d.Handler.do_GET(req)
+    req.send_error.assert_called_with(404)

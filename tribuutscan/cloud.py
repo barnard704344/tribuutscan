@@ -700,6 +700,7 @@ class Scanner:
         self.fuse, self.log, self.preset = fuse, log, preset
         self.rng = np.random.default_rng(0)
         self.cloud = VoxelCloud(PRESETS_MM[preset])
+        self.on_piece_finished = None  # optional read-only browser snapshot before the live cloud resets
         self.stride = max(1, int(PRESETS_MM[preset] / PIXEL_MM))
         self.pose, self.motion, self.prev, self.last_merged = np.eye(4), np.eye(4), None, None
         self.poses = []
@@ -1517,6 +1518,13 @@ class Scanner:
         from .markermap import MarkerMap
         from .scene import Scene
         self.sync_merges()  # (the old piece's merges land in its cloud, before the reset)
+        if self.on_piece_finished is not None:
+            try:
+                xyz, rgb, seen = self.cloud_points(1)
+                keep = self.output_mask(xyz, connect=False)
+                self.on_piece_finished(len(self.pieces), (xyz[keep], rgb[keep], seen[keep]))
+            except (OSError, RuntimeError, ValueError, MemoryError) as e:
+                self.log(f"piece {len(self.pieces)} preview could not be frozen: {e}")
         self.piece_scenes.append(self.scene)
         self.piece_maps.append(self.marker_map)
         self.reach_kept = self.object_reach()

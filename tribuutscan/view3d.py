@@ -158,10 +158,23 @@ class Handler(BaseHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def do_GET(self):
-        path = self.path.split("?")[0]
+        path, _, query = self.path.partition("?")
         if path in FILES:
             name, kind = FILES[path]
             return self.reply((WEB / name).read_bytes(), kind)
+        if path == "/cloud.bin" and query:
+            try:
+                params = parse_qs(query, keep_blank_values=True, max_num_fields=8)
+                if "piece" in params:
+                    piece = self.piece_number(params["piece"])
+                    scan_id = self.piece_number(params["scan_id"]) if "scan_id" in params else None
+                    fetch = getattr(self.source, "piece_payload", None)
+                    payload = fetch(piece, scan_id) if fetch is not None else None
+                    if payload is not None:
+                        return self.reply(payload, "application/octet-stream")
+                    return self.send_error(404)
+            except ValueError:
+                return self.send_error(400, "Invalid piece selection")
         version, payload, info = self.source.current()
         if path == "/info.json":
             return self.reply(json.dumps({"version": str(version), **info}).encode(), "application/json")
@@ -184,6 +197,13 @@ class Handler(BaseHTTPRequestHandler):
             except FileNotFoundError:  # retired after current() took its snapshot
                 pass
         self.send_error(404)
+
+    @staticmethod
+    def piece_number(values):
+        if (len(values) != 1 or not 1 <= len(values[0]) <= 9 or not values[0].isascii()
+                or not values[0].isdigit() or int(values[0]) < 1):
+            raise ValueError("invalid piece number")
+        return int(values[0])
 
     def do_POST(self):
         """/process/<action>[?box=6 numbers]: an optimise.process action on a finished scan."""

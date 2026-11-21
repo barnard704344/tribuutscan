@@ -193,48 +193,124 @@ class ScanProgress:
 class LiveSource:
     """view3d source backed by the running Scanner (or the last one)."""
 
+    LIVE_PHASES = ("scanning", "paused")
+    EMPTY_PAYLOAD = view3d.pack_arrays(np.empty((0, 3)))
+
     def __init__(self):
         self.lock = threading.Lock()
         self.scanner, self.name, self.scan_id = None, "no scan yet", 0
         self.phase, self.out_dir, self.busy = "idle", None, threading.Lock()
-        self.paused_points = None
         self.progress = ScanProgress()
-        self.cached, self.built_key, self.built_at = ("0", view3d.pack_arrays(np.empty((0, 3))), {}), None, 0.0
+        self.clear_preview()
+
+    def clear_preview(self, piece_origin=1):
+        self.paused_points = None
+        self.cached, self.built_key, self.built_at = ("empty", self.EMPTY_PAYLOAD, {}), None, 0.0
+        self.piece_cache, self.piece_origin, self.piece_revision = {}, max(1, piece_origin), 0
+        self.piece_sampled_at, self.piece_sampled_key = float("-inf"), None
+        self.piece_requested = None
 
     def reset(self):
         """Clear the cancelled model but retain the same local viewer service."""
-        self.scanner, self.out_dir, self.paused_points = None, None, None
+        self.scanner, self.out_dir = None, None
         self.phase, self.name = "idle", "no scan yet"
         self.progress = ScanProgress()
-        self.cached = ("empty", view3d.pack_arrays(np.empty((0, 3))), {})
-        self.built_key, self.built_at = None, 0.0
+        self.clear_preview()
+
+    def piece_id(self, tracker_id=None):
+        # Continue starts with its previous joined model as local primary piece 1.
+        return max(1, (len(self.scanner.pieces) if tracker_id is None else tracker_id) - self.piece_origin + 1)
+
+    def store_piece(self, piece, points):
+        xyz, rgb, seen = points
+        payload = view3d.pack_arrays(xyz @ cl.FLIP.T / 1000, rgb, seen)
+        old = self.piece_cache.get(piece)
+        if old is None or old[1] != payload:
+            self.piece_revision += 1
+            self.piece_cache[piece] = (f"{self.scan_id}-piece-{piece}-{self.piece_revision}", payload, len(xyz))
+        return self.piece_cache[piece]
+
+    def remember_piece(self, tracker_id, points):
+        """Called before Scanner resets this piece's geometry. Caller already holds the source lock."""
+        self.store_piece(self.piece_id(tracker_id), points)
+        self.piece_sampled_at, self.piece_sampled_key = float("-inf"), None
+
+    def refresh_live_piece(self, requested=False):
+        piece, now = self.piece_id(), time.monotonic()
+        if self.phase == "paused":
+            if self.paused_points is not None and self.piece_sampled_at != float("inf"):
+                self.store_piece(piece, self.paused_points)
+                self.piece_sampled_at = float("inf")
+        elif piece == 1 or requested or self.piece_requested == piece:
+            # An unselected secondary piece needs no active binary build merely because info is polled.
+            # Once explicitly requested, keep its cache current without changing the default selection.
+            s = self.scanner
+            tracked_cache = getattr(getattr(s, "merge_proc", None), "points_cache", None)
+            key = (piece, s.stats["merged"], getattr(s, "points_kept", None), id(tracked_cache))
+            if key != self.piece_sampled_key and now - self.piece_sampled_at >= PAYLOAD_EVERY_S:
+                points = s.live_points(LIVE_MIN_SEEN)
+                if len(points[0]) or piece not in self.piece_cache:
+                    # The merge subprocess can momentarily have no fresh preview; retain the last real
+                    # snapshot of this same piece rather than blanking it on Resume.
+                    self.store_piece(piece, points)
+                self.piece_sampled_at, self.piece_sampled_key = now, key
+        return piece
+
+    def live_payload(self, piece):
+        return self.piece_cache.get(piece, (f"{self.scan_id}-piece-{piece}-empty", self.EMPTY_PAYLOAD, 0))
+
+    def piece_payload(self, piece, scan_id=None):
+        """Read only: a request changes no selection for this or any other tab."""
+        with self.lock:
+            if self.scanner is None or self.phase not in self.LIVE_PHASES:
+                return None
+            if scan_id is not None and scan_id != self.scan_id:
+                return None
+            active = self.piece_id()
+            if piece != active and piece not in self.piece_cache:
+                return None
+            if piece == active:
+                self.piece_requested = piece
+                self.refresh_live_piece(requested=True)
+            return self.live_payload(piece)[1]
 
     def current(self):
         with self.lock:
             s = self.scanner
             if s is None:
-                return "empty", self.cached[1], {"name": self.name, "points": 0, "session": {}, "phase": self.phase}
-            key = (self.scan_id, s.stats["merged"], s.stats["tracking"], s.cue.get("flat"), self.phase,
-                   id(s.cloud), s.cloud.point_mm, len(s.pieces))
-            if key != self.built_key and time.time() - self.built_at >= PAYLOAD_EVERY_S:
-                xyz, rgb, seen = (self.paused_points if self.phase == "paused" else s.live_points(LIVE_MIN_SEEN))
-                payload = view3d.pack_arrays(xyz @ cl.FLIP.T / 1000, rgb, seen)
-                self.cached = ("-".join(map(str, key)), payload, {"points": len(xyz)})
-                self.built_key, self.built_at = key, time.time()
-            # Even if the model is unchanged, incoming/lost frames and their status are new.
+                return "empty", self.EMPTY_PAYLOAD, {"name": self.name, "points": 0, "session": {}, "phase": self.phase}
+            live = self.phase in self.LIVE_PHASES
+            if live:
+                active = self.refresh_live_piece()
+                version, payload, count = self.live_payload(1)  # never jump to an unaligned piece
+            else:
+                key = (self.scan_id, s.stats["merged"], self.phase, id(s.cloud), s.cloud.point_mm, len(s.pieces))
+                if key != self.built_key and time.time() - self.built_at >= PAYLOAD_EVERY_S:
+                    xyz, rgb, seen = s.live_points(LIVE_MIN_SEEN)
+                    payload = view3d.pack_arrays(xyz @ cl.FLIP.T / 1000, rgb, seen)
+                    self.cached = ("-".join(map(str, key)), payload, {"points": len(xyz)})
+                    self.built_key, self.built_at = key, time.time()
+                version, payload, cache = self.cached
+                count = cache.get("points", 0)
+            # Even if the selected model is unchanged, incoming/lost frames and their status are new.
             stats = {k: s.stats[k] for k in ("frames", "merged", "lost", "relocked", "tracking")}
             session = dict(stats, preset=s.preset, point_distance_mm=s.cloud.point_mm, raw_points=s.cloud.raw_points,
-                           pieces=len(s.pieces), cue=dict(s.cue), crop=s.crop)
+                           pieces=active if live else len(s.pieces), cue=dict(s.cue), crop=s.crop)
             if self.phase == "done":  # Crop axes are for a finished scan; don't recalculate on every poll.
                 if "crop_axes" not in self.cached[2]:
                     self.cached[2]["crop_axes"] = s.crop_axes().round(6).tolist()
                 session["crop_axes"] = self.cached[2]["crop_axes"]
-            info = dict(name=self.name, points=self.cached[2].get("points", 0), phase=self.phase, session=session,
+            info = dict(name=self.name, points=count, phase=self.phase, session=session,
                         **view3d.mesh_versions(self.mesh_path()))
+            if live:
+                options = []
+                for piece in sorted({1, active, *self.piece_cache}):
+                    piece_version, _, piece_points = self.live_payload(piece)
+                    options.append(dict(id=piece, points=piece_points, version=piece_version, active=piece == active))
+                info.update(piece_options=options, active_piece=active, default_piece=1, scan_id=self.scan_id)
             if self.phase == "scanning":
                 info["progress"] = self.progress.status()
-            return self.cached[0], self.cached[1], info
-
+            return version, payload, info
 
     def process(self, action, box=None):
         """A Process-menu action from the page, on the last finished scan."""
@@ -345,7 +421,8 @@ def run(commands, replies, port=view3d.PORT):
                 source.scan_id += 1
                 source.name = f"live: {out_dir.name}"
                 source.phase, source.out_dir = "scanning", out_dir
-                source.paused_points, source.built_at = None, 0.0
+                source.clear_preview(piece_origin=len(source.scanner.pieces))
+                source.scanner.on_piece_finished = source.remember_piece
                 source.progress = ScanProgress()
         elif kind == "frame" and source.phase == "scanning" and source.scanner is not None:
             _, yuyv, grey, depth_buf, bytesperline, (t_c, t_i, t_d), depth4, cleared = cmd
@@ -373,7 +450,7 @@ def run(commands, replies, port=view3d.PORT):
                 s = source.scanner
                 s.feed(frame)
                 points = s.points_kept  # (the cloud lock is held through each ~90 ms merge: no waiting for it)
-                cue = dict(s.cue, base=s.scene.plane is not None, turning=s.object_turns, piece=len(s.pieces))
+                cue = dict(s.cue, base=s.scene.plane is not None, turning=s.object_turns, piece=source.piece_id())
                 source.progress.observe(s.stats["frames"], s.stats["merged"], points, s.stats["tracking"], cue)
             timing["raw"] += t2 - t0
             timing["feed"] += time.perf_counter() - t2
@@ -397,6 +474,7 @@ def run(commands, replies, port=view3d.PORT):
                 keep = s.output_mask(xyz, connect=False)
                 source.paused_points = xyz[keep], rgb[keep], seen[keep]
                 source.phase, source.built_key, source.built_at = "paused", None, 0.0
+                source.piece_sampled_at = float("-inf")
             if recorder is not None:
                 recorder.drain()
             replies.put(("paused",))
@@ -404,6 +482,7 @@ def run(commands, replies, port=view3d.PORT):
             with source.lock:
                 source.phase, source.built_key, source.built_at = "scanning", None, 0.0
                 source.paused_points = None
+                source.piece_sampled_at, source.piece_sampled_key = float("-inf"), None
                 source.progress.resume()
             replies.put(("resumed",))
         elif kind == "cancel":
@@ -426,6 +505,7 @@ def run(commands, replies, port=view3d.PORT):
                     errors.append(f"could not close raw recording: {e}")
                 recorder = None
             try:
+                scanner.on_piece_finished = None
                 scanner.discard()
             except Exception as e:
                 errors.append(f"could not release scan resources cleanly: {e}")
@@ -443,6 +523,8 @@ def run(commands, replies, port=view3d.PORT):
                 recorder = None
             with source.lock:
                 source.paused_points = None
+                source.piece_cache.clear()
+                source.scanner.on_piece_finished = None
                 source.scanner.close()  # the GPU tracker's memory back (Optimise and the mesh come next)
                 if len(source.scanner.pieces) > 1:  # its pieces into one world first (what joins nothing: piece-N.ply)
                     try:
