@@ -6,17 +6,13 @@
 <link rel="stylesheet" href="/scanner.css"><script src="/scanner.js" defer></script>
 </head>
 <body>
-<header class="top"><a class="brand" href="/">tri<span>BUUT</span>SCAN</a><span class="tag">REMOTE SCANNER</span><button id="share" class="text-button" hidden>Connect a phone</button><span id="connection" role="status">Connecting…</span></header>
+
 <section id="pairing" class="pairing" hidden>
   <form id="pair-form"><div class="eyebrow">YOUR SCANNER, ON YOUR NETWORK</div><h1>Connect to the scan host</h1>
   <p>Use the pairing link printed on the host computer, or enter its access code below.</p>
   <label>Access code<input id="token" type="password" autocomplete="off" required></label><button class="primary">Connect</button><p id="pair-error" role="alert"></p></form>
 </section>
 <main id="workspace" hidden>
-  <section class="intro"><div class="phase" id="phase">Waiting for scanner</div></section>
-  <div id="demo" class="notice" hidden>Interface preview · no scanner is connected and capture controls are disabled.</div>
-  <div id="notice" class="notice" role="status">Connecting to the scanner service…</div>
-  <div id="command-error" class="error" role="alert" hidden></div>
   <div class="workspace-grid">
     <aside class="preview-column" aria-label="Coverage and camera previews">
       <section class="preview-card panel">
@@ -53,6 +49,14 @@
       <div class="camera-footer"><span>Tap Depth or Colour to select the object.</span><button data-action="clear-aim" class="text-button">Reset aim</button></div>
     </section>
     <aside class="controls">
+      <section class="panel"><div class="panel-title"><h2>Performance</h2></div><p id="performance">Waiting</p></section>
+      <div id="command-error" class="error" role="alert" hidden></div>
+      <details class="panel" id="host-menu"><summary>Host &amp; connection</summary>
+        <div class="control-body"><span id="connection" role="status">Connecting…</span><span id="phase">Waiting</span>
+        <button id="share" hidden>Connect a phone</button>
+        <div id="demo" hidden>Preview mode</div>
+        <div id="notice" role="status">Connecting…</div></div>
+      </details>
       <section class="panel scan-panel"><div class="panel-title"><h2>Scan controls</h2><span class="host-label">RUNS ON HOST</span></div>
         <div class="control-body"><button id="scan-main" class="primary" data-action="start">Start scan</button><div class="two-buttons"><button id="pause" data-action="pause" disabled>Pause & inspect</button><button id="cancel" data-action="cancel" disabled>Cancel take</button></div>
         <button id="separate" data-action="separate" disabled>Start separate piece</button><p class="helper">Use a separate piece only for an area that cannot overlap the existing scan.</p>
@@ -66,6 +70,7 @@
       <details class="panel"><summary>Raw capture</summary><div class="control-body"><button data-action="save-frame">Save current frame set</button><label class="inline-label">Recording rate<select data-setting="record_rate"><option>30 fps</option><option>10 fps</option></select></label><button id="record" data-action="record">Record raw frames</button><button data-action="mesh-recording">Mesh latest recording</button><p class="helper">Recordings and scans are saved on the host machine.</p></div></details>
       <details class="panel" open><summary>Saved scans</summary><div class="control-body"><label>Choose a scan<select id="saved"><option value="">No saved scans yet</option></select></label><div class="two-buttons"><button id="open-scan" data-action="open">Open scan</button><button data-action="live">Back to live</button></div><a href="/model/" target="_blank" rel="noopener">Inspect, process & download</a></div></details>
       <section class="panel"><div class="control-body"><button id="restart-host" data-action="restart">Restart scanner host</button><p id="restart-hint" class="helper">Available after scans, recordings and processing finish. Paired browsers reconnect automatically.</p></div></section>
+<details class="panel logs"><summary>Messages from the host</summary><pre id="messages" tabindex="0"></pre></details
     </aside>
   </div>
   <details class="panel logs"><summary>Messages from the host</summary><pre id="messages" tabindex="0"></pre></details>

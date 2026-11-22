@@ -345,6 +345,7 @@ class Service:
                                             {} if blocked else app.depth.stats, calib.CAMERA.mode,
                                             calib.CAMERA.law_estimate, time.monotonic())
             state['distance_gauge'] = reading
+            state['performance'] = app.live['progress'].cue.get('performance')
             state['distance'] = 'Scanner reconnecting or changing range…' if blocked else reading['text']
             for name, stream in [('colour', app.color), ('ir', app.ir), ('depth', app.depth)]:
                 state['streams'][name] = dict(fps=round(stream.fps, 1), text=stream.stats.get('text', ''))

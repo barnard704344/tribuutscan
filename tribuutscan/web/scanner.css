@@ -34,6 +34,8 @@ h2 { font-size: 16px; font-weight: 650; margin: 0; }
 .tag, .eyebrow, .host-label { font-size: 12px; font-weight: 700; letter-spacing: 1.6px; color: var(--muted); }
 #connection { margin-left: auto; font-size: 14px; color: var(--muted); }
 #share { margin-left: auto; color: var(--accent); }
+#host-menu #connection { margin: 0; }
+#host-menu #share { margin: 0; }
 main { max-width: 2048px; margin: auto; padding: 16px 24px 24px; }
 .intro { display: flex; align-items: center; margin-bottom: 10px; }
 .phase { padding: 5px 13px; background: #183a32; color: #a0edcf; border: 1px solid #2f5f4e; border-radius: 30px; font-size: 14px; }

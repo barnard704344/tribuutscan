@@ -34,6 +34,13 @@ def test_paused_camera_uses_existing_coverage_codes_and_does_not_change_tracking
     else:raise AssertionError('rotation was allowed during capture')
 
 
+def test_meter_counts_rates():
+    meter=livescan.Meter()
+    meter.update(0,1,0,False,0.01,{})
+    result=meter.update(1,2,1,True,0.02,{})
+    assert result['fps']==1
+    assert abs(result['ms']-20)<1e-6
+
 def test_view_mask_marks_object_and_base_at_one_eighth():
     pix = np.array([[0, 0], [100, 50], [1279, 799], [640, 400]])
     obj = np.array([False, True, False, True])

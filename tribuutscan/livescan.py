@@ -29,6 +29,7 @@ debugging. The copy stops (the scan goes on) when the disk is nearly full (frame
 written beside tracking (RawCopy): in the first live GPU scan it took 34 ms of every frame.
 """
 import io
+from collections import deque
 import io
 import multiprocessing
 import queue
@@ -134,6 +135,27 @@ class Reader(threading.Thread):
                 return
 
 
+class Meter:
+    """Rolling three-second measurements, without extra GPU synchronisation."""
+    def __init__(self):
+        self.samples=deque()
+        self.tracked=0
+        self.elapsed=0
+
+    def update(self, now, frames, merged, tracking, duration, stages):
+        self.tracked += 1 if tracking else 0
+        self.elapsed += duration
+        self.samples.append((now,frames,self.tracked,self.elapsed,dict(stages)))
+        while len(self.samples)>1 and now-self.samples[0][0]>3:
+            self.samples.popleft()
+        first=self.samples[0]
+        span=now-first[0]
+        count=frames-first[1]
+        return {'fps':0 if span==0 else count/span,
+               'ms':0 if count==0 else 1000*(self.elapsed-first[3])/count,
+               'stages':{k:0 if count==0 else max(0,1000*(stages.get(k,0)-first[4].get(k,0))/count) for k in ('source','raycast','icp','fuse','preview')},
+               'tracked':self.tracked,'frames':frames,'merged':merged}
+
 class ScanProgress:
     """Separate frames reaching tracking, pose recovery, and the active piece's point count."""
 
@@ -144,11 +166,13 @@ class ScanProgress:
         self.piece = 1
         self.last_frame = self.last_merge = self.last_growth = None
         self.tracking, self.resuming, self.cue = None, False, {}
+        self.recovered = None
 
     def resume(self):
         # Keep the same scan counters; only new post-resume frames can establish progress.
         self.last_frame = self.last_merge = self.last_growth = None
         self.tracking, self.resuming, self.cue = None, True, {}
+        self.recovered = None
 
     def observe(self, frames, merged, points, tracking, cue, now=None):
         now = time.monotonic() if now is None else now
@@ -163,6 +187,8 @@ class ScanProgress:
         if merged > self.merged:
             self.last_merge = now
         self.frames, self.merged, self.points, self.piece = frames, merged, points, piece
+        if self.tracking is False and tracking:
+            self.recovered=now
         self.tracking, self.resuming, self.cue = tracking, False, cue
 
     def status(self, now=None):
@@ -198,6 +224,7 @@ class ScanProgress:
                     "Move slowly towards a new angle and keep part of the scanned surface in view.")
         unjoined = f"Piece {self.piece} is not joined to earlier pieces yet." if self.piece > 1 else ""
         return dict(capture=capture, tracking=tracking, geometry=geometry, hint=hint,
+                    recovered=bool(self.tracking and recent(self.recovered)),
                     frames=self.frames, merged=self.merged, points=self.points, unjoined=unjoined,
                     last_view_age_s=None if self.last_merge is None else max(0.0, now - self.last_merge))
 
@@ -491,6 +518,7 @@ def run(commands, replies, port=view3d.PORT, auth_token=None):
     parent = multiprocessing.parent_process()
     timing = {"wait": 0.0, "raw": 0.0, "feed": 0.0, "frames": 0}  # per scan, logged at Stop
     reader = Reader(commands)
+    meter=Meter()
     reader.start()
     decoded_at_start = 0.0
     while True:
@@ -510,6 +538,7 @@ def run(commands, replies, port=view3d.PORT, auth_token=None):
         kind = cmd[0]
         timing["wait"] += time.perf_counter() - t_wait
         if kind == "start":
+            meter=Meter()
             timing, decoded_at_start = {k: 0 for k in timing}, reader.decode_s
             _, preset, next_dir, next_keep_raw, continue_from, depth_mode, remove_base, *options = cmd
             next_dir = Path(next_dir)
@@ -594,6 +623,8 @@ def run(commands, replies, port=view3d.PORT, auth_token=None):
             timing["raw"] += t2 - t0
             timing["feed"] += time.perf_counter() - t2
             timing["frames"] += 1
+            stage=getattr(getattr(s,'gpu',None),'timing',{})
+            cue['performance']=meter.update(time.monotonic(),s.stats['frames'],s.stats['merged'],s.stats['tracking'],time.perf_counter()-t2,stage)
             replies.put(("frame_done", s.stats["merged"], s.stats["frames"], points, s.stats["tracking"],
                          cue, view_mask(s.last_view),
                          s.view_codes, t_d))
@@ -628,6 +659,7 @@ def run(commands, replies, port=view3d.PORT, auth_token=None):
                 recorder.drain()
             replies.put(("paused",))
         elif kind == "resume" and source.phase == "paused":
+            meter=Meter()
             with source.lock:
                 source.phase, source.built_key, source.built_at = "scanning", None, 0.0
                 source.paused_points = None

@@ -106,8 +106,12 @@ function render(next) {
     :'Detects a support surface. Use Head / free object for a person or an object held in the air.';
   $('distance').textContent=state.distance;
   renderDistance(state.distance_gauge,state.connected);
+  const perf=state.performance;
+  $('performance').title='Rolling average';
+  $('performance').textContent=perf?`${perf.fps.toFixed(1)} fps · ${perf.ms.toFixed(1)} ms`:'—';
   $('scan-hint').textContent=[state.progress?.hint,state.progress?.unjoined].filter(Boolean).join(' ');
   $('scan-hint').hidden=!state.progress;
+  if(state.progress?.recovered) $('scan-hint').textContent='Recovered';
   $('coverage').textContent=state.coverage_kind==='flat'?(state.coverage || '')
     :'Restart the scanner app on the host to load the flat coverage display. Finish and save your current scan first.';
   $('coverage').hidden=!$('coverage').textContent;
