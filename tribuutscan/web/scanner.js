@@ -145,7 +145,7 @@ async function poll() {
 async function command(action, data={}) {
   if(!state||pending||stale)return;
   pending=true;updateDisabled();$('command-error').hidden=true;
-  try {render(await json('/api/command',{action,revision:state.revision,...data}));}
+  try {render(await json('/api/command',{action,revision:state.revision,instance:state.instance,...data}));}
   catch(e){$('command-error').textContent=e.message;$('command-error').hidden=false;await poll();}
   finally{pending=false;updateDisabled();}
 }

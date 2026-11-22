@@ -17,6 +17,7 @@ def _old_exports(path):
 def _get(path, endpoint):
     """Exercise the real HTTP handler logic, without opening a socket."""
     handler = view3d.Handler.__new__(view3d.Handler)
+    handler.auth_token = None
     handler.path = endpoint
     handler.source = view3d.FileSource(path)
     missing = []

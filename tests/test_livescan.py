@@ -569,7 +569,7 @@ def test_piece_endpoint_binds_read_to_requested_piece_and_scan():
     source = NS(piece_payload=Mock(return_value=b"one-piece"), current=Mock())
     token = livescan.LiveSource().scan_id
     req = NS(path=f"/cloud.bin?piece=2&scan_id={token}", source=source, reply=Mock(), send_error=Mock(),
-             piece_number=view3d.Handler.piece_number, scan_token=view3d.Handler.scan_token)
+             piece_number=view3d.Handler.piece_number, scan_token=view3d.Handler.scan_token, authorised=lambda: True)
     view3d.Handler.do_GET(req)
     source.piece_payload.assert_called_once_with(2, token)
     source.current.assert_not_called()
@@ -582,3 +582,21 @@ def test_piece_endpoint_binds_read_to_requested_piece_and_scan():
     source.piece_payload.return_value = None
     view3d.Handler.do_GET(req)
     req.send_error.assert_called_with(404)
+
+
+
+def test_processing_rechecks_scan_phase_after_acquiring_worker_lock():
+    from unittest.mock import Mock,patch
+    from tribuutscan import optimise
+    source=livescan.LiveSource()
+    source.scanner=Mock()
+    source.phase='done'
+    class ChangeWhileWaiting:
+        def __enter__(self):
+            source.phase='scanning'
+        def __exit__(self,*args):
+            pass
+    source.busy=ChangeWhileWaiting()
+    with patch.object(optimise,'process') as process:
+        assert source.process('mesh').startswith('not now:')
+        process.assert_not_called()

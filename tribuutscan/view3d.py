@@ -7,6 +7,7 @@ Serves http://localhost:8765 on this machine only. The page polls /info.json and
 when it changes, so the same page works for a finished scan and (later) a live one.
 """
 import json
+import hmac
 import struct
 import sys
 import threading
@@ -14,7 +15,7 @@ import webbrowser
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote, urlsplit
 
 import numpy as np
 
@@ -153,11 +154,24 @@ class FileSource:
 
 
 class Handler(BaseHTTPRequestHandler):
-    def __init__(self, *args, source, **kwargs):
-        self.source = source
+    def __init__(self, *args, source, auth_token=None, **kwargs):
+        snapshot = getattr(source, "for_request", None)
+        self.source = snapshot() if snapshot is not None else source
+        self.auth_token = auth_token
         super().__init__(*args, **kwargs)
 
+    def authorised(self):
+        if self.auth_token is None:
+            return True
+        provided = self.headers.get("Authorization", "")
+        if hmac.compare_digest(provided.encode(), ("Bearer " + self.auth_token).encode()):
+            return True
+        self.send_error(401, "Private model service")
+        return False
+
     def do_GET(self):
+        if not self.authorised():
+            return
         path, _, query = self.path.partition("?")
         if path in FILES:
             name, kind = FILES[path]
@@ -213,6 +227,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         """/process/<action>[?box=6 numbers]: an optimise.process action on a finished scan."""
+        if not self.authorised():
+            return
+        origin = self.headers.get("Origin")
+        if (self.headers.get("X-Tribuutscan") != "1"
+                or (origin and urlsplit(origin).netloc != self.headers.get("Host"))):
+            return self.send_error(403, "Use the scanner interface")
         path, _, query = self.path.partition("?")
         parts = path.strip("/").split("/")
         if len(parts) != 2 or parts[0] != "process" or not hasattr(self.source, "process"):
@@ -229,7 +249,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", kind)
         if filename:  # a download named after the scan, not cloud.ply every time
-            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + quote(filename, safe=''))
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -239,9 +259,9 @@ class Handler(BaseHTTPRequestHandler):
         pass  # keep the console for the viewer's own log
 
 
-def serve(source, port=PORT):
+def serve(source, port=PORT, auth_token=None):
     """Start the server in a background thread on 127.0.0.1; returns it (call .shutdown() to stop)."""
-    server = ThreadingHTTPServer(("127.0.0.1", port), partial(Handler, source=source))
+    server = ThreadingHTTPServer(("127.0.0.1", port), partial(Handler, source=source, auth_token=auth_token))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 

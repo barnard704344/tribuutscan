@@ -119,6 +119,9 @@ service with Ctrl+C. While the scanner is disconnected the workspace stays avail
 its status and retries automatically. Only one service or desktop viewer can own the scanner
 per checkout. Avoid running different checkouts against the same scanner at the same time.
 
+See the [web scanner change log and audit](docs/web-scanner-audit-2026-11-22.md)
+for the delivered changes, audit fixes, validation and operating limits.
+
 The previous desktop UI remains available as an optional compatibility interface:
 
 ```sh

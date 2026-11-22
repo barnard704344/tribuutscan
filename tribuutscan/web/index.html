@@ -488,13 +488,13 @@ async function runAction(action, label, query = "") {  // a Process action; its 
   messageAt = Date.now() + 600000;  // until the answer comes
   try {
     const remote = location.pathname.startsWith("/model/");
-    const options = { method: "POST" };
+    const options = { method: "POST", headers: {"X-Tribuutscan": "1"} };
     if (remote) {
       const response = await fetch("/api/state");
       if (!response.ok) throw new Error("Reconnect using the host's pairing link");
       const state = await response.json();
       options.headers = {"Content-Type": "application/json", "X-Tribuutscan": "1"};
-      options.body = JSON.stringify({revision: state.revision});
+      options.body = JSON.stringify({revision: state.revision, instance: state.instance});
     }
     const r = await (await fetch(`process/${action}${query}`, options)).json();
     $("status").textContent = r.error || r.message;

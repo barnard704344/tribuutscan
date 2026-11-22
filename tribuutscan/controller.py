@@ -4,6 +4,7 @@ import argparse
 import collections
 import fcntl
 import itertools
+import json
 import math
 import multiprocessing
 import os
@@ -762,6 +763,7 @@ def progress_line(status):
 class Controller:
     variable = staticmethod(Setting)
     worker_port = 0
+    worker_token = None
 
     """Scanner state and commands, independent of a desktop or browser interface."""
 
@@ -1339,7 +1341,8 @@ class Controller:
         if VENV_PYTHON.exists():
             ctx.set_executable(str(VENV_PYTHON))  # has Open3D: tracking
         live["commands"], live["replies"] = ctx.Queue(), ctx.Queue()
-        live["proc"] = ctx.Process(target=livescan.run, args=(live["commands"], live["replies"], self.worker_port), daemon=True)
+        live["proc"] = ctx.Process(target=livescan.run,
+                                   args=(live["commands"], live["replies"], self.worker_port, self.worker_token), daemon=True)
         live["proc"].start()
         live["feeder"] = Feeder(self)
         live["feeder"].start()
@@ -1422,7 +1425,14 @@ class Controller:
     def begin_scan(self, continue_from=None):
         if continue_from:
             try:
+                session = json.loads((Path(continue_from) / "session.json").read_text())
+                if not isinstance(session, dict):
+                    raise ValueError("invalid saved session metadata")
                 cloud.Scanner.check_continue_camera(continue_from)
+                subject = session.get("mode", "still")
+                if subject not in ("still", "free"):
+                    raise ValueError("this saved subject mode is not supported by the capture interface")
+                self.scene_mode.set(subject)
             except (OSError, ValueError) as e:
                 self.log(f"cannot continue: {e}")
                 return

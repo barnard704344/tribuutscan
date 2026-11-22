@@ -79,7 +79,7 @@ def test_pairing_protects_status_previews_models_and_downloads():
 def test_cross_origin_and_plain_form_commands_are_rejected():
     with running_service() as (service, base):
         request = client(base)
-        payload = {'action':'live', 'revision':service.revision}
+        payload = {'action':'live', 'revision':service.revision, 'instance':service.instance}
         assert request('/api/command', payload, {'X-Tribuutscan':''})[0] == 403
         assert request('/api/command', payload, {'Origin':'http://different.example'})[0] == 403
         assert request('/api/pair', {'token':'test-pairing-code'}, {'Origin':'http://different.example'})[0] == 403
@@ -89,7 +89,7 @@ def test_two_browsers_cannot_execute_the_same_stale_command():
     with running_service() as (service, base):
         first, second = client(base), client(base)
         revision = json.loads(first('/api/state')[1])['revision']
-        payload = {'action':'live', 'revision':revision}
+        payload = {'action':'live', 'revision':revision, 'instance':service.instance}
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda request:request('/api/command', payload)[0], [first,second]))
         assert sorted(results) == [200,409]
@@ -154,7 +154,7 @@ def idle_dispatcher():
 
 
 def dispatch(service, action, **kwargs):
-    return service.dispatch(dict(action=action, revision=service.revision, **kwargs))
+    return service.dispatch(dict(action=action, revision=service.revision, instance=service.instance, **kwargs))
 
 
 def test_scan_controls_are_explicit_and_enforce_phase_and_device_state():
@@ -215,7 +215,7 @@ def test_demo_cannot_capture_or_modify_saved_scans():
         request=client(base)
         for action in ['start','record','process']:
             revision=json.loads(request('/api/state')[1])['revision']
-            assert request('/api/command',dict(action=action,revision=revision,operation='mesh'))[0] == 409
+            assert request('/api/command',dict(action=action,revision=revision,instance=service.instance,operation='mesh'))[0] == 409
 
 
 def test_cancelled_queued_request_does_not_execute_later():
@@ -241,7 +241,7 @@ def test_saved_model_and_download_use_the_same_paired_connection():
         (path/'session.json').write_text(json.dumps({'crop_axes':np.eye(3).tolist()}))
         request=client(base)
         revision=json.loads(request('/api/state')[1])['revision']
-        assert request('/api/command',dict(action='open',name='example-scan',revision=revision))[0] == 200
+        assert request('/api/command',dict(action='open',name='example-scan',revision=revision,instance=service.instance))[0] == 200
         status,body,_=request('/model/info.json')
         assert status == 200 and json.loads(body)['points'] == 2
         status,body,headers=request('/model/cloud.ply')
@@ -283,6 +283,158 @@ def test_processing_reuses_current_worker_instead_of_allocating_a_second_model()
             dispatch(service,'process',operation='mesh')
             assert worker.call_args.args[:3] == ('http://127.0.0.1:12345/','mesh',None)
             spawn.assert_not_called()
+
+
+def test_private_model_backend_requires_its_internal_key():
+    with running_service() as (service,base):
+        internal=service.empty_url.rstrip('/')
+        request=client(internal,paired=False)
+        assert request('/info.json')[0] == 401
+        assert request('/cloud.bin')[0] == 401
+        assert request('/info.json',headers={'Authorization':'Bearer incorrect'})[0] == 401
+        headers={'Authorization':'Bearer '+service.backend_token}
+        assert request('/info.json',headers=headers)[0] == 200
+        # Pairing grants the gateway access without exposing the internal key to the browser.
+        gateway=client(base)
+        assert gateway('/model/info.json')[0] == 200
+        snapshot=json.loads(gateway('/api/state')[1])
+        assert service.backend_token not in json.dumps(snapshot)
+
+
+def test_commands_from_an_older_host_are_rejected_even_when_revision_matches():
+    with running_service() as (service,base):
+        request=client(base)
+        snapshot=json.loads(request('/api/state')[1])
+        payload=dict(action='live',revision=snapshot['revision'],instance='previous-host')
+        assert request('/api/command',payload)[0] == 409
+        payload.pop('instance')
+        assert request('/api/command',payload)[0] == 409
+        payload['instance']=snapshot['instance']
+        assert request('/api/command',payload)[0] == 200
+
+
+def test_shutdown_waits_for_processing_before_closing_its_worker():
+    import queue
+    order=[]
+    service=webapp.Service.__new__(webapp.Service)
+    service.stop=threading.Event();service.stop.set()
+    service.processing=Mock(wait=lambda:order.append('processing finished'))
+    service.processing_thread=None
+    service.controller=Mock(close=lambda:order.append('worker closed'))
+    service.commands=queue.Queue()
+    service.run()
+    assert order == ['processing finished','worker closed']
+
+
+def test_model_download_cannot_switch_scans_partway_through_a_request():
+    from tribuutscan.pointcloud import write_ply
+    with running_service() as (service,base):
+        folders=[]
+        for name,value in [('first-scan',1),('second-scan',2)]:
+            folder=frames.CAPTURES/name;folder.mkdir();folders.append(folder)
+            write_ply(folder/'cloud.ply',np.array([[float(value),0.,0.]]),np.array([[10,20,30]],np.uint8))
+            (folder/'session.json').write_text(json.dumps({'crop_axes':np.eye(3).tolist()}))
+        first,second=map(webapp.view3d.FileSource,folders)
+        original=first.current
+        def switch_during_read():
+            result=original()
+            service.model.file=second
+            return result
+        first.current=switch_during_read
+        service.model.file=first
+        request=client(base)
+        status,body,headers=request('/model/cloud.ply')
+        assert status == 200 and body == (folders[0]/'cloud.ply').read_bytes()
+        assert 'first-scan.ply' in headers['Content-Disposition']
+
+
+def test_processing_gateway_preserves_instance_guard():
+    with running_service() as (service,base):
+        request=client(base)
+        snapshot=json.loads(request('/api/state')[1])
+        with patch.object(service,'request',return_value={}) as dispatch_request:
+            assert request('/model/process/mesh',dict(revision=snapshot['revision'],instance=snapshot['instance']))[0] == 200
+        assert dispatch_request.call_args.args[0]['instance'] == snapshot['instance']
+
+
+def test_standalone_model_processing_requires_same_origin_custom_header():
+    from types import SimpleNamespace
+    source=SimpleNamespace(current=lambda:('v',b'',dict(phase='done',name='fixture',points=0)),
+                           process=Mock(return_value='processed fixture'))
+    server=webapp.view3d.serve(source,0)
+    try:
+        request=client(f'http://127.0.0.1:{server.server_address[1]}',paired=False)
+        assert request('/info.json')[0] == 200  # optional standalone viewer stays usable
+        assert request('/process/mesh',{}, {'X-Tribuutscan':''})[0] == 403
+        assert request('/process/mesh',{}, {'Origin':'http://elsewhere.example'})[0] == 403
+        source.process.assert_not_called()
+        assert request('/process/mesh',{})[0] == 200
+        source.process.assert_called_once_with('mesh',box=None)
+    finally:
+        server.shutdown();server.server_close()
+
+
+def test_spawned_worker_enforces_internal_auth_and_processing_client_supplies_it():
+    import queue
+    from tribuutscan import livescan
+    commands,replies=queue.Queue(),queue.Queue()
+    secret='internal-test-key-that-is-not-a-pairing-code'
+    worker=threading.Thread(target=livescan.run,args=(commands,replies,0,secret),daemon=True)
+    with patch.object(sys,'path',sys.path[:]):
+        worker.start()
+        try:
+            kind,url=replies.get(timeout=5)
+            assert kind == 'ready'
+            request=client(url.rstrip('/'),paired=False)
+            assert request('/info.json')[0] == 401
+            assert request('/info.json',headers={'Authorization':'Bearer '+secret})[0] == 200
+            reports=[]
+            job=webapp.WorkerProcessing(url,'mesh',None,reports.append,auth_token=secret)
+            assert job.finished.wait(timeout=5)
+            assert reports and reports[0].startswith('not now:')  # reached the worker, which has no scan yet
+            assert job.poll() == 1
+        finally:
+            commands.put(('quit',))
+            worker.join(timeout=5)
+    assert not worker.is_alive()
+
+
+def test_local_backend_requests_ignore_environment_http_proxies():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    hits=[]
+    class Proxy(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_error(502)
+        def log_message(self,*args):
+            pass
+    proxy=ThreadingHTTPServer(('127.0.0.1',0),Proxy)
+    thread=threading.Thread(target=proxy.serve_forever,daemon=True);thread.start()
+    try:
+        address=f'http://127.0.0.1:{proxy.server_address[1]}'
+        with running_service() as (service,base), patch.dict('os.environ',
+                {'HTTP_PROXY':address,'http_proxy':address,'NO_PROXY':'','no_proxy':''}):
+            request=urllib.request.Request(service.empty_url+'info.json',
+                headers={'Authorization':'Bearer '+service.backend_token})
+            with webapp.urlopen(request,timeout=5) as response:
+                assert response.status == 200
+        assert hits == []
+    finally:
+        proxy.shutdown();proxy.server_close();thread.join(timeout=2)
+
+
+def test_download_names_cannot_inject_http_headers_and_support_unicode():
+    source=SimpleNamespace(current=lambda:('v',b'',dict(phase='done',points=0)),
+        ply_bytes=lambda:b'fixture',download_name=lambda:'scan\r\nX-Audit: injected-é')
+    server=webapp.view3d.serve(source,0)
+    try:
+        request=client(f'http://127.0.0.1:{server.server_address[1]}',paired=False)
+        status,body,headers=request('/cloud.ply')
+        assert status == 200 and body == b'fixture'
+        assert headers.get('X-Audit') is None
+        assert '%0D%0A' in headers['Content-Disposition'] and '%C3%A9' in headers['Content-Disposition']
+    finally:
+        server.shutdown();server.server_close()
 
 
 if __name__ == '__main__':

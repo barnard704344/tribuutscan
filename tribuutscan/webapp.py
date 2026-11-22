@@ -9,6 +9,7 @@ import hmac
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
+import ipaddress
 import json
 import math
 import os
@@ -22,7 +23,7 @@ import threading
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 import webbrowser
 
 import numpy as np
@@ -32,6 +33,8 @@ from . import calib, frames, gpu, livescan, view3d
 from .image import write_png
 
 WEB = Path(__file__).parent / 'web'
+# Host-local RPC must never send scan data or its internal key to an environment proxy.
+urlopen = build_opener(ProxyHandler({})).open
 ACTIONS = {'optimise', 'small', 'medium', 'large', 'mesh', 'base-off', 'base-on', 'crop', 'crop-off'}
 SETTINGS = {'scene_mode': ('still', 'free'), 'preset': ('small', 'medium', 'large'), 'keep_raw': bool, 'remove_base': bool,
             'mesh_after': bool, 'countdown': bool, 'record_rate': tuple(core.RECORD_RATES),
@@ -81,6 +84,12 @@ class ModelSource:
     def process(self, action, box=None):
         return "Use the authenticated scanner workspace for processing"
 
+    def for_request(self):
+        """Keep every artifact in one HTTP request tied to the same selected scan."""
+        snapshot = object.__new__(ModelSource)
+        snapshot.service, snapshot.file, snapshot.empty = self.service, self.file, self.empty
+        return snapshot
+
     def current(self):
         if self.file:
             version, payload, info = self.file.current()
@@ -99,7 +108,7 @@ class ModelSource:
 
 class WorkerProcessing:
     """Reuse the current worker's model and GPU allocation for processing that same scan."""
-    def __init__(self, url, action, box, report):
+    def __init__(self, url, action, box, report, auth_token=None):
         self.finished = threading.Event()
         self.returncode = None
         self.report = report
@@ -108,6 +117,8 @@ class WorkerProcessing:
             try:
                 request = Request(url + 'process/' + action + query, data=b'{}', method='POST',
                                   headers={'Content-Type': 'application/json', 'X-Tribuutscan': '1'})
+                if auth_token is not None:
+                    request.add_header('Authorization', 'Bearer ' + auth_token)
                 with urlopen(request, timeout=3600) as response:
                     result = json.load(response)
                 message = result.get('error') or result.get('message', 'Processing finished')
@@ -134,6 +145,7 @@ class Service:
     def __init__(self, demo=False):
         self.demo = demo
         self.instance = secrets.token_hex(8)
+        self.backend_token = secrets.token_urlsafe(32)
         self.controller = None
         self.commands = queue.Queue(maxsize=32)
         self.stop = threading.Event()
@@ -150,7 +162,7 @@ class Service:
         self.processing_thread = None
         self.processing_result = None
         self.model = ModelSource(self, demo)
-        self.model_server = view3d.serve(self.model, 0)
+        self.model_server = view3d.serve(self.model, 0, auth_token=self.backend_token)
         self.empty_url = f'http://127.0.0.1:{self.model_server.server_address[1]}/'
         self.model_url = self.empty_url
         self.next_scan_refresh = 0
@@ -177,6 +189,7 @@ class Service:
                     try:
                         app = core.Controller()
                         self.controller = app  # make partial startup available to shutdown cleanup
+                        app.worker_token = self.backend_token
                         app.initialise_controls()
                         app.start()
                         self.error = ''
@@ -218,13 +231,14 @@ class Service:
             self.publish()
             self.stop.set()
         finally:
-            if self.controller:
-                self.controller.close()
+            self.stop.set()
             if self.processing:
                 print("Waiting for saved-scan processing to finish…", flush=True)
                 self.processing.wait()
                 if self.processing_thread:
                     self.processing_thread.join()
+            if self.controller:
+                self.controller.close()
             while not self.commands.empty():
                 _, future = self.commands.get_nowait()
                 if not future.done():
@@ -313,6 +327,8 @@ class Service:
             raise Conflict('Command is still busy; refresh its status before trying again')
 
     def dispatch(self, data):
+        if data.get('instance') != self.instance:
+            raise Conflict('The scanner service restarted. Refresh its status before trying again.')
         if type(data.get('revision')) is not int or data['revision'] != self.revision:
             raise Conflict('The scanner changed. Review its current status and try again.')
         action = data.get('action')
@@ -447,7 +463,7 @@ class Service:
                 self.processing_result = None
                 self.processing_thread = None
                 self.processing = WorkerProcessing(live['url'], action, box,
-                    lambda message: setattr(self, 'processing_result', message))
+                    lambda message: setattr(self, 'processing_result', message), auth_token=self.backend_token)
                 return
             # An unrelated finished take need not keep its GPU model resident while restoring another.
             live['commands'].put(('quit',))
@@ -573,7 +589,8 @@ class Handler(BaseHTTPRequestHandler):
                 box = parse_qs(urlsplit(self.path).query).get('box', [None])[0]
                 if box is not None:
                     box = [float(v) for v in box.split(',')]
-                self.service.request(dict(action='process', operation=operation, box=box, revision=data.get('revision')))
+                self.service.request(dict(action='process', operation=operation, box=box,
+                                          revision=data.get('revision'), instance=data.get('instance')))
                 return self.json({'message': 'Processing started. You can keep this page open.'})
             self.json({'error': 'Not found'}, 404)
         except Conflict as e:
@@ -594,7 +611,8 @@ class Handler(BaseHTTPRequestHandler):
         # No user-provided hostname or arbitrary backend path is forwarded.
         url = self.service.model_url + relative
         try:
-            with urlopen(url, timeout=10) as response:
+            request = Request(url, headers={'Authorization': 'Bearer ' + self.service.backend_token})
+            with urlopen(request, timeout=10) as response:
                 body = response.read()
                 kind = response.headers.get('Content-Type', 'application/octet-stream')
                 headers = {}
@@ -626,9 +644,12 @@ def reopen_browser(port=8765):
     try:
         data = json.loads(session.read_text())
         running_port, token = data['port'], data['token']
+        host = data.get('host', 'localhost')
+        if host != 'localhost':
+            host = str(ipaddress.IPv4Address(host))
         if (type(running_port) is int and 1 <= running_port <= 65535 and isinstance(token, str)
                 and 16 <= len(token) <= 128 and all(c.isascii() and (c.isalnum() or c in '-_') for c in token)):
-            url = f'http://localhost:{running_port}/#token={token}'
+            url = f'http://{host}:{running_port}/#token={token}'
     except (OSError, ValueError, KeyError, TypeError):
         pass  # an older running host has no session file; its browser may already be paired
     try:
@@ -640,13 +661,13 @@ def reopen_browser(port=8765):
     return webbrowser.open(url)
 
 
-def save_browser_session(port, token):
+def save_browser_session(port, token, host='localhost'):
     """Keep the pairing link private to the local user for later Applications-menu launches."""
     session = core.LOCK.with_name('.webapp.json')
     fd = os.open(session, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w') as stream:
         os.fchmod(stream.fileno(), 0o600)
-        json.dump(dict(port=port, token=token), stream)
+        json.dump(dict(port=port, token=token, host=host), stream)
 
 
 def main(argv=None):
@@ -679,8 +700,10 @@ def main(argv=None):
         server.token = secrets.token_urlsafe(24)
         server.session = hashlib.sha256(secrets.token_bytes(32)).hexdigest()
         port = server.server_address[1]
-        local = f'http://localhost:{port}/#token={server.token}'
-        save_browser_session(port, server.token)
+        address = server.server_address[0]
+        local_host = 'localhost' if address in ('0.0.0.0', '127.0.0.1') else address
+        local = f'http://{local_host}:{port}/#token={server.token}'
+        save_browser_session(port, server.token, local_host)
         print(f'Open on this computer: {local}', flush=True)
         addresses = set()
         try:

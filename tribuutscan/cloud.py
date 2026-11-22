@@ -1216,6 +1216,8 @@ class Scanner:
     def check_continue_camera(directory):
         """Refuse to mix camera calibrations or ranges in a continued scan."""
         session = json.loads((Path(directory) / "session.json").read_text())
+        if not isinstance(session, dict) or not isinstance(session.get("camera") or {}, dict):
+            raise ValueError("invalid saved camera metadata; start a new scan")
         noted, mode = session.get("camera") or {}, session.get("depth_mode") or CLOSE
         fingerprint = noted.get("fingerprint")
         if not fingerprint:

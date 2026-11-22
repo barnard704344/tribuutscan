@@ -1223,3 +1223,15 @@ def test_recording_replay_preserves_subject_mode_and_defaults_legacy_to_table():
         assert cl.recording_scene_mode(tmp)=="free"
         path.write_text(json.dumps({}))
         assert cl.recording_scene_mode(tmp)=="still"
+
+
+
+def test_continue_rejects_malformed_saved_camera_metadata_cleanly():
+    import json,tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as tmp:
+        for metadata in [[],{'camera':['invalid']}]:
+            (Path(tmp)/'session.json').write_text(json.dumps(metadata))
+            try:cl.Scanner.check_continue_camera(tmp)
+            except ValueError as error:assert 'invalid saved camera metadata' in str(error)
+            else:raise AssertionError('invalid camera metadata accepted')

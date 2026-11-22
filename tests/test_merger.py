@@ -171,8 +171,12 @@ def test_live_frames_with_their_depth_packed_track_as_decoded_ones():
                     dp.decode_depth = real
                 sc.close()
                 runs.append(sc)
-            # with the merge process no full CPU decode here at all (this box's markers take the depth from the GPU)
-            assert decodes.count(True) == 0
+            # GPU tracking reads marker depth on the GPU. CPU fallback needs full
+            # decoding even when merging in a separate process.
+            if runs[-1].stats["tracker"] == "gpu":
+                assert decodes.count(True) == 0
+            else:
+                assert decodes.count(True) > 0
             ref = runs[0]
             assert ref.stats["merged"] >= 4 and len(ref.cloud) > 1000
             for sc in runs[1:]:

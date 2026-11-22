@@ -399,10 +399,10 @@ class LiveSource:
 
     def process(self, action, box=None):
         """A Process-menu action from the page, on the last finished scan."""
-        if self.scanner is None or self.phase != "done":
-            return "not now: use Stop & Save in the scanner before processing"
         from . import optimise
         with self.busy:
+            if self.scanner is None or self.phase != "done":
+                return "not now: use Stop & Save in the scanner before processing"
             self.phase = "optimising"
             try:
                 return optimise.process(self.scanner, self.out_dir, action, log=lambda m: None, box=box)
@@ -430,7 +430,7 @@ class LiveSource:
         return self.out_dir.name if self.out_dir else "live-scan"
 
 
-def run(commands, replies, port=view3d.PORT):
+def run(commands, replies, port=view3d.PORT, auth_token=None):
     """Worker process main loop."""
     # A spawned process inherits the parent's sys.path (system Python). Put this interpreter's own
     # site-packages (the .venv) FIRST, or old system packages shadow the venv's and Open3D fails to import.
@@ -440,7 +440,8 @@ def run(commands, replies, port=view3d.PORT):
     sys.path[:] = [path for path in sys.path if path in own] + [path for path in sys.path if path not in own]
     source = LiveSource()
     try:
-        server = view3d.serve(source, port)
+        server = (view3d.serve(source, port, auth_token=auth_token) if auth_token is not None
+                  else view3d.serve(source, port))
     except OSError as e:
         replies.put(("log", f"3D view not available: port {port}: {e.strerror}"))
         server = None
@@ -486,11 +487,11 @@ def run(commands, replies, port=view3d.PORT):
                 replies.put(("start_failed", "unknown subject mode"))
                 continue
             capture = options.get("capture", {})
-            previous_mode = calib.CAMERA.mode
-            calib.use_mode(depth_mode)  # the law of the scanner's mode, before any frame is turned into points
             recorder = None
             log = lambda m: replies.put(("log", m))
-            with source.lock:
+            with source.busy, source.lock:
+                previous_mode = calib.CAMERA.mode
+                calib.use_mode(depth_mode)  # keep a processing job's camera mode stable until it finishes
                 if continue_from:  # go on with a saved scan: it re-finds its place, then merges into it
                     try:
                         source.scanner = cl.Scanner.continue_from(continue_from, log=log)
@@ -673,4 +674,8 @@ def run(commands, replies, port=view3d.PORT):
         elif kind == "quit":
             if server:
                 server.shutdown()
+            with source.busy:
+                pass  # an accepted HTTP processing job must finish before its worker exits
+            if server:
+                server.server_close()
             return

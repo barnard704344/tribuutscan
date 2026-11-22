@@ -950,3 +950,27 @@ def test_live_object_distance_uses_current_depth_even_when_coverage_shows_an_old
         _, stats = viewer.render_depth(Cap, encode_y10(raw))
         assert np.isclose(stats['object_cm'], float(viewer.pointcloud.depth_to_mm(270))/10)
         assert stats['centre_cm'] is None
+
+
+
+def test_continue_restores_saved_subject_type_before_starting_worker():
+    import json
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import Mock,patch
+    from types import SimpleNamespace
+
+    class StopBeforeCapture(Exception):
+        pass
+
+    with tempfile.TemporaryDirectory() as tmp,patch.object(controller.cloud.Scanner,'check_continue_camera'):
+        path=Path(tmp)
+        for saved in ('still','free'):
+            (path/'session.json').write_text(json.dumps({'mode':saved}))
+            app=SimpleNamespace(scene_mode=controller.Setting('free' if saved=='still' else 'still'),
+                                live={'proc':None},start_worker=Mock(side_effect=StopBeforeCapture),log=Mock())
+            try:controller.Controller.begin_scan(app,continue_from=path)
+            except StopBeforeCapture:pass
+            else:raise AssertionError('expected to stop before hardware capture')
+            assert app.scene_mode.get() == saved
+            app.start_worker.assert_called_once()
