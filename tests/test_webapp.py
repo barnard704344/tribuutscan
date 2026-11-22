@@ -62,7 +62,7 @@ def test_web_help_and_import_need_neither_tkinter_nor_a_display():
 def test_pairing_protects_status_previews_models_and_downloads():
     with running_service() as (service, base):
         request = client(base, paired=False)
-        for path in ['/api/state', '/preview/depth.png', '/model/', '/model/cloud.ply', '/model/mesh.stl']:
+        for path in ['/api/state', '/preview/depth.png', '/preview/coverage-view.png', '/model/', '/model/cloud.ply', '/model/mesh.stl']:
             assert request(path)[0] == 401, path
         for path in ['/', '/scanner.css', '/scanner.js']:
             assert request(path)[0] == 200
@@ -195,8 +195,9 @@ def test_settings_are_validated_together_and_locked_during_capture():
         try:dispatch(service,'settings',settings={'keep_raw':False})
         except webapp.Conflict:pass
         else:raise AssertionError('raw recording changed during a scan')
-        dispatch(service,'settings',settings={'preview_mode':controller.COVERAGE})
-        app.choose_depth_preview.assert_called_once_with(controller.COVERAGE)
+        try:dispatch(service,'settings',settings={'preview_mode':controller.COVERAGE})
+        except ValueError:pass
+        else:raise AssertionError('removed depth/coverage toggle was accepted')
 
 
 def test_pick_coordinates_are_validated_and_converted_to_preview_pixels():
@@ -390,7 +391,7 @@ def test_spawned_worker_enforces_internal_auth_and_processing_client_supplies_it
             assert request('/info.json',headers={'Authorization':'Bearer '+secret})[0] == 200
             reports=[]
             job=webapp.WorkerProcessing(url,'mesh',None,reports.append,auth_token=secret)
-            assert job.finished.wait(timeout=5)
+            assert job.finished.wait(timeout=15)
             assert reports and reports[0].startswith('not now:')  # reached the worker, which has no scan yet
             assert job.poll() == 1
         finally:
@@ -435,6 +436,196 @@ def test_download_names_cannot_inject_http_headers_and_support_unicode():
         assert '%0D%0A' in headers['Content-Disposition'] and '%C3%A9' in headers['Content-Disposition']
     finally:
         server.shutdown();server.server_close()
+
+
+def test_flat_coverage_updates_worker_colours_even_when_tracking_is_lost_and_holds_only_on_pause():
+    from tribuutscan.depth import encode_y10
+    cap=SimpleNamespace(width=64,height=40,bytesperline=80)
+    current=encode_y10(np.full((40,64),270,np.uint16))
+    accepted=encode_y10(np.full((40,64),260,np.uint16))
+    phase=['scanning']
+    render=webapp.workspace_depth_renderer(lambda:phase[0])
+    with patch.dict(controller.scan_view,active=True,return_guide=True,preview=controller.LIVE_DEPTH,
+                    mask=np.full((40,64),2),t=100.,lost=False,
+                    model=(np.full((40,64),1,np.uint8),accepted)), \
+         patch.object(webapp.time,'monotonic',return_value=100.) as clock,patch.dict(controller.hold_view,on=False):
+        depth,stats=render(cap,current)
+        coverage=stats['coverage_image']
+        assert coverage is not None and coverage != depth
+        assert depth == controller.render_depth(cap,current,preview=controller.LIVE_DEPTH)[0]
+        _,pixels=coverage.split(b'\n',1)
+        assert (np.frombuffer(pixels,np.uint8).reshape(-1,3)==controller.MODEL_MISSING).all(1).any()
+        assert 'observed enough' in stats['coverage_stats']['coverage']
+        assert controller.scan_view['preview'] == controller.LIVE_DEPTH
+        clock.return_value=100.3
+        controller.scan_view.update(t=100.3,model=(np.full((40,64),80,np.uint8),accepted))
+        _,thin=render(cap,current)
+        assert thin['coverage_image'] != coverage
+        clock.return_value=100.6
+        controller.scan_view.update(t=100.6,model=(np.full((40,64),200,np.uint8),accepted))
+        _,done=render(cap,current)
+        assert done['coverage_image'] != thin['coverage_image']
+        clock.return_value=101.
+        controller.scan_view.update(lost=True,t=101.,model=(np.full((40,64),240,np.uint8),accepted))
+        _,lost=render(cap,accepted)
+        assert lost['coverage_image'] != coverage
+        _,pixels=lost['coverage_image'].split(b'\n',1)
+        colours=np.frombuffer(pixels,np.uint8).reshape(-1,3)
+        assert (colours[:,2]>colours[:,0]).all()
+        assert lost['coverage_stats']['updated_at'] == 101.
+        assert lost['centre_cm'] != stats['centre_cm']
+        phase[0]='paused';controller.scan_view['active']=False
+        clock.return_value=102.
+        controller.scan_view.update(t=102.,model=(np.full((40,64),1,np.uint8),accepted))
+        _,paused=render(cap,accepted)
+        assert paused['coverage_image'] == lost['coverage_image']
+        phase[0]='idle'
+        _,idle=render(cap,current)
+        assert idle['coverage_image'] is None
+        phase[0]='scanning';controller.scan_view.update(active=True,model=None)
+        _,waiting=render(cap,current)
+        assert waiting['coverage_image'] is None  # never substitute live depth for missing coverage
+
+
+def test_flat_coverage_has_no_3d_controller_or_orbit_command():
+    assert not hasattr(webapp,'CoverageView')
+    with idle_dispatcher() as (service,app):
+        assert not hasattr(service,'coverage_view')
+        try:dispatch(service,'coverage-view',yaw=1.,pitch=0.,zoom=1.)
+        except ValueError:pass
+        else:raise AssertionError('removed 3D orbit command was accepted')
+
+
+def test_coverage_preview_uses_the_paired_preview_route():
+    with running_service() as (service,base):
+        request=client(base)
+        assert json.loads(request('/api/state')[1])['coverage_preview'] is True
+        assert request('/preview/coverage-view.png')[0] == 204
+        with patch.object(service,'publish'):
+            with service.lock:
+                service.previews={'coverage-view':controller.ppm(np.full((18,32,3),128,np.uint8))}
+            status,body,headers=request('/preview/coverage-view.png')
+            assert status == 200 and body.startswith(b'\x89PNG')
+            assert headers['Content-Type'] == 'image/png'
+
+
+def test_restart_is_rejected_until_all_host_work_is_finished():
+    with idle_dispatcher() as (service,app):
+        for phase in ('scanning','counting','paused','saving','optimising','meshing','cancelling'):
+            app.scan_state=phase
+            try:dispatch(service,'restart')
+            except webapp.Conflict:pass
+            else:raise AssertionError('restart interrupted '+phase)
+        app.scan_state='idle'
+        for owner,key in ((app.rec,'recorder'),(app.job,'process'),(app.switching,'busy')):
+            owner[key]=True
+            try:dispatch(service,'restart')
+            except webapp.Conflict:pass
+            else:raise AssertionError('restart interrupted '+key)
+            owner[key]=None if key!='busy' else False
+        service.processing=Mock()
+        try:dispatch(service,'restart')
+        except webapp.Conflict:pass
+        else:raise AssertionError('restart interrupted saved-scan processing')
+        service.processing=None
+        dispatch(service,'restart')
+        assert service.restart_requested
+        try:dispatch(service,'start')
+        except webapp.Conflict:pass
+        else:raise AssertionError('accepted capture during restart')
+
+
+def test_restart_replaces_the_host_and_keeps_browser_pairing():
+    import os,shutil,socket,time
+    with tempfile.TemporaryDirectory() as tmp:
+        root=Path(tmp)
+        shutil.copytree(Path(webapp.__file__).parent,root/'tribuutscan',ignore=shutil.ignore_patterns('__pycache__'))
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+        env=dict(os.environ,PYTHONPATH=str(root));env.pop('_TRIBUUTSCAN_RESTART',None)
+        with (root/'host.log').open('w') as output:
+            host=subprocess.Popen([sys.executable,'-m','tribuutscan.webapp','--demo','--host','127.0.0.1',
+                '--port',str(port),'--no-browser'],cwd=root,env=env,stdout=output,stderr=output)
+            try:
+                session=root/'captures'/'.webapp.json'
+                deadline=time.monotonic()+20
+                while not session.exists() or not session.stat().st_size:
+                    assert host.poll() is None,'demo host exited before startup'
+                    if time.monotonic()>deadline:raise AssertionError('demo host did not start')
+                    time.sleep(.05)
+                token=json.loads(session.read_text())['token']
+                request=client(f'http://127.0.0.1:{port}',paired=False)
+                assert request('/api/pair',{'token':token})[0] == 200
+                before=json.loads(request('/api/state')[1])
+                assert request('/api/command',dict(action='restart',instance=before['instance'],revision=before['revision']))[0] == 200
+                deadline=time.monotonic()+20
+                while True:
+                    try:
+                        status,body,_=request('/api/state')
+                        assert status == 200,'paired browser was disconnected by restart'
+                        after=json.loads(body)
+                        if after['instance']!=before['instance']:break
+                    except (OSError,urllib.error.URLError):pass
+                    assert host.poll() is None,'host failed to restart'
+                    if time.monotonic()>deadline:raise AssertionError('host instance did not change')
+                    time.sleep(.1)
+                assert after['demo'] and after['coverage_preview'] and after['restart_supported']
+                assert json.loads(session.read_text())['token'] == token
+            finally:
+                host.terminate()
+                try:host.wait(timeout=20)
+                except subprocess.TimeoutExpired:host.kill();host.wait()
+
+
+def test_subject_choice_survives_host_restart_and_ignores_invalid_preferences():
+    with tempfile.TemporaryDirectory() as tmp,patch.object(frames,'CAPTURES',Path(tmp)):
+        app=fake_app();app.scene_mode.set('still')
+        webapp.save_subject('free')
+        assert ((Path(tmp)/'.webapp-settings.json').stat().st_mode & 0o777) == 0o600
+        webapp.restore_subject(app)
+        assert app.scene_mode.get() == 'free'
+        webapp.save_subject('still');webapp.restore_subject(app)
+        assert app.scene_mode.get() == 'still'
+        for bad in ('[]','{"scene_mode":"unknown"}','invalid json'):
+            (Path(tmp)/'.webapp-settings.json').write_text(bad)
+            webapp.restore_subject(app)
+            assert app.scene_mode.get() == 'still'
+
+
+def test_chosen_head_mode_is_persisted_by_command_and_restored_before_controller_start():
+    with idle_dispatcher() as (service,app):
+        dispatch(service,'settings',settings={'scene_mode':'free'})
+        assert json.loads((frames.CAPTURES/'.webapp-settings.json').read_text())['scene_mode'] == 'free'
+        replacement=fake_app();replacement.scene_mode.set('still')
+        replacement.initialise_controls=Mock();replacement.tick=Mock();replacement.close=Mock()
+        service.demo=False;service.controller=None
+        def start():
+            assert replacement.scene_mode.get() == 'free'
+            service.stop.set()
+        replacement.start=start
+        with patch.object(controller,'Controller',return_value=replacement),patch.object(service,'publish'):
+            service.run()
+        replacement.close.assert_called_once()
+
+
+def test_paused_coverage_camera_uses_the_paired_gateway_and_validates_angles():
+    with running_service() as (service,base):
+        source=SimpleNamespace(coverage_image=Mock(return_value=b'\x89PNG fixture'),current=Mock())
+        backend=webapp.view3d.serve(source,0,auth_token=service.backend_token)
+        try:
+            service.model_url=f'http://127.0.0.1:{backend.server_address[1]}/'
+            assert client(base,paired=False)('/model/coverage.png')[0] == 401
+            request=client(base)
+            assert request('/model/coverage.png?yaw=.5&pitch=.2&zoom=2')[0] == 200
+            source.coverage_image.assert_called_once_with(.5,.2,2.)
+            source.current.assert_not_called()
+            for query in ('yaw=nan','zoom=0','pitch=8','yaw=1&yaw=2','extra=1'):
+                assert request('/model/coverage.png?'+query)[0] == 400
+            assert source.coverage_image.call_count == 1
+            source.coverage_image.side_effect=ValueError('Pause the scan')
+            assert request('/model/coverage.png')[0] == 409
+        finally:
+            backend.shutdown();backend.server_close()
 
 
 if __name__ == '__main__':

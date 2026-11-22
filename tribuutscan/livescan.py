@@ -29,6 +29,7 @@ debugging. The copy stops (the scan goes on) when the disk is nearly full (frame
 written beside tracking (RawCopy): in the first live GPU scan it took 34 ms of every frame.
 """
 import io
+import io
 import multiprocessing
 import queue
 from pathlib import Path
@@ -396,6 +397,46 @@ class LiveSource:
                 if s.piece_pending:
                     info["progress"]["hint"] = "Separate piece requested. Hold the target in view until valid depth arrives."
             return version, payload, info
+
+    def coverage_image(self, yaw=0.0, pitch=0.0, zoom=1.0):
+        """Turn the paused coverage camera; retain the volume's classifications."""
+        from .controller import DEPTH_W, fit, paint_model
+        from .image import write_png
+        with self.busy, self.lock:
+            if self.phase != 'paused' or self.scanner is None:
+                raise ValueError('Pause the scan before moving coverage')
+            scanner = self.scanner
+            tracker = getattr(scanner, 'gpu', None)
+            if tracker is None:
+                raise ValueError('Coverage rotation needs GPU tracking')
+            if self.paused_points is None or not len(self.paused_points[0]):
+                raise ValueError('No captured surface is available yet')
+            points = self.paused_points[0]
+            centre = (points.min(axis=0) + points.max(axis=0)) / 2000.0
+            base = scanner.pose
+            cy, sy, cp, sp = np.cos(yaw), np.sin(yaw), np.cos(pitch), np.sin(pitch)
+            rotation = (np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+                        @ np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]]))
+            world = base[:3, :3] @ rotation @ base[:3, :3].T
+            pose = base.copy()
+            pose[:3, :3] = world @ base[:3, :3]
+            pose[:3, 3] = centre + world @ (base[:3, 3] - centre) / zoom
+            previous_ref = tracker.ref
+            try:
+                codes = tracker.ghost(pose, scanner.gpu_base(), scanner.preview_weight())
+            finally:
+                tracker.ref = previous_ref
+            if codes is None:
+                raise ValueError('Coverage is not available yet')
+            codes = codes.copy()
+            if yaw != 0 or pitch != 0 or zoom != 1:
+                # Code 1 belongs to the unrotated sensor frame, rather than the volume.
+                codes[codes == 1] = 0
+            rgb = fit(np.zeros((*codes.shape, 3), np.uint8), DEPTH_W)
+            paint_model(rgb, codes)
+            output = io.BytesIO()
+            write_png(output, rgb)
+            return output.getvalue()
 
     def process(self, action, box=None):
         """A Process-menu action from the page, on the last finished scan."""

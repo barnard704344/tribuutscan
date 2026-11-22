@@ -18,10 +18,14 @@
   <div id="notice" class="notice" role="status">Connecting to the scanner service…</div>
   <div id="command-error" class="error" role="alert" hidden></div>
   <div class="workspace-grid">
-    <aside class="preview-column" aria-label="Live 3D and camera previews">
-      <section class="model-panel preview-card panel">
-        <div class="panel-title"><h2>Live 3D model</h2><a id="model-link" href="/model/" target="_blank" rel="noopener">Full view</a></div>
-        <div class="preview-surface"><iframe id="model" title="Interactive 3D scan model" src="about:blank" allow="fullscreen"></iframe></div>
+    <aside class="preview-column" aria-label="Coverage and camera previews">
+      <section class="preview-card panel">
+        <div class="panel-title"><h2 id="side-title">Coverage</h2></div>
+        <div id="side-view"><div id="coverage-pane">
+        <div class="preview-surface"><canvas id="coverage-view" width="768" height="432" aria-label="Flat scan coverage preview"></canvas></div>
+        <div id="inspection-tools" class="inspection-tools" hidden><span id="inspection-status" role="status">Loading paused scan…</span><div><button id="inspection-out" aria-label="Zoom paused scan out">−</button><button id="inspection-in" aria-label="Zoom paused scan in">+</button><button id="inspection-reset">Reset view</button><button id="inspection-retry" hidden>Retry loading</button></div></div>
+        <p id="coverage" class="coverage">Coverage is shown during a live scan</p>
+        </div></div>
       </section>
       <section class="preview-card panel">
         <div class="panel-title"><h2>Colour</h2><span class="preview-fps" id="colour-fps"></span></div>
@@ -32,8 +36,8 @@
         <div class="image-wrap preview-surface"><canvas id="ir" width="272" height="170" aria-label="Infrared preview"></canvas></div>
       </section>
     </aside>
-    <section class="camera-panel panel"><div class="panel-title"><h2>Camera views</h2><select aria-label="Depth display" data-setting="preview_mode"><option>Live depth</option><option>Coverage</option></select></div>
-      <figure class="depth"><div class="image-wrap preview-surface"><canvas id="depth" width="552" height="345" aria-label="Depth preview; tap to select your object"></canvas><span class="image-label">DEPTH <small id="depth-fps"></small></span></div><figcaption class="distance-gauge" id="distance-gauge" data-zone="unknown">
+    <section class="camera-panel panel"><div class="panel-title"><h2 id="main-title">Camera views</h2></div>
+      <div id="main-view"><figure id="depth-pane" class="depth"><div class="image-wrap preview-surface"><canvas id="depth" width="552" height="345" aria-label="Depth preview; tap to select your object"></canvas><span class="image-label">DEPTH <small id="depth-fps"></small></span></div><figcaption class="distance-gauge" id="distance-gauge" data-zone="unknown">
         <div class="distance-heading"><span>Scanner distance</span><output id="distance-value">No depth</output></div>
         <div class="distance-track" id="distance-track" role="img" aria-label="Waiting for reliable depth">
           <div class="distance-zones"><span>Too close</span><span>Optimal</span><span>Too far</span></div>
@@ -42,8 +46,7 @@
         <div class="distance-scale"><span id="distance-min">12 cm</span><span id="distance-target">Optimal: 18–30 cm</span><span id="distance-max">36 cm</span></div>
         <p id="distance-status" class="distance-status">Waiting for a depth reading</p>
         <p id="distance">Waiting for scanner</p>
-      </figcaption></figure>
-      <p id="coverage" class="coverage" hidden></p>
+      </figcaption></figure></div>
       <p id="scan-hint" class="scan-hint" hidden></p>
       <div class="telemetry"><div><span>Capture</span><strong id="capture">—</strong></div><div><span>Tracking</span><strong id="tracking">—</strong></div><div><span>Geometry</span><strong id="geometry">—</strong></div></div>
       <div id="reference-panel" hidden><p class="helper">Last tracked view · match this shape and angle to recover tracking</p><canvas id="reference" width="256" height="160" aria-label="Last successfully tracked depth view"></canvas></div>
@@ -61,7 +64,8 @@
       </section>
       <details class="panel"><summary>Scanner settings</summary><div class="control-body"><label class="inline-label">Depth range<select id="range"></select></label><label><input id="auto-ir" type="checkbox">Automatic IR exposure</label><div id="hardware-controls"></div><button data-action="reset-controls">Reset defaults</button><label><input type="checkbox" data-setting="imu_wanted">Use motion sensor (IMU)</label><p id="imu" class="helper">IMU off</p><label><input type="checkbox" data-setting="find_markers">Find markers</label><label><input type="checkbox" data-setting="hold_depth">Hold depth between frames</label><button data-action="retry">Retry scanner connection</button></div></details>
       <details class="panel"><summary>Raw capture</summary><div class="control-body"><button data-action="save-frame">Save current frame set</button><label class="inline-label">Recording rate<select data-setting="record_rate"><option>30 fps</option><option>10 fps</option></select></label><button id="record" data-action="record">Record raw frames</button><button data-action="mesh-recording">Mesh latest recording</button><p class="helper">Recordings and scans are saved on the host machine.</p></div></details>
-      <details class="panel" open><summary>Saved scans</summary><div class="control-body"><label>Choose a scan<select id="saved"><option value="">No saved scans yet</option></select></label><div class="two-buttons"><button id="open-scan" data-action="open">Open scan</button><button data-action="live">Back to live</button></div><p class="helper">Use the full 3D view for cropping, processing and PLY / STL downloads.</p></div></details>
+      <details class="panel" open><summary>Saved scans</summary><div class="control-body"><label>Choose a scan<select id="saved"><option value="">No saved scans yet</option></select></label><div class="two-buttons"><button id="open-scan" data-action="open">Open scan</button><button data-action="live">Back to live</button></div><a href="/model/" target="_blank" rel="noopener">Inspect, process & download</a></div></details>
+      <section class="panel"><div class="control-body"><button id="restart-host" data-action="restart">Restart scanner host</button><p id="restart-hint" class="helper">Available after scans, recordings and processing finish. Paired browsers reconnect automatically.</p></div></section>
     </aside>
   </div>
   <details class="panel logs"><summary>Messages from the host</summary><pre id="messages" tabindex="0"></pre></details>

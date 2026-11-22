@@ -8,6 +8,7 @@ when it changes, so the same page works for a finished scan and (later) a live o
 """
 import json
 import hmac
+import math
 import struct
 import sys
 import threading
@@ -173,6 +174,25 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorised():
             return
         path, _, query = self.path.partition("?")
+        if path == '/coverage.png':
+            render = getattr(self.source, 'coverage_image', None)
+            if render is None:
+                return self.send_error(404)
+            try:
+                values = parse_qs(query, keep_blank_values=True, max_num_fields=3)
+                if set(values) - {'yaw', 'pitch', 'zoom'} or any(len(v) != 1 for v in values.values()):
+                    raise ValueError('Invalid coverage camera')
+                yaw, pitch, zoom = (float(values.get(k, [v])[0]) for k, v in
+                                    [('yaw', '0'), ('pitch', '0'), ('zoom', '1')])
+                if (not all(math.isfinite(v) for v in (yaw, pitch, zoom))
+                        or abs(yaw) > 100 or abs(pitch) > math.pi/2 or not .4 <= zoom <= 6):
+                    raise ValueError('Invalid coverage camera')
+            except ValueError:
+                return self.send_error(400, 'Invalid coverage camera')
+            try:
+                return self.reply(render(yaw, pitch, zoom), 'image/png')
+            except ValueError as error:
+                return self.send_error(409, str(error))
         if path in FILES:
             name, kind = FILES[path]
             return self.reply((WEB / name).read_bytes(), kind)

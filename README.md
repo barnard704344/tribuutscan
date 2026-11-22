@@ -85,18 +85,35 @@ starting a new scan. This skips support-plane detection so a broad part of the s
 mistaken for a tabletop and removed. **Object on a table** retains the existing base detection.
 Continue latest preserves the saved take's original subject mode; start a fresh take when changing
 subject mode. Raw recordings preserve the mode for replay and meshing.
+The browser host remembers your chosen Subject across host restarts and scanner
+reconnections. Continuing a saved take still uses that take's recorded mode.
 
 The capture workspace includes Start, Stop & Save, Pause / Resume, Cancel take, Continue latest,
 separate pieces, object picking, depth/coverage previews, last tracked view, distance guidance,
 range and exposure controls, IMU, markers, frame saving, raw recording and saved-scan selection.
-Open **Full view** for model inspection, cropping, processing and PLY / STL downloads. Saved
+Use **Inspect, process & download** under Saved scans for model inspection, cropping,
+processing and PLY / STL downloads. Saved
 files stay under this checkout's `captures/`; downloads go to the device running the browser.
-On a desktop, equally sized 16:9 Live 3D, Colour and IR previews sit on the left, with the larger
-Depth view in the centre and controls on the right. Camera images fit without cropping. On small
+On a desktop, equally sized 16:9 Coverage, Colour and IR previews sit on the left, with the larger
+Depth view in the centre and controls on the right. Coverage and live depth display together;
+the workspace no longer loads an embedded 3D viewer. Camera images fit without cropping. On small
 screens the scan controls and Depth view appear before the preview stack. The distance indicator
 under Depth uses fresh tracked-object depth while scanning, with the live centre reading as a
 fallback. If depth becomes unavailable, its marker stays grey at the last reading, labelled
 "Last" with its age. A last reading is not the current distance or confirmation of good tracking.
+
+**Pause & inspect** moves coverage into the large centre pane. Drag with a mouse
+or finger to turn the scan within that coverage display; scroll, pinch, or use
++/− to zoom. **Reset view** restores the original coverage camera. The host renders
+the same volume classifications and colours from the requested angle, rather than
+replacing coverage with a separate point-cloud view. Live depth and its distance
+gauge move to the left. **Resume scan** cancels inspection requests and returns
+live coverage to the left. The browser receives coverage images, not scan geometry.
+
+During capture, coverage colours continue updating from the worker's 2D map.
+When tracking is lost, that map shows the scan from the last tracked pose; new
+geometry is on hold until tracking recovers. Stop/cancel clears coverage. Neither the live nor paused coverage view is a completeness or measurement-accuracy
+check.
 
 The service listens on **port 8765 on all network interfaces** by default. Each start generates
 a new access code; pair each browser once per service run. API requests, previews, models and
@@ -118,6 +135,13 @@ Cancel take asks before discarding the active take. Use Stop & Save before stopp
 service with Ctrl+C. While the scanner is disconnected the workspace stays available, shows
 its status and retries automatically. Only one service or desktop viewer can own the scanner
 per checkout. Avoid running different checkouts against the same scanner at the same time.
+
+Use **Restart scanner host** in the workspace after scans, recordings and processing
+finish to reload application changes. The host closes the scanner cleanly and restarts
+with the same address, port and pairing session; open browsers reconnect automatically.
+The control is disabled while work is active. An older host started before this control
+was installed needs one initial host restart; refreshing or reopening its browser alone
+does not reload Python code. The coverage pane explains when it detects that older host.
 
 See the [web scanner change log and audit](docs/web-scanner-audit-2026-11-22.md)
 for the delivered changes, audit fixes, validation and operating limits.

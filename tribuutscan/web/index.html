@@ -65,12 +65,6 @@
   .buttons button.main { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
   @media (max-width: 600px) { aside { left: 12px; right: 12px; width: auto; top: auto; bottom: 12px; }
     #cropbox { top: 52px; bottom: auto; } }
-  body.embedded header .brand, body.embedded header .menu { display: none; }
-  body.embedded aside { top: auto; bottom: 10px; right: 10px; left: auto; width: 220px; padding: 8px 12px; }
-  body.embedded aside > *:not(#piece-picker) { display: none !important; }
-  body.embedded aside:not(:has(#piece-picker:not([hidden]))) { display: none; }
-  body.embedded #piece-note { display: none; }
-  body.embedded #empty { pointer-events: none; }
   @media (max-width: 600px) {
     header { height: auto; min-height: 44px; flex-wrap: wrap; padding: 6px 8px; }
     header .brand { width: 100%; margin: 0; }
@@ -79,7 +73,6 @@
     .menu:focus-within ul { display: block; }
     aside { max-height: 42vh; overflow-y: auto; }
     #cropbox { top: 110px; bottom: auto; max-height: calc(100vh - 130px); }
-    body.embedded header { height: 38px; min-height: 38px; }
   }
 </style>
 <script type="importmap">{ "imports": { "three": "./three.module.min.js" } }</script>
@@ -185,7 +178,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "./OrbitControls.js";
 
-document.body.classList.toggle("embedded", new URLSearchParams(location.search).get("embed") === "1");
 const canvas = document.getElementById("view");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -206,16 +198,11 @@ let pieceScan = null, selectedPiece = null, pieceSignature = "", pieceEpoch = 0,
 const shapes = { mesh: { obj: null, version: null, rgb: null }, solid: { obj: null, version: null, rgb: null } };
 const SHAPE_NAMES = { mesh: "Mesh", solid: "Solid" };  // the scanned surface; the closed solid (as the STL)
 const $ = (id) => document.getElementById(id);
-const livePreview = new URLSearchParams(location.search).get("live") === "1";
 const coverageRGB = {
   light: new THREE.Color(0xffc45c).toArray(),
   repeat: new THREE.Color(0x53b9ff).toArray(),
 };
 function coverageLevel(seen) { return seen >= 3 ? "repeat" : "light"; }
-if (livePreview) {
-  document.title = "triBUUTSCAN · Live 3D preview";
-  $("mode").value = "coverage";
-}
 
 renderer.localClippingEnabled = true;  // the crop box, while it is set up
 const cropGroup = new THREE.Group(), cropBox = new THREE.Box3();
@@ -540,10 +527,7 @@ async function poll() {
     if (info.phase === "paused")
       $("status").textContent = "Paused · rotate or zoom here · Resume or Stop & Save in the scanner";
     else if (Date.now() - messageAt > 8000) {  // a Process result stays readable for a while
-      if (livePreview && info.phase === "scanning")
-        $("status").textContent = `Live 3D · ${live?.geometry || "Waiting for accepted views"}`;
-      else
-        $("status").innerHTML = info.phase === "optimising" ? "<b>●</b> optimising…" : "<b>●</b> connected";
+      $("status").innerHTML = info.phase === "optimising" ? "<b>●</b> optimising…" : "<b>●</b> connected";
     }
     if (key !== cloudKey && await load(piece?.id ?? null)) {
       cloudKey = key;
@@ -568,7 +552,7 @@ async function poll() {
         if (!(await loadMesh(kind))) continue;
         shape.version = info[kind];
         reloaded = true;
-        if (kind === "mesh" && !livePreview) { $("show").value = "mesh"; showWhich(); }
+        if (kind === "mesh") { $("show").value = "mesh"; showWhich(); }
       } else if (!info[kind] && shape.obj) {
         dropShape(kind); shape.version = null;
         if ($("show").value === kind) $("show").value = "cloud";

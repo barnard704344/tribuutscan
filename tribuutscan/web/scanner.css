@@ -53,9 +53,9 @@ main { max-width: 2048px; margin: auto; padding: 16px 24px 24px; }
 .preview-fps { color: var(--muted); }
 .panel-title select { font-size: 14px; max-width: 150px; }
 .preview-surface { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #070e17; }
-.preview-surface canvas, .preview-surface iframe { position: absolute; inset: 0; width: 100%; height: 100%; display: block; border: 0; }
+.preview-surface canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; border: 0; }
 .preview-surface canvas { object-fit: contain; touch-action: manipulation; }
-.camera-panel figure { margin: 0; }
+.depth { margin: 0; }
 .image-label { position: absolute; top: 10px; left: 10px; background: #0b121dcc; color: #d6e6f5; font-size: 12px; font-weight: 650; letter-spacing: 1.5px; padding: 4px 7px; border-radius: 4px; pointer-events: none; }
 .image-label small { font: 12px system-ui; color: #b3c9dd; letter-spacing: 0; }
 .camera-footer { padding: 12px 14px; display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 13px; color: var(--muted); }
@@ -65,6 +65,11 @@ main { max-width: 2048px; margin: auto; padding: 16px 24px 24px; }
 .telemetry strong { font-weight: 550; overflow-wrap: anywhere; }
 .scan-hint { padding: 12px 14px; color: #ffdaa0; font-size: 14px; border-top: 1px solid var(--line); margin: 0; }
 .coverage { padding: 10px 14px; font-size: 13px; }
+.inspection-tools { padding: 10px 14px; font-size: 13px; color: var(--muted); }
+.inspection-tools > div { display: flex; gap: 8px; margin-top: 8px; }
+.inspection-tools button { font-size: 13px; }
+#coverage-view[data-inspecting=true] { touch-action: none; cursor: grab; }
+#coverage-view[data-inspecting=true]:active { cursor: grabbing; }
 #reference-panel { padding: 12px 14px; }
 #reference { width: 100%; max-width: 256px; display: block; margin-top: 8px; }
 

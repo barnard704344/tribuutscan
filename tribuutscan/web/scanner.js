@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 let state = null, pending = false, paired = false, stale = true;
 let lastReceived = 0, lastDistance = null;
+let inspection=null, inspectionEpoch=0;
 const titles = {idle:'Ready',counting:'Starting…',scanning:'Scanning',pausing:'Pausing…',paused:'Paused for inspection',resuming:'Resuming…',saving:'Saving…',optimising:'Optimising…',meshing:'Building mesh…',cancelling:'Cancelling…',disconnected:'Scanner disconnected'};
 async function json(url, data) {
   const response = await fetch(url, {method:data === undefined ? 'GET' : 'POST',
@@ -80,18 +81,26 @@ function renderDistance(reading, connected) {
 function render(next) {
   if(state && state.instance===next.instance && next.revision < state.revision)return;
   if(state && state.instance!==next.instance)lastDistance=null;
+  const enteredPause=next.phase==='paused'&&(state?.phase!=='paused'||state?.instance!==next.instance);
   state=next; lastReceived=Date.now(); stale=false; paired=true;
+  const inspect=state.phase==='paused';
+  const mainPane=$(inspect?'coverage-pane':'depth-pane'), sidePane=$(inspect?'depth-pane':'coverage-pane');
+  if(mainPane.parentElement!==$('main-view'))$('main-view').append(mainPane);
+  if(sidePane.parentElement!==$('side-view'))$('side-view').append(sidePane);
+  $('main-title').textContent=inspect?'Coverage · Paused':'Camera views';
+  $('side-title').textContent=inspect?'Live depth':'Coverage';
+  $('inspection-tools').hidden=!inspect;
+  if(enteredPause)loadPausedInspection();
+  else if(!inspect&&inspection)clearInspection();
   $('pairing').hidden=true; $('workspace').hidden=false; $('share').hidden=false;
-  const modelKey=state.selected || 'live';
-  if($('model').dataset.source!==modelKey) {
-    $('model').dataset.source=modelKey;
-    $('model').src=state.selected?'/model/?embed=1':'/model/?embed=1&live=1';
-    $('model-link').href=state.selected?'/model/':'/model/?live=1';
-  }
   $('demo').hidden=!state.demo;
   $('connection').textContent=state.demo?'Demo preview':state.connected?'Connected to host':'Host connected · scanner offline';
   $('phase').textContent=titles[state.phase] || state.phase;
   $('notice').textContent=state.processing?'Processing saved scan on the host…':state.message || 'Ready. Aim at your object, then start a scan.';
+  if(state.restarting)$('notice').textContent='Restarting scanner host… This page will reconnect automatically.';
+  $('restart-hint').textContent=state.restart_supported===true
+    ?'Available after scans, recordings and processing finish. Paired browsers reconnect automatically.'
+    :'This older host needs one manual restart to install the in-app restart control.';
   $('subject-hint').textContent=state.settings.scene_mode==='free'
     ?'No base detection: the face or other broad surfaces will not be removed as a tabletop.'
     :'Detects a support surface. Use Head / free object for a person or an object held in the air.';
@@ -99,7 +108,9 @@ function render(next) {
   renderDistance(state.distance_gauge,state.connected);
   $('scan-hint').textContent=[state.progress?.hint,state.progress?.unjoined].filter(Boolean).join(' ');
   $('scan-hint').hidden=!state.progress;
-  $('coverage').textContent=state.coverage || ''; $('coverage').hidden=!state.coverage;
+  $('coverage').textContent=state.coverage_kind==='flat'?(state.coverage || '')
+    :'Restart the scanner app on the host to load the flat coverage display. Finish and save your current scan first.';
+  $('coverage').hidden=!$('coverage').textContent;
   $('reference-panel').hidden=!state.reference;
   for (const id of ['capture','tracking','geometry']) $(id).textContent=state.progress?.[id] || (state.phase==='paused'?'Paused':'—');
   for (const id of ['depth','colour','ir']) $(id+'-fps').textContent=state.streams[id]?`${state.streams[id].fps} fps`:'';
@@ -168,6 +179,94 @@ function imageCoordinates(canvas,clientX,clientY) {
   const y=(clientY-bounds.top-(bounds.height-height)/2)/height;
   return x>=0&&x<=1&&y>=0&&y<=1?{x,y}:null;
 }
+
+function clearInspection() {
+  inspectionEpoch++;
+  inspection?.controller.abort();inspection=null;
+  $('coverage-view').dataset.inspecting='false';
+}
+async function loadPausedInspection() {
+  clearInspection();
+  inspection={epoch:inspectionEpoch,instance:state.instance,controller:new AbortController(),
+    ready:false,loading:false,dirty:false,yaw:0,pitch:0,zoom:1,pointers:new Map()};
+  $('inspection-status').textContent='Loading paused coverage…';
+  $('inspection-retry').hidden=true;
+  for(const id of ['inspection-in','inspection-out','inspection-reset'])$(id).disabled=true;
+  if(!state.coverage_rotation){
+    $('inspection-status').textContent='Restart the scanner host to enable moving paused coverage.';
+    return;
+  }
+  await drawPausedInspection();
+}
+async function drawPausedInspection() {
+  const item=inspection;
+  if(!item||state?.phase!=='paused')return;
+  item.dirty=true;
+  if(item.loading)return;
+  item.loading=true;
+  const current=()=>inspection===item&&state?.phase==='paused'&&state.instance===item.instance;
+  try {
+    while(current()&&item.dirty) {
+      item.dirty=false;
+      const query=new URLSearchParams({yaw:String(item.yaw),pitch:String(item.pitch),zoom:String(item.zoom)});
+      const timer=setTimeout(()=>item.controller.abort(),20000);
+      let bitmap;
+      try {
+        const response=await fetch('/model/coverage.png?'+query,{signal:item.controller.signal,cache:'no-store'});
+        if(!response.ok)throw Error('Could not render paused coverage. Try loading it again.');
+        bitmap=await createImageBitmap(await response.blob());
+      } finally {if(timer!==undefined)clearTimeout(timer);}
+      if(!current()){bitmap.close();return;}
+      const canvas=$('coverage-view');
+      canvas.width=bitmap.width;canvas.height=bitmap.height;
+      canvas.getContext('2d').drawImage(bitmap,0,0);bitmap.close();
+      item.ready=true;
+      canvas.dataset.inspecting='true';
+      $('inspection-status').textContent='Paused coverage · Drag to turn the scan · Scroll or pinch to zoom';
+      for(const id of ['inspection-in','inspection-out','inspection-reset'])$(id).disabled=false;
+    }
+  } catch(error) {
+    if(current()){
+      item.dirty=false;
+      $('inspection-status').textContent=item.controller.signal.aborted?'Loading timed out. Try again.':error.message;
+      $('inspection-retry').hidden=false;
+    }
+  } finally {item.loading=false;}
+}
+function zoomInspection(factor) {
+  if(!inspection?.ready||state?.phase!=='paused')return;
+  inspection.zoom=Math.max(.4,Math.min(6,inspection.zoom*factor));drawPausedInspection();
+}
+$('inspection-in').onclick=()=>zoomInspection(1.2);
+$('inspection-out').onclick=()=>zoomInspection(1/1.2);
+$('inspection-reset').onclick=()=>{
+  if(!inspection?.ready)return;
+  Object.assign(inspection,{yaw:0,pitch:0,zoom:1});drawPausedInspection();
+};
+$('inspection-retry').onclick=()=>{if(state?.phase==='paused')loadPausedInspection();};
+$('coverage-view').addEventListener('pointerdown',event=>{
+  if(state?.phase!=='paused'||!inspection?.ready)return;
+  inspection.pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  event.currentTarget.setPointerCapture(event.pointerId);
+});
+$('coverage-view').addEventListener('pointermove',event=>{
+  if(!inspection?.ready||!inspection.pointers.has(event.pointerId))return;
+  const old=inspection.pointers.get(event.pointerId),others=[...inspection.pointers.entries()].filter(([id])=>id!==event.pointerId);
+  inspection.pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  if(others.length){
+    const other=others[0][1],before=Math.hypot(old.x-other.x,old.y-other.y),after=Math.hypot(event.clientX-other.x,event.clientY-other.y);
+    if(before>2)zoomInspection(after/before);
+  } else {
+    const yaw=inspection.yaw+(event.clientX-old.x)*.012;
+    inspection.yaw=Math.atan2(Math.sin(yaw),Math.cos(yaw));
+    inspection.pitch=Math.max(-Math.PI/2,Math.min(Math.PI/2,inspection.pitch+(event.clientY-old.y)*.012));
+    drawPausedInspection();
+  }
+});
+for(const name of ['pointerup','pointercancel','lostpointercapture'])$('coverage-view').addEventListener(name,event=>inspection?.pointers.delete(event.pointerId));
+$('coverage-view').addEventListener('wheel',event=>{
+  if(state?.phase==='paused'&&inspection?.ready){event.preventDefault();zoomInspection(event.deltaY<0?1.12:1/1.12);}
+},{passive:false});
 for(const kind of ['depth','colour']) $(kind).addEventListener('click',event=>{
   const point=imageCoordinates(event.currentTarget,event.clientX,event.clientY);
   if(point)command('pick',{kind,...point});
@@ -182,12 +281,13 @@ for(const kind of ['depth','colour']) $(kind).addEventListener('click',event=>{
 function updateDisabled() {
   if(!state)return;
   const phase=state.phase, active=['scanning','pausing','paused','resuming'].includes(phase);
-  const busy=pending||stale||state.processing||state.meshing_recording;
+  const busy=pending||stale||state.processing||state.meshing_recording||state.restarting;
   const connected=state.connected&&!state.demo;
   for(const el of document.querySelectorAll('[data-action]')) {
     const action=el.dataset.action;
     let enabled=false;
     if(action==='live')enabled=!state.processing;
+    else if(action==='restart')enabled=state.restart_supported===true&&['idle','disconnected'].includes(phase)&&!state.recording;
     else if(action==='open')enabled=!!state.scans.length&&['idle','disconnected'].includes(phase)&&!state.recording;
     else if(action==='retry')enabled=!state.demo;
     else if(action==='stop')enabled=active;
@@ -224,19 +324,26 @@ function clearCanvas(kind) {
   const canvas=$(kind), context=canvas.getContext('2d');
   context.fillStyle='#070e17';context.fillRect(0,0,canvas.width,canvas.height);
   context.fillStyle='#a4b6ca';context.font='14px system-ui';context.textAlign='center';
-  context.fillText('Waiting for scanner',canvas.width/2,canvas.height/2);
+  const message=kind==='coverage-view'&&state?.connected
+    ?(state.coverage_preview!==true?'Scanner host restart needed'
+      :['scanning','pausing','resuming'].includes(state.phase)?'Waiting for coverage':'Coverage is shown during a scan')
+    :'Waiting for scanner';
+  context.fillText(message,canvas.width/2,canvas.height/2);
 }
 async function previews() {
-  await Promise.all(['depth','colour','ir','reference'].map(async kind=>{
+  await Promise.all(['depth','colour','ir','coverage-view','reference'].map(async kind=>{
+    if(kind==='coverage-view'&&state?.phase==='paused'&&inspection?.ready)return;
     if(!paired||document.hidden||!state?.connected||Date.now()-lastReceived>5000) {
       clearCanvas(kind);return;
     }
     if(kind==='reference'&&!state.reference)return;
+    if(kind==='coverage-view'&&state.coverage_preview!==true){clearCanvas(kind);return;}
     try {
       const response=await fetch(`/preview/${kind}.png`,{signal:AbortSignal.timeout(5000)});
       if(!response.ok||response.status===204){clearCanvas(kind);return;}
       const blob=await response.blob();
       const bitmap=await createImageBitmap(blob);
+      if(kind==='coverage-view'&&state?.phase==='paused'&&inspection?.ready){bitmap.close();return;}
       const canvas=$(kind);
       if(canvas.width!==bitmap.width||canvas.height!==bitmap.height){canvas.width=bitmap.width;canvas.height=bitmap.height;}
       canvas.getContext('2d').drawImage(bitmap,0,0);bitmap.close();

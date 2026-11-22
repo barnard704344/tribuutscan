@@ -301,9 +301,13 @@ def render_ir(cap, buf, width=SIDE_W):
     return ppm(np.repeat(g[..., None], 3, axis=2)), stats
 
 
-def render_depth(cap, buf, width=DEPTH_W):
+def render_depth(cap, buf, width=DEPTH_W, *, preview=None):
     now = time.monotonic()
     view_state = scan_view.copy()
+    if preview is not None:
+        view_state['preview'] = preview
+        if preview == COVERAGE:
+            view_state['return_guide'] = False
     scanning = view_state["active"]
     returning = scanning and view_state["return_guide"]
     coverage = scanning and not returning and view_state["preview"] == COVERAGE
@@ -1589,7 +1593,7 @@ class Controller:
                         accepted = raw if cue.get("reference_ok", True) else None
                         self.tracked_reference.observe(cue.get("piece", 1), tracking, accepted,
                                                        (cap.width, cap.height, cap.bytesperline), view)
-                if self.scan_state == "scanning" and cue is not None:
+                if self.scan_state in ("scanning", "pausing") and cue is not None:
                     live["done"].append(time.monotonic())  # (the Status box: frames back a second)
                     live["last"] = (merged, frames, points, tracking)
                     scan_view.update(mask=view, t=time.monotonic(), lost=not tracking,

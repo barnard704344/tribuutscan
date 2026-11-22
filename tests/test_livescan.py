@@ -3,6 +3,37 @@ import numpy as np
 from tribuutscan import livescan
 
 
+def test_paused_camera_uses_existing_coverage_codes_and_does_not_change_tracking_pose():
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+    source=livescan.LiveSource();source.phase='paused'
+    codes=np.array([[0,1,80,200],[0,1,80,200]],np.uint8)
+    reference=object()
+    tracker=NS(ref=reference)
+    def ghost(pose,base,weight):
+        tracker.ref=pose.copy()
+        return codes
+    tracker.ghost=Mock(side_effect=ghost)
+    source.scanner=NS(gpu=tracker,pose=np.eye(4),gpu_base=lambda:None,preview_weight=lambda:7.5)
+    source.paused_points=(np.array([[-10.,0.,240.],[10.,0.,260.]]),None,None)
+    front=source.coverage_image()
+    assert front.startswith(b'\x89PNG')
+    assert np.allclose(tracker.ghost.call_args.args[0],np.eye(4))
+    rotated=source.coverage_image(.5,.2,1.5)
+    pose=tracker.ghost.call_args.args[0]
+    assert not np.allclose(pose,np.eye(4))
+    assert np.allclose(pose[:3,:3].T@pose[:3,:3],np.eye(3))
+    assert tracker.ghost.call_args.args[1:] == (None,7.5)
+    assert np.array_equal(source.scanner.pose,np.eye(4))
+    assert tracker.ref is reference
+    assert np.array_equal(codes,np.array([[0,1,80,200],[0,1,80,200]],np.uint8))
+    assert rotated != front  # sensor-only pink pixels do not rotate with the captured surface
+    source.phase='scanning'
+    try:source.coverage_image(.5,.2,1.5)
+    except ValueError as error:assert 'Pause' in str(error)
+    else:raise AssertionError('rotation was allowed during capture')
+
+
 def test_view_mask_marks_object_and_base_at_one_eighth():
     pix = np.array([[0, 0], [100, 50], [1279, 799], [640, 400]])
     obj = np.array([False, True, False, True])

@@ -19,6 +19,8 @@ import secrets
 import signal
 import socket
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 from urllib.error import HTTPError, URLError
@@ -38,12 +40,68 @@ urlopen = build_opener(ProxyHandler({})).open
 ACTIONS = {'optimise', 'small', 'medium', 'large', 'mesh', 'base-off', 'base-on', 'crop', 'crop-off'}
 SETTINGS = {'scene_mode': ('still', 'free'), 'preset': ('small', 'medium', 'large'), 'keep_raw': bool, 'remove_base': bool,
             'mesh_after': bool, 'countdown': bool, 'record_rate': tuple(core.RECORD_RATES),
-            'preview_mode': (core.LIVE_DEPTH, core.COVERAGE), 'hold_depth': bool,
+            'hold_depth': bool,
             'find_markers': bool, 'imu_wanted': bool}
 
 
 class Conflict(ValueError):
     """A stale or unavailable command; the client must refresh before trying again."""
+
+
+def restore_subject(app):
+    """Restore the user's chosen subject after a restart or scanner reconnect."""
+    try:
+        settings = json.loads((frames.CAPTURES / '.webapp-settings.json').read_text())
+        subject = settings.get('scene_mode') if isinstance(settings, dict) else None
+        if subject in ('still', 'free'):
+            app.scene_mode.set(subject)
+    except (OSError, ValueError):
+        pass
+
+
+def save_subject(subject):
+    if subject not in ('still', 'free'):
+        raise ValueError('Invalid subject mode')
+    frames.CAPTURES.mkdir(exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w', prefix='.webapp-settings-', dir=frames.CAPTURES,
+                                     delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            json.dump({'scene_mode': subject}, stream)
+            stream.close()
+            os.replace(temporary, frames.CAPTURES / '.webapp-settings.json')
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def workspace_depth_renderer(phase=lambda: None):
+    """Keep live depth separate from the flat, camera-aligned coverage display."""
+    image, coverage_stats, rendered = None, {}, -float('inf')
+
+    def render(cap, buf):
+        nonlocal image, coverage_stats, rendered
+        depth, stats = core.render_depth(cap, buf, preview=core.LIVE_DEPTH)
+        now = time.monotonic()
+        view = core.scan_view.copy()
+        paused = phase() == 'paused'
+        if not view['active'] and not paused:
+            image, coverage_stats, rendered = None, {}, -float('inf')
+        elif (not paused and view.get('model') is not None
+                and 0 <= now-view.get('t', 0) < 1 and now-rendered >= 1/core.SCAN_SIDE_FPS):
+            codes = view['model'][0]
+            # These are already 2D worker classifications. In particular, lost
+            # tracking supplies a fresh map of the scan from the last good pose.
+            # Never gate it on current sensor depth or an accepted camera pose.
+            rgb = core.fit(np.zeros((*codes.shape, 3), np.uint8), core.DEPTH_W)
+            core.paint_model(rgb, codes)
+            image = core.ppm(rgb)
+            counts = core.visible_coverage(codes, None if view['lost'] else view.get('mask'))
+            coverage_stats = {'coverage': core.coverage_caption(counts), 'updated_at': now}
+            rendered = now
+        stats.update(coverage_image=image, coverage_stats=coverage_stats)
+        return depth, stats
+
+    return render
 
 
 def scan_directory(name):
@@ -149,6 +207,7 @@ class Service:
         self.controller = None
         self.commands = queue.Queue(maxsize=32)
         self.stop = threading.Event()
+        self.restart_requested = False
         self.lock = threading.Lock()
         self.snapshot = {}
         self.previews = {}
@@ -190,6 +249,8 @@ class Service:
                         app = core.Controller()
                         self.controller = app  # make partial startup available to shutdown cleanup
                         app.worker_token = self.backend_token
+                        app.depth.render = workspace_depth_renderer(lambda: app.scan_state)
+                        restore_subject(app)
                         app.initialise_controls()
                         app.start()
                         self.error = ''
@@ -263,7 +324,8 @@ class Service:
                      message=self.error, settings={}, controls=[], scans=scans,
                      selected=self.model.file.ply.parent.name if self.model.file else None,
                      processing=self.processing is not None, distance='Waiting for scanner',
-                     streams={}, progress=None, messages=[], can_separate=False)
+                     streams={}, progress=None, messages=[], can_separate=False, coverage_preview=True, coverage_rotation=True,
+                     restart_supported=True, restarting=self.restart_requested, coverage_kind='flat')
         state['distance_gauge'] = core.distance_reading(None, {}, calib.CAMERA.mode,
                                                         calib.CAMERA.law_estimate, time.monotonic())
         previews = {}
@@ -292,8 +354,18 @@ class Service:
             if reference:
                 previews['reference'] = reference[0]
             state['reference'] = bool(reference)
-            state['coverage'] = core.coverage_status(app.depth.stats, time.monotonic(), phase, blocked,
-                                                     core.scan_view['lost'], bool(reference)) if app.preview_mode.get() == core.COVERAGE else ''
+            image = app.depth.stats.get('coverage_image')
+            if image:
+                previews['coverage-view'] = image
+            if phase == 'paused':
+                state['coverage'] = 'Paused · Last coverage view' if image else 'Paused · No coverage frame captured yet'
+            elif core.scan_view['lost']:
+                state['coverage'] = ('Tracking lost · New geometry on hold · Coverage from last tracked pose'
+                                     if image else 'Tracking lost · Waiting for coverage')
+            elif app.depth.stats.get('coverage_stats'):
+                state['coverage'] = app.depth.stats['coverage_stats'].get('coverage', 'Waiting for coverage')
+            else:
+                state['coverage'] = 'Coverage is shown during a scan'
             if self.model.file is None:
                 self.model_url = app.live['url'] or self.empty_url
         with self.lock:
@@ -327,11 +399,21 @@ class Service:
             raise Conflict('Command is still busy; refresh its status before trying again')
 
     def dispatch(self, data):
+        if self.restart_requested:
+            raise Conflict('Scanner host is restarting')
         if data.get('instance') != self.instance:
             raise Conflict('The scanner service restarted. Refresh its status before trying again.')
         if type(data.get('revision')) is not int or data['revision'] != self.revision:
             raise Conflict('The scanner changed. Review its current status and try again.')
         action = data.get('action')
+        if action == 'restart':
+            app = self.controller
+            if self.processing or (app and (app.scan_state not in ('idle', 'disconnected')
+                    or app.rec['recorder'] is not None or app.job['process'] is not None
+                    or app.switching['busy'])):
+                raise Conflict('Finish and save the scan, recording and processing before restarting the host')
+            self.restart_requested = True
+            return
         app = self.controller
         if action == 'open':
             if app and (app.scan_state != 'idle' or app.rec['recorder'] or app.job['process']):
@@ -372,9 +454,11 @@ class Service:
                     raise Conflict('Change capture settings before starting')
                 if name == 'imu_wanted' and not available:
                     raise Conflict('Wait for the scanner to reconnect')
+            if 'scene_mode' in updates:
+                save_subject(updates['scene_mode'])
             for name, value in updates.items():
                 getattr(app, name).set(value)
-                callback = {'preview_mode': lambda: app.choose_depth_preview(value), 'hold_depth': app.toggle_hold,
+                callback = {'hold_depth': app.toggle_hold,
                             'find_markers': app.toggle_markers, 'imu_wanted': app.toggle_imu}.get(name)
                 if callback:
                     callback()
@@ -536,7 +620,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(json.dumps(self.service.state(), allow_nan=False).encode())
         if path.startswith('/preview/'):
             name = path.removeprefix('/preview/').removesuffix('.png')
-            if path != f'/preview/{name}.png' or name not in ('depth', 'colour', 'ir', 'reference'):
+            if path != f'/preview/{name}.png' or name not in ('depth', 'colour', 'ir', 'reference', 'coverage-view'):
                 return self.reply(b'', status=404)
             image = self.service.preview(name)
             return self.reply(image or b'', 'image/png', status=200 if image else 204)
@@ -582,7 +666,11 @@ class Handler(BaseHTTPRequestHandler):
             if not self.paired():
                 return self.json({'error': 'Pair this browser first'}, 401)
             if path == '/api/command':
-                return self.json(self.service.request(data))
+                result = self.service.request(data)
+                self.json(result)
+                if data.get('action') == 'restart':
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
             if path.startswith('/model/process/'):
                 operation = path.rsplit('/', 1)[-1]
                 # Existing model crop UI puts its box in the query string.
@@ -604,7 +692,7 @@ class Handler(BaseHTTPRequestHandler):
     def proxy_model(self):
         relative = self.path[len('/model/'):]
         parsed = urlsplit(relative)
-        allowed = {'', 'index.html', 'info.json', 'cloud.bin', 'cloud.ply', 'mesh.bin', 'mesh.ply',
+        allowed = {'', 'index.html', 'info.json', 'coverage.png', 'cloud.bin', 'cloud.ply', 'mesh.bin', 'mesh.ply',
                    'mesh.stl', 'solid.bin', 'solid.ply', 'three.module.min.js', 'OrbitControls.js'}
         if parsed.path not in allowed:
             return self.json({'error': 'Not found'}, 404)
@@ -670,6 +758,37 @@ def save_browser_session(port, token, host='localhost'):
         json.dump(dict(port=port, token=token, host=host), stream)
 
 
+def host_credentials(port):
+    """Consume credentials handed across an in-place restart, before spawning workers."""
+    carried = os.environ.pop('_TRIBUUTSCAN_RESTART', '')
+    if carried:
+        try:
+            data = json.loads(carried)
+            token, session = data['token'], data['session']
+            if (data['pid'] == os.getpid() and data['port'] == port
+                    and isinstance(token, str) and len(token) == 32
+                    and all(c.isascii() and (c.isalnum() or c in '-_') for c in token)
+                    and isinstance(session, str) and len(session) == 64
+                    and all(c in '0123456789abcdef' for c in session)):
+                return token, session
+        except (ValueError, KeyError, TypeError):
+            pass
+    return secrets.token_urlsafe(24), hashlib.sha256(secrets.token_bytes(32)).hexdigest()
+
+
+def restart_host(args, port, token, session):
+    """Replace the stopped host, preserving pairing and listen options without opening a browser."""
+    environment = dict(os.environ)
+    environment['_TRIBUUTSCAN_RESTART'] = json.dumps(dict(pid=os.getpid(), port=port, token=token, session=session))
+    command = [sys.executable, '-m', 'tribuutscan.webapp', '--host', args.host,
+               '--port', str(port), '--no-browser']
+    if args.demo:
+        command.append('--demo')
+    if args.force_cpu:
+        command.append('--force-cpu')
+    os.execve(sys.executable, command, environment)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='triBUUTSCAN local scanner server and remote browser interface')
     parser.add_argument('--host', default='0.0.0.0', help='listen address (default: all network interfaces)')
@@ -697,9 +816,8 @@ def main(argv=None):
             service.model_server.server_close()
             raise
         server.service = service
-        server.token = secrets.token_urlsafe(24)
-        server.session = hashlib.sha256(secrets.token_bytes(32)).hexdigest()
         port = server.server_address[1]
+        server.token, server.session = host_credentials(port)
         address = server.server_address[0]
         local_host = 'localhost' if address in ('0.0.0.0', '127.0.0.1') else address
         local = f'http://{local_host}:{port}/#token={server.token}'
@@ -738,6 +856,8 @@ def main(argv=None):
             print('Closing scanner service; finishing accepted work…', flush=True)
             service.close()
             core.LOCK.with_name('.webapp.json').unlink(missing_ok=True)
+    if service.restart_requested:
+        restart_host(args, port, server.token, server.session)
 
 
 if __name__ == '__main__':

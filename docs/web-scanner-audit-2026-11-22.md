@@ -79,3 +79,107 @@ not establish hardware GPU coverage in this environment.
   capture or measurement-accuracy trial was performed during this audit.
 - The running scanner service was left undisturbed. Restart the application after
   finishing any current scan to load these changes.
+
+## Follow-up: dedicated coverage pane
+
+The top-left 16:9 pane shows the original flat, camera-aligned depth coverage
+display, with Colour and IR below it. Live depth remains independent in the centre
+with its distance gauge. Pause holds the coverage image and moves that same canvas
+into the centre; depth moves left. Resume restores their positions.
+
+The mistakenly introduced accumulated 3D point-cloud renderer, shared web model
+state, orbit API, drag/zoom handlers, piece selector and view controls have been
+removed from the browser workspace. The live workspace uses neither a 3D iframe nor a
+sampled 3D projection during capture. The optional legacy desktop interface is unchanged. The
+separate processing/download page remains available for saved scans.
+
+Coverage is painted directly from the worker's existing 2D classification map,
+without a point-cloud projection or live-depth background. Updates continue when
+tracking is lost: the worker supplies its current map from the last tracked pose.
+Only Pause freezes the image. Previously the web renderer rejected all updates
+while tracking was lost, which could leave the first pink frame frozen even after
+more geometry had been accepted. Pausing also accepts worker replies still in
+flight before the paused acknowledgement. Status distinguishes an updating
+coverage display from new geometry, which remains on hold while tracking is lost.
+Missing classifications never substitute live depth. Stop/cancel clears coverage;
+the current distance still comes independently from fresh depth.
+
+Regression checks cover the flat renderer, current depth alongside held coverage,
+tracking loss, pause, reset, rejection/removal of the 3D API and controls, paired
+PNG access, and repeated browser pane moves. This follow-up does not change
+tracking or reconstruction thresholds.
+
+An already-running Python host must restart to expose the new coverage endpoint;
+refreshing the browser only reloads the files on disk. The workspace now checks
+the host's coverage capability and explains when a restart is required, rather
+than repeatedly requesting an unsupported endpoint and showing a waiting message.
+Save an active take before restarting the host.
+
+The workspace now also provides **Restart scanner host**. Both the browser and
+host reject restart during capture, countdown, pause, save, recording, processing
+or a camera transition. The command goes through the paired, same-origin,
+instance/revision-checked API. Once idle, the host closes its controller and HTTP
+servers, releases the checkout lock and replaces its Python process. It preserves
+listen options and pairing credentials for this restart only, so open browsers
+reconnect without re-pairing or opening another browser window. The one-shot
+credential handoff is consumed before workers start. Later manual starts generate
+fresh credentials as before.
+
+Restart tests cover rejection while busy and a full process replacement on a
+copied demo checkout with temporary captures, verifying a new service instance,
+the same pairing and port, and successful browser reconnection. The real scanner
+and captures are not used by that integration test.
+All 30 web/launcher checks and the scanner JavaScript checks passed after adding
+the capability check and restart control.
+
+The coverage image uses the centre view's depth resolution rather than stretching
+a small sidebar thumbnail. No new physical capture or rendered browser visual
+check was performed for this follow-up.
+
+## Subject-mode regression found during live diagnosis
+
+The earlier successful head takes recorded `mode: free`, while subsequent failed
+takes recorded `mode: still`. Restarting the web host recreated its controller
+with the table-mode default, discarding the user's subject selection. In the
+saved 20:13 take, 8,552 of 9,028 frames were lost to tracking and only 50 were
+merged; live diagnosis also showed geometry stopped while new camera frames
+continued arriving. This is separate from whether the coverage PNG refreshes.
+
+The web host now saves an explicitly selected subject in its ignored captures
+directory, with private permissions and an atomic replacement. It restores that
+choice before starting the controller on host restart or reconnect. Invalid
+preferences are ignored. Continue still restores the saved take's actual mode.
+The running host was set back to Head / free object for the user's head scan.
+Tests cover preference validation, private permissions, persistence through the
+settings command, and restoration before a replacement controller starts.
+
+The coverage-update fix passed 88 targeted web/controller/worker/launcher checks.
+The expanded colour regression additionally passed all 28 web checks: pink to
+amber to blue across worker updates, updates during tracking loss, and freezing
+only while paused. JavaScript checks and Python compilation also passed.
+
+
+## Follow-up: move coverage while paused
+
+Mouse/touch movement now changes the paused coverage renderer's camera. The
+existing coverage canvas stays in the centre and displays newly rendered PNGs
+with the volume's original classifications and weight threshold. No point-cloud
+snapshot, browser geometry projection, iframe or second viewport is involved.
+The previous snapshot-based inspection implementation and binary parser were
+removed. Live capture continues using its existing 2D coverage feed.
+
+The paired gateway forwards a bounded, validated camera request to the private
+scan worker. Rotation and zoom orbit about the captured subject in the last
+tracked camera's axes. The worker serialises rendering against capture and
+processing, requires the paused phase and preserves the scanner's pose/reference.
+Pixels representing only the original sensor frame are omitted after turning,
+because those pixels do not belong to the rotated volume. The existing coverage
+classification colours remain in use. GPU coverage is required, as for the live
+classification map; there is no fallback to a different point-cloud viewer.
+
+The browser keeps one request in flight, coalesces mouse movements to the latest
+angle, supports drag/pinch/wheel/zoom/reset and aborts pending requests on Resume.
+A late image cannot overwrite resumed live coverage. Tests cover the camera
+transform and unchanged tracking state, classification preservation, authenticated
+image access, query validation, coalescing, touch controls and Resume races.
+This host-side addition requires a host restart before it can be used.

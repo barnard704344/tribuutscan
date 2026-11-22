@@ -19,10 +19,19 @@ class Element {
   set value(value){this._value=value;}
   replaceChildren(...children){this.children=children;}
   addEventListener(name,callback){this.listeners[name]=callback;}
-  append(...children){this.children.push(...children);}
+  append(...children){for(const child of children){
+    if(child.parentElement)child.parentElement.children=child.parentElement.children.filter(e=>e!==child);
+    child.parentElement=this;this.children.push(child);
+  }}
   getContext(){return {fillRect(){},fillText(){},drawImage(){}};}
 }
-for(const [,tag,attrs] of html.matchAll(/<(\w+)([^>]*)>/g))new Element(tag,attrs);
+const stack=[];
+for(const [token,tag,attrs] of html.matchAll(/<\/?(\w+)([^>]*)>/g)) {
+  if(token.startsWith('</')){stack.pop();continue;}
+  const element=new Element(tag,attrs);
+  if(stack.length)stack.at(-1).append(element);
+  if(!['meta','link','input','br','hr','img'].includes(tag))stack.push(element);
+}
 const document={
   activeElement:null,hidden:false,addEventListener(){},querySelector(){return null;},
   getElementById(id){return elements.find(e=>e.id===id);},
@@ -33,15 +42,32 @@ const document={
   }
 };
 const context=vm.createContext({document,window:{addEventListener(){}},location:{origin:'http://host',pathname:'/'},
-  console,Date,JSON,URLSearchParams,Array,Number,setTimeout(){},fetch(){throw Error('Unexpected network request');}});
+  console,Date,JSON,URLSearchParams,Array,Number,AbortController,AbortSignal,setTimeout(){},fetch(){throw Error('Unexpected network request');}});
 let source=fs.readFileSync(new URL('scanner.js',root),'utf8');
 source=source.replace(/\(async\(\)=>\{[\s\S]*?\}\)\(\);/,'');
 new vm.Script(source).runInContext(context);
 function render(phase,extra={}) {
-  const state={instance:'test-host',revision:1,phase,connected:true,demo:false,settings:{},controls:[],scans:[],streams:{},messages:[],...extra};
+  const state={instance:'test-host',revision:1,phase,connected:true,demo:false,coverage_preview:true,coverage_rotation:true,coverage_kind:'flat',restart_supported:true,settings:{},controls:[],scans:[],streams:{},messages:[],...extra};
   context.fixture=state;vm.runInContext('render(fixture); pending=false; updateDisabled();',context);
 }
 const get=id=>document.getElementById(id);
+render('scanning');
+const coveragePane=get('coverage-pane'),depthPane=get('depth-pane'),coverageCanvas=get('coverage-view');
+assert.equal(coveragePane.parentElement,get('side-view'));
+assert.equal(depthPane.parentElement,get('main-view'));
+render('paused');
+assert.equal(coveragePane.parentElement,get('main-view'));
+assert.equal(depthPane.parentElement,get('side-view'));
+assert.equal(get('coverage-view'),coverageCanvas);
+assert.equal(get('main-title').textContent,'Coverage · Paused');
+render('paused');assert.equal(coveragePane.parentElement,get('main-view'));
+render('resuming');
+assert.equal(coveragePane.parentElement,get('side-view'));
+assert.equal(depthPane.parentElement,get('main-view'));
+assert.equal(get('main-title').textContent,'Camera views');
+render('idle');assert.equal(coveragePane.parentElement,get('side-view'));
+assert.equal(get('coverage-piece'),undefined);
+assert.equal(get('coverage-in'),undefined);
 render('idle');assert.equal(get('scan-main').disabled,false);assert.equal(get('scan-main').dataset.action,'start');
 render('scanning');assert.equal(get('scan-main').dataset.action,'stop');assert.equal(get('pause').disabled,false);assert.equal(get('cancel').disabled,false);
 render('paused');assert.equal(get('pause').dataset.action,'resume');assert.equal(get('scan-main').disabled,false);
@@ -50,8 +76,26 @@ render('counting');assert.equal(get('scan-main').dataset.action,'cancel');assert
 render('disconnected',{connected:false});assert.equal(get('scan-main').disabled,true);
 render('idle',{demo:true,connected:false});assert.equal(get('scan-main').disabled,true);
 render('idle',{processing:true});assert.equal(get('scan-main').disabled,true);
-render('idle',{selected:'one-scan',scans:['one-scan']});assert.equal(get('model').src,'/model/?embed=1');
-render('idle');assert.equal(get('model').src,'/model/?embed=1&live=1');
+render('idle',{selected:'one-scan',scans:['one-scan']});
+assert.equal(get('model'),undefined);
+assert.equal(get('coverage-view').tagName,'CANVAS');
+assert.ok(html.indexOf('id="coverage-view"')<html.indexOf('id="colour"'));
+assert.doesNotMatch(html,/<iframe|data-setting="preview_mode"/);
+render('scanning',{coverage_preview:undefined,coverage_kind:undefined});
+assert.match(get('coverage').textContent,/Restart the scanner app/);
+assert.equal(get('coverage').hidden,false);
+render('scanning',{coverage:'Visible object coverage'});
+assert.equal(get('coverage').textContent,'Visible object coverage');
+render('idle');
+assert.equal(get('restart-host').disabled,false);
+for(const phase of ['scanning','paused','saving','optimising','meshing']) {
+  render(phase);assert.equal(get('restart-host').disabled,true);
+}
+render('idle',{recording:true});assert.equal(get('restart-host').disabled,true);
+render('idle',{processing:true});assert.equal(get('restart-host').disabled,true);
+render('idle',{restart_supported:undefined});assert.equal(get('restart-host').disabled,true);
+render('idle',{restarting:true});assert.equal(get('scan-main').disabled,true);
+render('idle');
 vm.runInContext('stale=true;updateDisabled()',context);assert.equal(get('scan-main').disabled,true);
 assert.equal(typeof get('pair-form').listeners.submit,'function');
 const reading={cm:24,zone:1,min_cm:12,max_cm:36,near_cm:18,far_cm:30,estimated:false,text:'Centre: ~24.0 cm · Hold this distance'};
@@ -86,3 +130,60 @@ assert.equal(vm.runInContext('imageCoordinates(cameraFixture,335,100)',context),
 point=vm.runInContext('imageCoordinates(cameraFixture,36,10)',context);
 assert.equal(point.x,0);assert.equal(point.y,0);
 console.log('Scanner UI, distance, subject-mode and preview-coordinate checks passed');
+
+render('paused');
+const requested=[];
+context.fetch=url=>{requested.push(url);throw Error('fixture offline');};
+context.inspectionFixture={controller:new AbortController(),ready:true,loading:false,dirty:false,
+  instance:'test-host',yaw:0,pitch:0,zoom:1,pointers:new Map()};
+vm.runInContext('inspection=inspectionFixture',context);
+const coverage=get('coverage-view');
+coverage.listeners.pointerdown({pointerId:1,clientX:10,clientY:10,currentTarget:{setPointerCapture(){}}});
+coverage.listeners.pointermove({pointerId:1,clientX:40,clientY:20});
+assert.ok(vm.runInContext('inspection.yaw>0 && inspection.pitch>0',context));
+assert.ok(requested.at(-1).startsWith('/model/coverage.png?'));
+get('inspection-in').onclick();assert.ok(vm.runInContext('inspection.zoom>1',context));
+get('inspection-reset').onclick();assert.equal(vm.runInContext('inspection.yaw',context),0);
+coverage.listeners.pointerup({pointerId:1});
+coverage.listeners.pointerdown({pointerId:1,clientX:0,clientY:0,currentTarget:{setPointerCapture(){}}});
+coverage.listeners.pointerdown({pointerId:2,clientX:10,clientY:0,currentTarget:{setPointerCapture(){}}});
+coverage.listeners.pointermove({pointerId:2,clientX:20,clientY:0});
+assert.equal(vm.runInContext('inspection.zoom',context),2);
+requested.length=0;
+await vm.runInContext('previews()',context);
+assert.ok(!requested.includes('/preview/coverage-view.png'));
+render('resuming');assert.equal(vm.runInContext('inspection',context),null);
+assert.equal(get('inspection-tools').hidden,true);
+assert.equal(coveragePane.parentElement,get('side-view'));
+assert.doesNotMatch(source,/inspectionSample|projectInspection|cloud\.bin|new DataView/);
+
+let releaseImage,imageRequested;
+const arrived=new Promise(resolve=>{imageRequested=resolve;});
+const image=new Promise(resolve=>{releaseImage=resolve;});
+const rotationRequests=[];
+context.fetch=async url=>{
+  rotationRequests.push(url);
+  return {ok:true,blob:()=>{if(rotationRequests.length===1){imageRequested();return image;}return Promise.resolve({});}};
+};
+let painted=0;
+context.createImageBitmap=async()=>({width:552,height:345,close(){painted++;}});
+const loading=vm.runInContext('state.phase="paused";loadPausedInspection()',context);
+await arrived;
+vm.runInContext('inspection.yaw=.2;drawPausedInspection();inspection.yaw=.6;drawPausedInspection()',context);
+releaseImage({});await loading;
+assert.equal(rotationRequests.length,2);
+assert.ok(rotationRequests[1].includes('yaw=0.6'));
+assert.equal(get('coverage-view').dataset.inspecting,'true');
+assert.equal(get('inspection-in').disabled,false);
+render('resuming');
+
+let releaseLate,lateRequested;
+const lateArrived=new Promise(resolve=>{lateRequested=resolve;});
+const lateImage=new Promise(resolve=>{releaseLate=resolve;});
+context.fetch=async()=>({ok:true,blob:()=>{lateRequested();return lateImage;}});
+const lateLoading=vm.runInContext('state.phase="paused";loadPausedInspection()',context);
+await lateArrived;
+render('resuming');releaseLate({});await lateLoading;
+assert.equal(vm.runInContext('inspection',context),null);
+assert.equal(get('coverage-view').dataset.inspecting,'false');
+console.log('Coverage camera rotation, touch zoom, coalesced requests and resume checks passed');

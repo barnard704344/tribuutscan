@@ -1389,6 +1389,7 @@ class Scanner:
             self.gpu_reset_due = False
         if self.gpu is None:
             from . import gputrack
+            self.log('Preparing GPU tracking…')
             to_world = scene_transform(self.pose)
             self.gpu = gputrack.Tracker(CAMERA, frame_shape(frame)[::-1],
                                         xyz.mean(0) @ to_world[:3, :3].T + to_world[:3, 3], self.gpu_kind)
