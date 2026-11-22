@@ -65,6 +65,22 @@
   .buttons button.main { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
   @media (max-width: 600px) { aside { left: 12px; right: 12px; width: auto; top: auto; bottom: 12px; }
     #cropbox { top: 52px; bottom: auto; } }
+  body.embedded header .brand, body.embedded header .menu { display: none; }
+  body.embedded aside { top: auto; bottom: 10px; right: 10px; left: auto; width: 220px; padding: 8px 12px; }
+  body.embedded aside > *:not(#piece-picker) { display: none !important; }
+  body.embedded aside:not(:has(#piece-picker:not([hidden]))) { display: none; }
+  body.embedded #piece-note { display: none; }
+  body.embedded #empty { pointer-events: none; }
+  @media (max-width: 600px) {
+    header { height: auto; min-height: 44px; flex-wrap: wrap; padding: 6px 8px; }
+    header .brand { width: 100%; margin: 0; }
+    header #status { font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+    .menu > button { min-height: 38px; padding: 6px 8px; }
+    .menu:focus-within ul { display: block; }
+    aside { max-height: 42vh; overflow-y: auto; }
+    #cropbox { top: 110px; bottom: auto; max-height: calc(100vh - 130px); }
+    body.embedded header { height: 38px; min-height: 38px; }
+  }
 </style>
 <script type="importmap">{ "imports": { "three": "./three.module.min.js" } }</script>
 </head>
@@ -74,7 +90,7 @@
 <header>
   <div class="brand">tri<span>BUUT</span>SCAN</div>
   <div class="menu"><button>Scan</button><ul>
-    <li class="later">Start / stop scan<small>next: live</small></li>
+    <li id="scanner-controls">Scanner controls<small>open the capture workspace</small></li>
   </ul></div>
   <div class="menu"><button>Process</button><ul>
     <li data-action="optimise">Optimise again<small>loops + pose graph</small></li>
@@ -169,9 +185,10 @@
 import * as THREE from "three";
 import { OrbitControls } from "./OrbitControls.js";
 
+document.body.classList.toggle("embedded", new URLSearchParams(location.search).get("embed") === "1");
 const canvas = document.getElementById("view");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x15171a);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 50);
@@ -470,8 +487,17 @@ async function runAction(action, label, query = "") {  // a Process action; its 
   $("status").textContent = `working: ${label}…`;
   messageAt = Date.now() + 600000;  // until the answer comes
   try {
-    const r = await (await fetch(`process/${action}${query}`, { method: "POST" })).json();
-    $("status").textContent = r.message;
+    const remote = location.pathname.startsWith("/model/");
+    const options = { method: "POST" };
+    if (remote) {
+      const response = await fetch("/api/state");
+      if (!response.ok) throw new Error("Reconnect using the host's pairing link");
+      const state = await response.json();
+      options.headers = {"Content-Type": "application/json", "X-Tribuutscan": "1"};
+      options.body = JSON.stringify({revision: state.revision});
+    }
+    const r = await (await fetch(`process/${action}${query}`, options)).json();
+    $("status").textContent = r.error || r.message;
     messageAt = Date.now();
     return r.message;
   } catch (e) {
@@ -573,6 +599,8 @@ $("piece").addEventListener("change", () => {
 });
 $("reset").addEventListener("click", () => frame());
 window.addEventListener("keydown", (e) => { if (e.key === "r" || e.key === "R") frame(); });
+$("scanner-controls").addEventListener("click", () => { location.href = "/"; });
+if (!location.pathname.startsWith("/model/")) $("scanner-controls").classList.add("later");
 $("dl-ply").addEventListener("click", () => { if (!$("dl-ply").classList.contains("later")) location.href = "cloud.ply"; });
 $("dl-mesh").addEventListener("click", () => { if (!$("dl-mesh").classList.contains("later")) location.href = "mesh.ply"; });
 $("dl-stl").addEventListener("click", () => { if (!$("dl-stl").classList.contains("later")) location.href = "mesh.stl"; });

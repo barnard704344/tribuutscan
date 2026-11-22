@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "3BUUTscan: use a Creality CR-Scan Ferret Pro directly on Linux over V4L2"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-# The viewer and capture need numpy and the standard library's tkinter (python3-tk on Debian/Ubuntu).
+# Web control and capture need numpy; the optional desktop viewer also needs python3-tk.
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]

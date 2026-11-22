@@ -64,14 +64,81 @@ The limits, honestly:
 - **Something touching the object** (the stand it rests on, a cable) stays in the scan. The table
   under it and everything around it are left out, and *Remove base* decides about the base.
 
+## Browser control from a phone or another computer
+
+The default launcher now starts a local web service instead of the desktop window:
+
+```sh
+./tribuutscan-viewer.sh
+# On a host without a desktop session:
+./tribuutscan-viewer.sh --no-browser
+```
+
+Connect the Ferret to the Linux host over USB. Open the printed **phone pairing link** on a phone,
+tablet or laptop on the same network, or click **Connect a phone** in the host's browser to see
+the links and access code. Scanning, GPU tracking, recording and meshing run on the host; the
+browser displays camera previews and the model and sends controls. No scanner driver is needed
+on the phone. The page and its Three.js assets work without an internet connection.
+
+For a head, person, or an object held in the air, select **Subject → Head / free object** before
+starting a new scan. This skips support-plane detection so a broad part of the subject is not
+mistaken for a tabletop and removed. **Object on a table** retains the existing base detection.
+Continue latest preserves the saved take's original subject mode; start a fresh take when changing
+subject mode. Raw recordings preserve the mode for replay and meshing.
+
+The capture workspace includes Start, Stop & Save, Pause / Resume, Cancel take, Continue latest,
+separate pieces, object picking, depth/coverage previews, last tracked view, distance guidance,
+range and exposure controls, IMU, markers, frame saving, raw recording and saved-scan selection.
+Open **Full view** for model inspection, cropping, processing and PLY / STL downloads. Saved
+files stay under this checkout's `captures/`; downloads go to the device running the browser.
+On a desktop, equally sized 16:9 Live 3D, Colour and IR previews sit on the left, with the larger
+Depth view in the centre and controls on the right. Camera images fit without cropping. On small
+screens the scan controls and Depth view appear before the preview stack. The distance indicator
+under Depth uses fresh tracked-object depth while scanning, with the live centre reading as a
+fallback. If depth becomes unavailable, its marker stays grey at the last reading, labelled
+"Last" with its age. A last reading is not the current distance or confirmation of good tracking.
+
+The service listens on **port 8765 on all network interfaces** by default. Each start generates
+a new access code; pair each browser once per service run. API requests, previews, models and
+downloads require pairing. Keep pairing links private. Use a trusted local network: this is
+plain HTTP, not an internet-facing service. For access away from home, use your existing VPN
+or an authenticated HTTPS reverse proxy rather than forwarding this port to the internet.
+The host's firewall must allow the chosen port from your local network.
+
+```sh
+./tribuutscan-viewer.sh --host 127.0.0.1  # restrict access to this computer
+./tribuutscan-viewer.sh --port 8877 --no-browser
+./tribuutscan-viewer.sh --force-cpu       # host tracking / meshes on CPU
+./tribuutscan-viewer.sh --demo            # inspect UI without touching scanner hardware
+```
+
+Closing or refreshing a browser **does not stop a scan**. Multiple browsers see the same host
+state; commands based on stale state are rejected so two clients cannot repeat a scan action.
+Cancel take asks before discarding the active take. Use Stop & Save before stopping the host
+service with Ctrl+C. While the scanner is disconnected the workspace stays available, shows
+its status and retries automatically. Only one service or desktop viewer can own the scanner
+per checkout. Avoid running different checkouts against the same scanner at the same time.
+
+The previous desktop UI remains available as an optional compatibility interface:
+
+```sh
+python3 -m tribuutscan.viewer
+```
+
+The controller and web service require Python 3.10+ and numpy, without Tkinter. The optional
+desktop adapter additionally needs `python3-tk`. Scanning and processing still use the existing
+Open3D / OpenCV / wgpu environment described below. The web service and browser assets add no
+package dependencies. The remaining desktop screenshots and keyboard examples below describe
+the original interface; the browser workspace exposes the same capture actions.
+
 ## Quick start
 
-Needs Python 3.10+, numpy and tkinter. No driver: the stock `uvcvideo` module handles the device.
+Needs Python 3.10+ and numpy (plus tkinter for the optional desktop viewer). No driver: the stock `uvcvideo` module handles the device.
 Light the scene and uncover the lenses, or every stream is black.
 
 ```
-python3 -m tribuutscan.viewer        # live colour + IR + depth
-python3 -m tribuutscan.viewer --force-cpu   # the same, tracking and meshes on the CPU even with a GPU
+./tribuutscan-viewer.sh             # web controls, colour + IR + depth
+./tribuutscan-viewer.sh --force-cpu  # tracking and meshes on the host CPU
 ```
 
 For 14-bit depth (16x finer steps than the 10-bit depth V4L2 offers), allow your desktop user to

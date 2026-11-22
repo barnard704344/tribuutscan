@@ -376,7 +376,7 @@ class LiveSource:
                 count = cache.get("points", 0)
             # Even if the selected model is unchanged, incoming/lost frames and their status are new.
             stats = {k: s.stats[k] for k in ("frames", "merged", "lost", "relocked", "tracking")}
-            session = dict(stats, preset=s.preset, point_distance_mm=s.cloud.point_mm, raw_points=s.cloud.raw_points,
+            session = dict(stats, scene_mode=getattr(getattr(s, "scene", None), "mode", "still"), preset=s.preset, point_distance_mm=s.cloud.point_mm, raw_points=s.cloud.raw_points,
                            pieces=active if live else len(s.pieces), cue=dict(s.cue), crop=s.crop)
             if self.phase == "done":  # Crop axes are for a finished scan; don't recalculate on every poll.
                 if "crop_axes" not in self.cached[2]:
@@ -444,7 +444,7 @@ def run(commands, replies, port=view3d.PORT):
     except OSError as e:
         replies.put(("log", f"3D view not available: port {port}: {e.strerror}"))
         server = None
-    replies.put(("ready", f"http://localhost:{port}/" if server else None))
+    replies.put(("ready", f"http://127.0.0.1:{port or server.server_address[1]}/" if server else None))
     out_dir, keep_raw, recorder, capture = None, False, None, {}
     parent = multiprocessing.parent_process()
     timing = {"wait": 0.0, "raw": 0.0, "feed": 0.0, "frames": 0}  # per scan, logged at Stop
@@ -481,6 +481,10 @@ def run(commands, replies, port=view3d.PORT):
                 continue
             options = options[0] if options else {}
             options = {"tracker": options} if isinstance(options, str) else options
+            scene_mode = options.get("scene_mode", "still")
+            if scene_mode not in ("still", "free"):
+                replies.put(("start_failed", "unknown subject mode"))
+                continue
             capture = options.get("capture", {})
             previous_mode = calib.CAMERA.mode
             calib.use_mode(depth_mode)  # the law of the scanner's mode, before any frame is turned into points
@@ -497,9 +501,10 @@ def run(commands, replies, port=view3d.PORT):
                     source.scanner.remove_base = remove_base
                     log(f"continuing {Path(continue_from).name}: show the scanner a part it has seen")
                 else:
-                    source.scanner = cl.Scanner(preset, log=log, remove_base=remove_base,
+                    source.scanner = cl.Scanner(preset, log=log, mode=scene_mode, remove_base=remove_base,
                                                 track_with=options.get("tracker", "gpu"), live_view=True,
                                                 merge_process=True, aim=capture.get("aim"))
+                capture = dict(capture, scene_mode=getattr(source.scanner.scene, "mode", scene_mode))
                 if capture:
                     source.scanner.stats["capture"] = capture  # (session.json takes every stats key)
                 out_dir, keep_raw = next_dir, next_keep_raw

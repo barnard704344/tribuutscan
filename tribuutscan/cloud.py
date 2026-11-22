@@ -2178,10 +2178,20 @@ def recording_piece_starts(directory):
     return {int(line) for line in path.read_text().splitlines()[1:]} if path.is_file() else set()
 
 
+def recording_scene_mode(directory):
+    """Keep raw replay consistent with the live subject's support-plane setting."""
+    path = Path(directory) / "info.json"
+    info = json.loads(path.read_text()) if path.exists() else {}
+    mode = info.get("scene_mode", "still")
+    if mode not in ("still", "free"):
+        raise ValueError("unsupported recording subject mode")
+    return mode
+
+
 def scan(directory, preset="small", log=print, remove_base=True, track_with="gpu"):
     """Merge a recording; returns the Scanner (its cloud, poses and stats; save() writes the result).
     Tracks on the GPU (gputrack) when there is one, else on the CPU (track.solve)."""
-    scanner = Scanner(preset, log, remove_base=remove_base, track_with=track_with, aim=recording_aim(directory),
+    scanner = Scanner(preset, log, mode=recording_scene_mode(directory), remove_base=remove_base, track_with=track_with, aim=recording_aim(directory),
                       picks=recording_picks(directory), piece_starts=recording_piece_starts(directory))
     scanner.add_source(Path(directory).resolve(), 0)
     try:

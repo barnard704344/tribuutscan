@@ -25,4 +25,4 @@ def test_launcher_finds_its_checkout_from_another_directory():
         env = dict(os.environ, PATH=f"{work}:{os.environ['PATH']}", HOME=tmp)
         proc = subprocess.run([str(REPO / "tribuutscan-viewer.sh"), "--help"], cwd=work,
                               env=env, capture_output=True, text=True, check=True)
-        assert proc.stdout.splitlines() == [str(REPO), "-m", "tribuutscan.viewer", "--help"]
+        assert proc.stdout.splitlines() == [str(REPO), "-m", "tribuutscan.webapp", "--help"]

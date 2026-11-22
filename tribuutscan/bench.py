@@ -120,7 +120,7 @@ def machine():
 def run(directory, frames=None, log=print, tracker="joint"):
     """Replay a recording with the stages timed; returns the report (dict). tracker: "joint" (the CPU
     solve) or "gpu" (gputrack)."""
-    scanner = cl.Scanner("small", log=lambda m: None, track_with=tracker)
+    scanner = cl.Scanner("small", log=lambda m: None, mode=cl.recording_scene_mode(directory), track_with=tracker)
     reading, measured, n = 0.0, 0, 0
     with StageTimer(stages()) as timer:
         source = fr.read_recording(directory)
@@ -196,7 +196,7 @@ def live(directory, frames=None, tracker="gpu", log=print):
         source, sent, t0 = fr.read_raw(directory), 0, None
         for bufs in source:
             if t0 is None:  # the recording's depth mode is known once its first set is read
-                commands.put(("start", "small", tmp / "scan", False, None, calib.CAMERA.mode, True, tracker))
+                commands.put(("start", "small", tmp / "scan", False, None, calib.CAMERA.mode, True, {"tracker": tracker, "scene_mode": cl.recording_scene_mode(directory)}))
                 t0 = time.perf_counter()
             while sent - done >= 2:
                 reply()

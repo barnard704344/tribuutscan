@@ -1196,3 +1196,30 @@ def test_object_feature_recovery_reports_success_only_after_consecutive_confirma
     finally:
         s.gpu = None
         s.discard()
+
+
+
+def test_free_subject_preserves_front_facing_surfaces_without_inferring_a_base():
+    from tribuutscan.scene import Scene
+    x,y = np.meshgrid(np.linspace(-70,70,40),np.linspace(-90,90,50))
+    z = np.where((abs(x)<25)&(abs(y)<35),245.,260.)
+    xyz = np.c_[x.ravel(),y.ravel(),z.ravel()]
+    pix = np.c_[np.tile(np.linspace(300,980,40),50),np.repeat(np.linspace(100,700,50),40)].astype(int)
+    piece = np.ones(len(xyz),bool)
+    scene = Scene(mode="free",rng=np.random.default_rng(0))
+    for _ in range(30):
+        scene.observe(xyz,pix,(800,1280),np.eye(4),tracked=piece)
+        obj,base = scene.masks(xyz,pix,(800,1280),np.eye(4),piece=piece)
+        assert obj.all() and not base.any() and scene.plane is None
+
+
+def test_recording_replay_preserves_subject_mode_and_defaults_legacy_to_table():
+    import json,tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as tmp:
+        path=Path(tmp)/"info.json"
+        assert cl.recording_scene_mode(tmp)=="still"
+        path.write_text(json.dumps({"scene_mode":"free"}))
+        assert cl.recording_scene_mode(tmp)=="free"
+        path.write_text(json.dumps({}))
+        assert cl.recording_scene_mode(tmp)=="still"

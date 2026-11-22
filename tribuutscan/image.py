@@ -57,7 +57,8 @@ def write_png(path, img):
         c = struct.pack(">I", len(data)) + tag + data
         return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
-    with open(path, "wb") as f:
+    import contextlib
+    with (contextlib.nullcontext(path) if hasattr(path, "write") else open(path, "wb")) as f:
         f.write(b"\x89PNG\r\n\x1a\n")
         f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, color_type, 0, 0, 0)))
         f.write(chunk(b"IDAT", zlib.compress(raw, 6)))

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101a28"><title>triBUUTSCAN · Scanner</title>
+<link rel="stylesheet" href="/scanner.css"><script src="/scanner.js" defer></script>
+</head>
+<body>
+<header class="top"><a class="brand" href="/">tri<span>BUUT</span>SCAN</a><span class="tag">REMOTE SCANNER</span><button id="share" class="text-button" hidden>Connect a phone</button><span id="connection" role="status">Connecting…</span></header>
+<section id="pairing" class="pairing" hidden>
+  <form id="pair-form"><div class="eyebrow">YOUR SCANNER, ON YOUR NETWORK</div><h1>Connect to the scan host</h1>
+  <p>Use the pairing link printed on the host computer, or enter its access code below.</p>
+  <label>Access code<input id="token" type="password" autocomplete="off" required></label><button class="primary">Connect</button><p id="pair-error" role="alert"></p></form>
+</section>
+<main id="workspace" hidden>
+  <section class="intro"><div class="phase" id="phase">Waiting for scanner</div></section>
+  <div id="demo" class="notice" hidden>Interface preview · no scanner is connected and capture controls are disabled.</div>
+  <div id="notice" class="notice" role="status">Connecting to the scanner service…</div>
+  <div id="command-error" class="error" role="alert" hidden></div>
+  <div class="workspace-grid">
+    <aside class="preview-column" aria-label="Live 3D and camera previews">
+      <section class="model-panel preview-card panel">
+        <div class="panel-title"><h2>Live 3D model</h2><a id="model-link" href="/model/" target="_blank" rel="noopener">Full view</a></div>
+        <div class="preview-surface"><iframe id="model" title="Interactive 3D scan model" src="about:blank" allow="fullscreen"></iframe></div>
+      </section>
+      <section class="preview-card panel">
+        <div class="panel-title"><h2>Colour</h2><span class="preview-fps" id="colour-fps"></span></div>
+        <div class="image-wrap preview-surface"><canvas id="colour" width="272" height="170" aria-label="Colour preview; tap to select your object"></canvas></div>
+      </section>
+      <section class="preview-card panel">
+        <div class="panel-title"><h2>IR</h2><span class="preview-fps" id="ir-fps"></span></div>
+        <div class="image-wrap preview-surface"><canvas id="ir" width="272" height="170" aria-label="Infrared preview"></canvas></div>
+      </section>
+    </aside>
+    <section class="camera-panel panel"><div class="panel-title"><h2>Camera views</h2><select aria-label="Depth display" data-setting="preview_mode"><option>Live depth</option><option>Coverage</option></select></div>
+      <figure class="depth"><div class="image-wrap preview-surface"><canvas id="depth" width="552" height="345" aria-label="Depth preview; tap to select your object"></canvas><span class="image-label">DEPTH <small id="depth-fps"></small></span></div><figcaption class="distance-gauge" id="distance-gauge" data-zone="unknown">
+        <div class="distance-heading"><span>Scanner distance</span><output id="distance-value">No depth</output></div>
+        <div class="distance-track" id="distance-track" role="img" aria-label="Waiting for reliable depth">
+          <div class="distance-zones"><span>Too close</span><span>Optimal</span><span>Too far</span></div>
+          <span class="distance-marker" id="distance-marker" hidden></span>
+        </div>
+        <div class="distance-scale"><span id="distance-min">12 cm</span><span id="distance-target">Optimal: 18–30 cm</span><span id="distance-max">36 cm</span></div>
+        <p id="distance-status" class="distance-status">Waiting for a depth reading</p>
+        <p id="distance">Waiting for scanner</p>
+      </figcaption></figure>
+      <p id="coverage" class="coverage" hidden></p>
+      <p id="scan-hint" class="scan-hint" hidden></p>
+      <div class="telemetry"><div><span>Capture</span><strong id="capture">—</strong></div><div><span>Tracking</span><strong id="tracking">—</strong></div><div><span>Geometry</span><strong id="geometry">—</strong></div></div>
+      <div id="reference-panel" hidden><p class="helper">Last tracked view · match this shape and angle to recover tracking</p><canvas id="reference" width="256" height="160" aria-label="Last successfully tracked depth view"></canvas></div>
+      <div class="camera-footer"><span>Tap Depth or Colour to select the object.</span><button data-action="clear-aim" class="text-button">Reset aim</button></div>
+    </section>
+    <aside class="controls">
+      <section class="panel scan-panel"><div class="panel-title"><h2>Scan controls</h2><span class="host-label">RUNS ON HOST</span></div>
+        <div class="control-body"><button id="scan-main" class="primary" data-action="start">Start scan</button><div class="two-buttons"><button id="pause" data-action="pause" disabled>Pause & inspect</button><button id="cancel" data-action="cancel" disabled>Cancel take</button></div>
+        <button id="separate" data-action="separate" disabled>Start separate piece</button><p class="helper">Use a separate piece only for an area that cannot overlap the existing scan.</p>
+        <label class="inline-label">Subject<select data-setting="scene_mode"><option value="free">Head / free object</option><option value="still">Object on a table</option></select></label>
+        <p id="subject-hint" class="helper">Choose Head / free object for subjects without a support surface.</p>
+        <label class="inline-label">Point spacing<select data-setting="preset"><option value="small">Fine · 0.5 mm</option><option value="medium">Medium · 1 mm</option><option value="large">Coarse · 2 mm</option></select></label>
+        <div class="checks"><label><input type="checkbox" data-setting="remove_base">Remove detected base</label><label><input type="checkbox" data-setting="mesh_after">Mesh after Stop</label><label><input type="checkbox" data-setting="keep_raw">Keep raw frames</label><label><input type="checkbox" data-setting="countdown">3 second countdown</label></div>
+        <button data-action="continue">Continue latest saved scan</button></div>
+      </section>
+      <details class="panel"><summary>Scanner settings</summary><div class="control-body"><label class="inline-label">Depth range<select id="range"></select></label><label><input id="auto-ir" type="checkbox">Automatic IR exposure</label><div id="hardware-controls"></div><button data-action="reset-controls">Reset defaults</button><label><input type="checkbox" data-setting="imu_wanted">Use motion sensor (IMU)</label><p id="imu" class="helper">IMU off</p><label><input type="checkbox" data-setting="find_markers">Find markers</label><label><input type="checkbox" data-setting="hold_depth">Hold depth between frames</label><button data-action="retry">Retry scanner connection</button></div></details>
+      <details class="panel"><summary>Raw capture</summary><div class="control-body"><button data-action="save-frame">Save current frame set</button><label class="inline-label">Recording rate<select data-setting="record_rate"><option>30 fps</option><option>10 fps</option></select></label><button id="record" data-action="record">Record raw frames</button><button data-action="mesh-recording">Mesh latest recording</button><p class="helper">Recordings and scans are saved on the host machine.</p></div></details>
+      <details class="panel" open><summary>Saved scans</summary><div class="control-body"><label>Choose a scan<select id="saved"><option value="">No saved scans yet</option></select></label><div class="two-buttons"><button id="open-scan" data-action="open">Open scan</button><button data-action="live">Back to live</button></div><p class="helper">Use the full 3D view for cropping, processing and PLY / STL downloads.</p></div></details>
+    </aside>
+  </div>
+  <details class="panel logs"><summary>Messages from the host</summary><pre id="messages" tabindex="0"></pre></details>
+  <footer>triBUUTSCAN · Local USB scanning · Browser control<span>Closing this page keeps your scan running.</span></footer>
+</main>
+<dialog id="access-dialog"><h2>Connect another device</h2><p>Open a pairing link on a phone or tablet connected to the same trusted network. The host computer must stay running.</p><div id="access-links"></div><p>Access code: <code id="access-code"></code></p><button id="close-access">Done</button></dialog>
+<dialog id="cancel-dialog"><h2>Cancel this take?</h2><p>This stops the current take without saving a finished scan. Earlier saved scans are kept. Any raw recovery files remain on the host.</p><div class="two-buttons"><button id="keep-scanning">Keep scanning</button><button id="confirm-cancel" class="danger">Cancel take</button></div></dialog>
+</body></html>

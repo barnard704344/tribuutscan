@@ -415,6 +415,7 @@ def test_cancel_active_and_paused_takes_preserves_raw_and_allows_restart():
 
     commands, replies = queue.Queue(), queue.Queue()
     server = Mock()
+    server.server_address = ("127.0.0.1", 12345)
     frame = ("frame", bytes(fr.FRAME_BYTES["color"]), None, bytes(1600 * fr.H), 1600, (1., 0., 1.))
     seen = []
 
@@ -460,11 +461,12 @@ def test_cancel_active_and_paused_takes_preserves_raw_and_allows_restart():
                 paused_scan.save.assert_not_called()
                 commands.put(frame)  # a late out-of-phase frame is not added to any take
                 assert wait_for("frame_done") == (0, 0, 0)
-                commands.put(("start", "small", fresh, False, None, livescan.calib.CLOSE, True))
+                commands.put(("start", "small", fresh, False, None, livescan.calib.CLOSE, True, {"scene_mode": "free"}))
                 commands.put(frame)
                 assert wait_for("frame_done")[1] == 1
                 commands.put(("cancel", fresh.name))
                 assert wait_for("cancelled") == ("", "")
+                assert factory.call_args.kwargs["mode"] == "free"
                 next_scan.discard.assert_called_once()
                 next_scan.save.assert_not_called()
                 assert not any(k in seen for k in ("saved", "optimised", "meshed"))

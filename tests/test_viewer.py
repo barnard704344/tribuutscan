@@ -1,6 +1,6 @@
 import numpy as np
 
-from tribuutscan import viewer
+from tribuutscan import viewer, controller
 
 
 def test_previews_resample_to_any_width():
@@ -390,8 +390,8 @@ def test_auto_ir_follows_the_scanner_through_a_rounding_slider():
     app.targets = {"depth": None}
     app.synced = {}
     values = iter([5486, 5486, 581])
-    real = viewer.get_control
-    viewer.get_control = lambda target, cid: next(values)
+    real = controller.get_control
+    controller.get_control = lambda target, cid: next(values)
     try:
         app.follow_ir()
         assert scale.get() == 5500 and app.synced["IR exposure"] == 5500  # what its callback will say
@@ -400,7 +400,7 @@ def test_auto_ir_follows_the_scanner_through_a_rounding_slider():
         app.follow_ir()
         assert scale.get() == 600 and app.synced["IR exposure"] == viewer.held(scale) == 600
     finally:
-        viewer.get_control = real
+        controller.get_control = real
 
 
 def test_the_feeder_keeps_the_worker_fed_off_the_tk_loop():
@@ -523,7 +523,7 @@ def test_failed_reopen_closes_staged_sources_without_resuming_any_stream():
     app = SimpleNamespace(nodes=old.copy(), targets=old.copy(), ir_auto=True, log=logs.append,
                           color=Mock(), ir=Mock(), depth=Mock())
     depth, color = Mock(), Mock()
-    with patch.object(viewer, "wait_for_scanner", return_value=new), patch.object(viewer, "ir_exposure_mode"), \
+    with patch.object(controller, "wait_for_scanner", return_value=new), patch.object(controller, "ir_exposure_mode"), \
             patch.object(viewer.fr, "open_depth", return_value=depth), \
             patch.object(viewer.v4l2, "Capture", side_effect=(color, OSError("failed IR open"))):
         assert not viewer.App.reopen(app)
@@ -542,7 +542,7 @@ def test_successful_reopen_replaces_all_three_streams():
     nodes = {"depth": "d1", "color": "c1", "ir": "i1"}
     app = SimpleNamespace(nodes={}, targets={}, ir_auto=True, log=Mock(), color=Mock(), ir=Mock(), depth=Mock())
     depth, color, ir = Mock(), Mock(), Mock()
-    with patch.object(viewer, "wait_for_scanner", return_value=nodes), patch.object(viewer, "ir_exposure_mode"), \
+    with patch.object(controller, "wait_for_scanner", return_value=nodes), patch.object(controller, "ir_exposure_mode"), \
             patch.object(viewer.fr, "open_depth", return_value=depth), \
             patch.object(viewer.v4l2, "Capture", side_effect=(color, ir)):
         assert viewer.App.reopen(app)
@@ -698,10 +698,10 @@ def test_close_after_cancel_does_not_save_the_take():
     app = NS(live={"proc": NS(join=Mock(), is_alive=lambda: False), "commands": commands, "feeder": Mock()},
              scan_state="cancelling", rec={"recorder": None}, log=Mock(), imu_off=Mock(), streams={}, root=Mock(),
              model_pane=Mock())
-    viewer.App.close(app)
+    controller.Controller.close(app)
     assert commands.get_nowait() == ("quit",) and commands.empty()
     app.live["feeder"].transition.assert_not_called()
-    app.root.destroy.assert_called_once()
+    app.root.destroy.assert_not_called()  # the shared controller owns no window
 
 
 def test_return_reference_keeps_acknowledged_buffer_and_object_outline():
@@ -715,7 +715,7 @@ def test_return_reference_keeps_acknowledged_buffer_and_object_outline():
     original = encode_y10(depth)
     other = encode_y10(np.full_like(depth, 400))
     ref = viewer.TrackedReference()
-    with patch.object(viewer, "render_tracked_reference", wraps=viewer.render_tracked_reference) as render:
+    with patch.object(controller, "render_tracked_reference", wraps=viewer.render_tracked_reference) as render:
         ref.observe(1, False, other, (w, h, stride), None)  # no aligned frame yet
         assert ref.image() is None
         ref.observe(1, True, original, (w, h, stride), selected)
@@ -901,3 +901,52 @@ def test_window_places_large_3d_on_left_and_keeps_all_three_feeds_beside_it():
     assert feeds["Colour"].parent.parent.parent is feeds["IR (flipped)"].parent.parent.parent is feed_column
     assert viewer.MODEL_W * viewer.MODEL_H > viewer.DEPTH_W ** 2 * viewer.fr.H // viewer.fr.W
     assert viewer.MODEL_W + viewer.DEPTH_W <= 1200  # no camera/model expansion over the previous layout
+
+
+def test_live_distance_measures_off_centre_target_and_rejects_stale_or_lost_masks():
+    import time
+    from unittest.mock import patch
+    from tribuutscan.depth import encode_y10
+
+    class Cap:
+        width, height, bytesperline = 1280, 800, 1600
+
+    raw = np.zeros((800, 1280), np.uint16)
+    raw[160:640, 80:320] = 270
+    buf = encode_y10(raw)
+    mask = np.zeros((100, 160), np.uint8)
+    mask[20:80, 10:40] = 2
+    expected = float(viewer.pointcloud.depth_to_mm(270)) / 10
+    with patch.dict(viewer.scan_view), patch.dict(viewer.hold_view, on=False), patch.dict(viewer.aim_view, idle=False):
+        viewer.scan_view.update(active=True, return_guide=False, preview=viewer.LIVE_DEPTH,
+                                mask=mask, t=time.monotonic(), lost=False, model=None)
+        _, stats = viewer.render_depth(Cap, buf)
+        assert stats['centre_cm'] is None  # a centre-only gauge would disappear here
+        reading = controller.distance_reading(None, stats, viewer.calib.CAMERA.mode, False, time.monotonic())
+        assert reading['source'] == 'Tracked object' and np.isclose(reading['cm'], expected)
+        for changes in [dict(lost=True), dict(t=time.monotonic()-2)]:
+            viewer.scan_view.update(lost=False,t=time.monotonic())
+            viewer.scan_view.update(changes)
+            _, stats = viewer.render_depth(Cap, buf)
+            assert controller.distance_reading(None, stats, viewer.calib.CAMERA.mode, False, time.monotonic())['cm'] is None
+
+
+def test_live_object_distance_uses_current_depth_even_when_coverage_shows_an_older_frame():
+    import time
+    from unittest.mock import patch
+    from tribuutscan.depth import encode_y10
+
+    class Cap:
+        width, height, bytesperline = 1280, 800, 1600
+
+    raw = np.zeros((800, 1280), np.uint16)
+    raw[160:640, 80:320] = 270
+    mask = np.zeros((100,160), np.uint8)
+    mask[20:80,10:40] = 2
+    old = encode_y10(np.full_like(raw,400))
+    with patch.dict(viewer.scan_view), patch.dict(viewer.hold_view, on=False), patch.dict(viewer.aim_view, idle=False):
+        viewer.scan_view.update(active=True, return_guide=False, preview=viewer.COVERAGE, mask=mask,
+                                t=time.monotonic(),lost=False,model=(np.full((100,160),255,np.uint8),old))
+        _, stats = viewer.render_depth(Cap, encode_y10(raw))
+        assert np.isclose(stats['object_cm'], float(viewer.pointcloud.depth_to_mm(270))/10)
+        assert stats['centre_cm'] is None
