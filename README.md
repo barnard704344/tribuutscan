@@ -93,7 +93,7 @@ forward this port directly onto the internet.
   take and starts optimisation; meshing follows if enabled.
 - Saved scans open in a matching **View / Align / Cleanup / Mesh / Export**
   workspace, with automatic editing copies, lasso deletion and undo/redo. Files remain in this checkout's ignored `captures/` directory.
-- **Files → Align saved scans** opens manual two-scan alignment, matching-point
+- **Files → Open scan → Align** opens manual two-scan alignment, matching-point
   fitting and move/rotate adjustments. Saving creates a new full session. See
   the [first-release limits](docs/alignment.md#first-release-limits) before using it.
 

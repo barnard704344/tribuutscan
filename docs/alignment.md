@@ -1,7 +1,7 @@
 # Aligning saved scans
 
-Open **Files → Align saved scans** in the capture workspace. It also appears in the **Align** tab of the saved-result workspace. This is a
-saved-scan tool; it does not replace the live coverage pane or its paused camera.
+Open a saved scan from **Files → Open scan**, then select the **Align** tab.
+This is a saved-scan tool; it does not replace the live coverage pane or its paused camera.
 You can use it without the scanner connected, with the scanning environment installed.
 
 ![Saved-scan alignment workspace with synthetic test geometry](images/web-alignment.png)

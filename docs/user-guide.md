@@ -170,15 +170,14 @@ refresh reloads HTML/CSS/JavaScript; it does not reload the host's Python code.
 
 ## Inspect and export saved results
 
-To combine two saved free-object scans, use **Files → Align saved scans**. See the
+To combine two saved free-object scans, use **Files → Open scan → Align**. See the
 [alignment guide](alignment.md) for matching points, move/rotate, undo/redo and
 saving a separate full session. This first stage has explicit input restrictions;
 the saved-result workspace provides lasso cleanup after alignment.
 
 In the **Files** tab, choose a take under **Saved scans** and choose **Open scan**.
 The result viewer opens in the current tab after the host accepts the selection.
-Use **← Capture** there to return to capture. The **Inspect, process
-& download** link can also open the currently loaded result in another tab.
+Use **← Capture** there to return to capture.
 The saved-result workspace groups **View**, **Align**, **Cleanup**, **Mesh** and
 **Export** tools. See the [saved-workspace guide](saved-workspace.md) for safe
 editing copies, lasso deletion, undo/redo, cropping and PLY/STL downloads. It is distinct from the
