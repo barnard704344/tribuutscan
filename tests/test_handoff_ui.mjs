@@ -15,21 +15,19 @@ function fixture(phone=false){
  vm.createContext(ctx);vm.runInContext(source,ctx);return {ctx,nodes,downloads,requests,messages,revoked,media,changes};
 }
 {
- const f=fixture();await f.nodes.get('cad-download').onclick();
+ const f=fixture();await f.ctx.downloadSurfaceStl();
  assert.equal(f.downloads[0].name,'current-scan-surface-mm.stl');assert.equal(f.downloads[0].href,'blob:local-mesh');
  const url=new URL(f.requests[0],'http://scanner/model/');assert.equal(url.pathname,'/model/handoff.stl');
  assert.equal(url.searchParams.get('name'),'current-scan');assert.equal(url.searchParams.get('version'),'cloud-v2');assert.equal(url.searchParams.get('mesh'),'mesh-v3');
  assert.equal(f.ctx.busy,false);assert.match(f.messages.at(-1).message,/millimetres/);assert.deepEqual(f.revoked,['blob:local-mesh']);
 }
 {
- const f=fixture();f.ctx.fetch=async()=>({ok:false,status:409});await f.nodes.get('cad-download').onclick();
+ const f=fixture();f.ctx.fetch=async()=>({ok:false,status:409});await f.ctx.downloadSurfaceStl();
  assert.equal(f.downloads.length,0);assert.equal(f.ctx.busy,false);assert.equal(f.messages.at(-1).error,true);assert.match(f.messages.at(-1).message,/changed/);
- f.ctx.lastInfo.mesh=null;await f.nodes.get('cad-download').onclick();assert.equal(f.downloads.length,0);
+ f.ctx.lastInfo.mesh=null;await f.ctx.downloadSurfaceStl();assert.equal(f.downloads.length,0);
 }
-{
- const f=fixture(true);assert.equal(f.nodes.get('tab-cad').hidden,true);
- f.media.matches=false;f.changes[0]();assert.equal(f.nodes.get('tab-cad').hidden,false);
- f.ctx.tool='cad';f.media.matches=true;f.changes[0]();assert.equal(f.ctx.tool,'view');
-}
+assert.ok(!html.includes('id="tab-cad"')&&!html.includes('id="panel-cad"'));
+assert.ok(html.indexOf('id="cad-handoff"')>html.indexOf('id="panel-export"'));
+assert.match(html,/@media\(max-width:760px\),\(pointer:coarse\)\{\.desktop-cad\{display:none!important/);
 assert.match(html,/href="https:\/\/scanruler.com\/\?workspace=reverse" target="_blank" rel="noopener noreferrer"/);
-console.log('Desktop handoff download identity, mm guidance, stale errors, private routes and phone exclusion passed');
+console.log('Export handoff download identity, mm guidance, stale errors, private routes and phone exclusion passed');

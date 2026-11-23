@@ -170,16 +170,17 @@ and cleanup additions are tracked separately in the [roadmap](roadmap.md).
 
 ## Desktop CAD handoff — 23 November 2026
 
-A desktop-only CAD tab hands the selected surface mesh to ScanRuler through an
-explicit millimetre STL download and a separate-tab link. This is a manual file
+A desktop-only ScanRuler section under Export uses the existing STL download
+and a separate-tab link. When no saved STL exists, the same button exports the
+current surface in millimetres. No additional CAD tab is needed. This is a manual file
 handoff, with no agent installation, direct scan URL sharing or automatic CAD
-project import. The source mesh and capture are unchanged, including rough/open
-surfaces. ScanRuler remains a separate application.
+project import. Source geometry is unchanged; rough/open surface exports are supported. ScanRuler remains a separate application.
 
 The handoff, webapp and mesh-export modules passed 37 checks. JavaScript checks
 covered handoff controls and saved lasso regressions. A browser trial downloaded
 and parsed a synthetic surface STL and checked the panel, missing-mesh guard,
-1920/1366-pixel desktop layouts and phone exclusion. The screenshot uses synthetic
+1920/1366-pixel desktop layouts and phone exclusion. A follow-up browser check
+verified the shared STL button and the five-tab layout after consolidating Export. The screenshot uses synthetic
 geometry. CAD reconstruction quality and third-party application behaviour are
 not certified by these handoff checks. See [CAD handoff](cad-handoff.md).
 

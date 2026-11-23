@@ -97,7 +97,7 @@ forward this port directly onto the internet.
   take and starts optimisation; meshing follows if enabled.
 - Saved scans open in a matching **View / Align / Cleanup / Mesh / Export**
   workspace, with automatic editing copies, lasso deletion and persistent undo/redo.
-  A desktop **CAD** tab adds a millimetre STL handoff to ScanRuler in a separate browser tab.
+  **Export** includes a desktop ScanRuler handoff using the STL download and a separate browser tab.
   Files remain in this checkout's ignored `captures/` directory.
 - **Files → Open Scan Library** provides thumbnails, display names, search,
   related versions, storage details and reversible Bin. **Open scan → Align**

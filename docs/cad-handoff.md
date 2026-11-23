@@ -1,15 +1,16 @@
 # Desktop CAD handoff
 
 Open a saved scan, finish alignment/cleanup and generate a surface in **Mesh**.
-The desktop saved workspace has a **CAD** tab for handing that mesh to
+The desktop saved workspace groups the handoff under **Export**, with a link to
 [ScanRuler](https://scanruler.com/?workspace=reverse) in a separate browser tab.
 
 ![Desktop CAD handoff using synthetic geometry](images/saved-cad-handoff.png)
 
 ## Download, open and model
 
-1. In **CAD**, press **Download mesh · STL (mm)**. The browser downloads
-   `<scan-id>-surface-mm.stl` from the selected session's current `mesh.ply`.
+1. In **Export**, download the STL. **Printable mesh · STL (mm)** downloads the
+   existing STL when available. Otherwise **Surface mesh · STL (mm)** converts the
+   current surface to `<scan-id>-surface-mm.stl`. A surface mesh is required.
 2. Press **Open ScanRuler**. In that tab, load the downloaded STL and choose
    **millimetres** when asked for its units. Select **Reverse engineer** if needed.
 3. Model the part against the scan, then save its editable `.scanruler` project
@@ -23,9 +24,10 @@ helper. ScanRuler's modelling capabilities and workflow are described in its
 
 ## Surface and units
 
-The handoff converts the saved surface coordinates from metres to millimetres.
-It uses the actual surface mesh, including a rough/open fallback surface when
-available; it does not require a separate printable STL. Triangle geometry and
+When no saved STL exists, the download converts saved surface coordinates from
+metres to millimetres. It supports rough/open fallback surfaces without creating
+a separate printable STL. An existing printable STL may contain reconstructed
+regions; inspect it against the source scan before modelling critical features. Triangle geometry and
 orientation are retained. It does not fill holes, close the part, create a CAD
 solid or certify accuracy. Colour is not carried by this binary STL.
 
@@ -36,9 +38,9 @@ or a previous printable STL. Downloads do not modify the capture or its exports.
 
 ## Desktop scope and saved work
 
-CAD handoff is hidden on narrow screens (760 pixels or less) and devices whose
+The ScanRuler section is hidden on narrow screens (760 pixels or less) and devices whose
 primary pointer is coarse, including phones. Scanning and the existing phone
-controls remain available. ScanRuler runs its modelling in the desktop browser;
+controls and ordinary STL downloads remain available. ScanRuler runs its modelling in the desktop browser;
 this feature does not move that work onto the scanner host when browsing remotely.
 
 The project, STEP and any reports saved from ScanRuler remain on the computer
