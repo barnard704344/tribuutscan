@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 const THREE=await import('../tribuutscan/web/three.module.min.js');
 const html=fs.readFileSync(new URL('../tribuutscan/web/index.html',import.meta.url),'utf8');
-const source=html.slice(html.indexOf('async function cleanupAction('),html.indexOf("for(const button of document.querySelectorAll('[data-direction]'))"));
+const source=html.slice(html.indexOf('async function waitRenderedChange('),html.indexOf('async function runAction('))
+ +html.slice(html.indexOf('async function runAction('),html.indexOf('function updateTools('))
+ +html.slice(html.indexOf('async function cleanupAction('),html.indexOf("for(const button of document.querySelectorAll('[data-direction]'))"));
 function fixture(){
  const elements=new Map(),listeners=new Map(),capture=new Set(),messages=[];
  function element(id){if(!elements.has(id))elements.set(id,{textContent:'',disabled:false,width:200,height:200,value:'cloud',getContext:()=>({clearRect(){},beginPath(){},moveTo(){},lineTo(){},closePath(){},fill(){},stroke(){}})});return elements.get(id);}
@@ -18,7 +20,7 @@ function fixture(){
   data:{n:3,xyz},lastInfo:{name:'source-scan',version:'v1',phase:'done',editing:{}},renderedModel:{name:'source-scan',version:'v1'},
   controls:{enabled:true,enableDamping:true,update(){}},busy:false,lasso:false,lassoPointer:null,selectedRegion:null,stroke:[],selectionKeep:null,selectionCount:0,deletePreview:null,desiredMesh:true,cloudKey:'v1',
   $:element,colours:()=>new Float32Array(9),updateTools(){},showWhich(){},status(message,error=false){messages.push({message,error});},
-  editable:async()=>{},savedCommand:async()=>{},waitJob:async()=>'',window:{addEventListener(){}},messages};
+  closeCrop(){context.cropPreviewClosed=true;},editable:async()=>{},host:async()=>({revision:1,instance:'test'}),savedCommand:async()=>{},waitJob:async()=>'',window:{addEventListener(){}},messages};
  vm.createContext(context);vm.runInContext(source,context);
  function pointer(type,x,y,id=1){listeners.get(type)?.({pointerId:id,button:0,clientX:x,clientY:y,preventDefault(){},stopImmediatePropagation(){}});}
  function select(){element('lasso-start').onclick();pointer('pointerdown',30,30);pointer('pointermove',100,30);pointer('pointermove',100,170);pointer('pointermove',30,170);pointer('pointerup',30,30);}
@@ -52,4 +54,17 @@ function fixture(){
  assert.equal(f.context.points.geometry.index,null,'a failed save must restore the local preview');
  assert.equal(f.context.busy,false);assert.equal(f.context.messages.at(-1).error,true);assert.match(f.context.messages.at(-1).message,/Simulated host failure/);
 }
-console.log('Saved lasso selection/cancellation, immediate removal, rendered-save confirmation and failure rollback checks passed');
+for(const action of ['crop','crop-off']){
+ const f=fixture();f.context.waitJob=async()=>{f.context.lastInfo={...f.context.lastInfo,version:'v2'};return 'cropped: 2 points';};
+ const operation=f.context.runAction(action,'cropping');
+ await new Promise(resolve=>setTimeout(resolve,20));assert.equal(f.context.busy,true,'crop must wait for the updated geometry');
+ f.context.renderedModel={name:'source-scan',version:'v2'};await operation;
+ assert.equal(f.context.busy,false);assert.match(f.context.messages.at(-1).message,/cropped/);
+ if(action==='crop-off')assert.equal(f.context.cropPreviewClosed,true,'Clear crop must also remove any active preview clipping');
+}
+{
+ const f=fixture();f.context.waitJob=async()=>'mesh available';
+ assert.equal(await f.context.runAction('mesh','meshing'),'mesh available');
+ assert.equal(f.context.busy,false,'mesh generation need not change the point-cloud version');
+}
+console.log('Saved lasso selection/cancellation, pending deletion rollback, crop reload and mesh completion checks passed');

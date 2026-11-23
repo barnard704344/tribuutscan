@@ -89,6 +89,13 @@ persist the world-space cleanup policy, retire stale mesh exports and publish
 through the same staged history path. The pending browser preview must roll back
 on a failed save and must not report completion before updated geometry renders.
 
+Crop/clear on editing copies re-filter `cloud_state.npz`, not the already cropped
+PLY, so expanding a box and Clear crop can recover hidden points. Preserve saved
+crop axes, observation thresholds, base policy and lasso rules. Retain the slower
+restore fallback for older sessions without fused state. Crops retire mesh exports;
+they do not automatically launch a new mesh job. Test rotated axes, repeated
+crop/expand/clear, history and unchanged frame archives with `test_edit_session`.
+
 ## Measuring performance
 
 Measure camera delivery, processed/tracked frames and geometry acceptance

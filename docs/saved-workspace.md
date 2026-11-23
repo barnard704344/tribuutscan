@@ -99,6 +99,14 @@ crop** restores the pre-crop extent. **Remove base / Keep base** use the detecte
 support plane when the scan has one. These operations also use the editable copy
 and persistent history. Rebuild a mesh after lasso or base cleanup.
 
+Cropping and Clear crop use the full saved fused cloud without remerging captured
+frames. Expanding/clearing a crop restores points outside the old box while
+retaining lasso cleanup and base filtering. Cropping retires old mesh exports;
+use **Mesh → Generate mesh** when ready, rather than waiting for an automatic
+remesh during the crop. Older sessions without a fused-state file use the slower
+frame-restore fallback once. The completion message waits for updated points to
+reload in the viewport.
+
 ## Mesh
 
 **Generate mesh** fuses recorded depth when the recordings and matching calibration

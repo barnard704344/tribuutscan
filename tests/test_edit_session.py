@@ -109,6 +109,69 @@ def test_continue_latest_ignores_editing_copies():
         app.toggle_scan.assert_called_once_with(continue_from=source)
 
 
+def test_crop_uses_full_fused_state_without_remerging_and_preserves_clear_and_history():
+    from tribuutscan import cloud
+    with tempfile.TemporaryDirectory() as tmp:
+        root=Path(tmp);source=make_session(root,'source-scan');out=root/'edited-scan'
+        info=json.loads((source/'session.json').read_text())
+        a=np.pi/4;axes=np.array([[np.cos(a),-np.sin(a),0],[np.sin(a),np.cos(a),0],[0,0,1]])
+        info['crop_axes']=axes.tolist();(source/'session.json').write_text(json.dumps(info))
+        edit_session.clone(source,out,alignment.version(source));original=hashes(source);before=hashes(out)
+        rec=view3d.read_ply(source/'cloud.ply');xyz=np.column_stack([rec[k] for k in ('x','y','z')])*1000;q=xyz@axes.T
+        small=[-1,-100,-400,7,100,-100];large=[-1,-100,-400,15,100,-100]
+        expected=lambda box: int(np.all((q>=box[:3])&(q<=box[3:]),axis=1).sum())
+        with patch.object(cloud.Scanner,'restore',side_effect=AssertionError('Fast crop must not restore frames')), \
+             patch.object(cloud.Scanner,'remerge',side_effect=AssertionError('Fast crop must not remerge frames')):
+            edit_session.edit(out,'crop',box=small)
+            assert len(view3d.read_ply(out/'cloud.ply'))==expected(small)<len(rec)
+            note=json.loads((out/'session.json').read_text());assert np.allclose(note['crop']['axes'],axes)
+            edit_session.edit(out,'undo');assert len(view3d.read_ply(out/'cloud.ply'))==len(rec)
+            edit_session.edit(out,'redo');assert len(view3d.read_ply(out/'cloud.ply'))==expected(small)
+            edit_session.edit(out,'crop',box=large)
+            assert len(view3d.read_ply(out/'cloud.ply'))==expected(large)>expected(small)
+            edit_session.edit(out,'crop-off');assert len(view3d.read_ply(out/'cloud.ply'))==len(rec)
+            edit_session.edit(out,'delete-region',region())
+            cleaned=len(view3d.read_ply(out/'cloud.ply'))
+            edit_session.edit(out,'crop',box=small);edit_session.edit(out,'crop-off')
+            assert len(view3d.read_ply(out/'cloud.ply'))==cleaned
+        assert json.loads((out/'session.json').read_text())['crop'] is None
+        assert hashes(source)==original
+        after=hashes(out)
+        assert all(after[name]==value for name,value in before.items() if name not in ('cloud.ply','session.json','.editing.json'))
+
+
+def test_crop_retires_old_meshes_and_invalid_bounds_leave_the_copy_unchanged():
+    with tempfile.TemporaryDirectory() as tmp:
+        root=Path(tmp);source=make_session(root,'source-scan');out=root/'edited-scan'
+        for name in ('mesh.ply','mesh.stl','solid.ply','mesh.json'):(source/name).write_bytes(b'old export')
+        edit_session.clone(source,out,alignment.version(source))
+        edit_session.edit(out,'crop',box=[-100,-100,-400,7,100,-100])
+        assert not any((out/name).exists() for name in ('mesh.ply','mesh.stl','solid.ply','mesh.json'))
+        before=hashes(out)
+        for bounds in ([0,0,0,0,0,0],[0,0,0,1,1,float('nan')],[0,1]):
+            try:edit_session.edit(out,'crop',box=bounds)
+            except ValueError:pass
+            else:raise AssertionError('Invalid crop was saved')
+            assert hashes(out)==before
+        edit_session.edit(out,'undo')
+        assert (out/'mesh.stl').read_bytes()==b'old export'
+
+
+def test_legacy_crop_without_fused_state_keeps_the_restore_fallback():
+    from tribuutscan import cloud, fusion
+    with tempfile.TemporaryDirectory() as tmp:
+        root=Path(tmp);source=make_session(root,'source-scan');out=root/'edited-scan'
+        for name in ('mesh.ply','mesh.stl','solid.ply','mesh.json'):(source/name).write_bytes(b'old export')
+        (source/'cloud_state.npz').unlink();edit_session.clone(source,out,alignment.version(source))
+        with patch.object(cloud.Scanner,'restore',wraps=cloud.Scanner.restore) as restore, \
+             patch.object(fusion,'make_mesh',side_effect=AssertionError('Crop must not automatically mesh')):
+            edit_session.edit(out,'crop',box=[-100,-100,-400,7,100,-100])
+            assert restore.call_count==1
+        assert len(view3d.read_ply(out/'cloud.ply'))==105
+        assert (out/'cloud_state.npz').exists()
+        assert not (out/'mesh.ply').exists() and not (out/'mesh.stl').exists()
+
+
 def test_stale_or_other_selected_model_cannot_be_edited():
     from test_webapp import idle_dispatcher,dispatch
     from tribuutscan import frames,webapp

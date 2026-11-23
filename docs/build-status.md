@@ -124,6 +124,23 @@ The 55 targeted Python checks and the capture/lasso JavaScript checks passed,
 including preserved PLY attributes and archives, empty-selection rejection,
 preview rollback and waiting for the rendered saved result.
 
+### Crop responsiveness fix — 23 November 2026
+
+Crop/clear on current editing copies now re-filter the saved fused cloud instead
+of rebuilding every source view. Expanding or clearing a box can recover hidden
+points while retaining lasso/base policy. Old exports are retired; generating a
+replacement mesh is a separate action. Older sessions without fused state retain
+a one-time frame-restore fallback, also without automatic meshing.
+
+A private copy of the reported real scan reproduced the exact 807,546-point crop
+in about 13 seconds. Clear crop restored 914,614 points in about 14 seconds while
+retaining both lasso regions. Browser Undo/Redo restored both counts. Timings
+include saving/history and viewport reload on that host; original scans were
+unchanged. The UI waits for updated geometry and Clear crop removes active preview
+clipping as well. The 61 targeted Python checks and capture/saved-workspace
+JavaScript checks passed, including rotated axes, crop expansion/clear, archive
+preservation, mesh retirement, invalid bounds and legacy fallback.
+
 This checkpoint updates the tools, workflow documentation and screenshots; it does
 not add a fresh hardware or performance acceptance result. Proposed inspection
 and cleanup additions are tracked separately in the [roadmap](roadmap.md).

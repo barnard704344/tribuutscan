@@ -360,13 +360,23 @@ async function editable(force=false){
   status('Creating a separate editable copy…');
   const job=await savedCommand('edit-copy');await waitJob(job.output);
 }
+async function waitRenderedChange(name,version){
+  cloudKey=null;const deadline=Date.now()+45000;
+  while(!renderedModel||renderedModel.name!==name||renderedModel.version!==lastInfo?.version||lastInfo.version===version){
+    if(lastInfo?.name!==name)throw Error('Another browser changed the model. Reopen your edited copy from Files.');
+    if(Date.now()>deadline)throw Error('The updated model could not be reloaded. Refresh this page to show the saved result.');
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+}
 async function runAction(action,label,query=''){
   if(busy)return '';busy=true;updateTools();status(`Working: ${label}…`);
   try{
+    if(action==='crop-off')closeCrop(false);
     await editable();status(`Working: ${label}…`);desiredMesh=action==='mesh';
     const state=await host('/api/state');const snapshot=lastInfo;
     await host(`process/${action}${query}`,{name:snapshot.name,model_version:snapshot.version,revision:state.revision,instance:state.instance});
     const message=await waitJob();if(action==='mesh')desiredMesh=true;
+    if(action==='crop'||action==='crop-off')await waitRenderedChange(snapshot.name,snapshot.version);
     status(message);return message;
   }catch(e){status(e.message,true);return '';}
   finally{busy=false;updateTools();}
@@ -553,13 +563,7 @@ async function cleanupAction(operation,rule=null){
     await editable();const name=lastInfo.name,version=lastInfo.version;
     status(operation==='delete-region'?`Removing ${requestedCount.toLocaleString()} selected points · saving on the host…`:'Saving cleanup…');
     await savedCommand('edit-operation',{operation,rule});const message=await waitJob();committed=true;
-    cloudKey=null;
-    const deadline=Date.now()+45000;
-    while(!renderedModel||renderedModel.name!==name||renderedModel.version!==lastInfo?.version||lastInfo.version===version){
-      if(lastInfo?.name!==name)throw Error('Another browser changed the model. Reopen your edited copy from Files.');
-      if(Date.now()>deadline)throw Error('The updated model could not be reloaded. Refresh this page to show the saved result.');
-      await new Promise(resolve=>setTimeout(resolve,100));
-    }
+    await waitRenderedChange(name,version);
     deletePreview=null;clearLasso();status(message);
   }catch(error){
     if(!committed&&deletePreview&&renderedModel?.version===deletePreview.version)points?.geometry.setIndex(null);

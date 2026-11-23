@@ -159,6 +159,13 @@ observed in the standalone NVIDIA benchmark; it is not a required capture step.
 
 ## Save, restore or mesh fails
 
+A crop job in older builds restored/remerged every view and could automatically
+regenerate a mesh, appearing stuck for minutes. Current editing copies use the
+saved fused cloud for crop/clear, preserve lasso rules, retire old meshes and leave
+mesh regeneration as a separate action. Refresh the page after updating; new
+processing workers load the new crop code without restarting the scanner host.
+An older session without `cloud_state.npz` still needs its initial restore.
+
 Wait for optimisation/meshing to finish before restarting. Keep the scan directory,
 raw recording and session metadata together. Continuing needs compatible camera
 calibration/range and saved source data, not just `cloud.ply`. Low overlap, lost

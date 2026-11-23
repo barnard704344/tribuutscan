@@ -121,6 +121,55 @@ def delete_region(directory, rule):
     return f'Removed {removed:,} points; {count:,} remain. Rebuild the mesh when ready.'
 
 
+def crop_saved(directory, operation, box=None):
+    """Re-filter the full saved voxel cloud, without restoring/remerging source frames."""
+    import numpy as np
+    from . import cloud, pointcloud
+    directory = Path(directory)
+    session_file = directory / 'session.json'
+    session = json.loads(session_file.read_text())
+    axes = (session.get('crop') or {}).get('axes', session.get('crop_axes'))
+    if axes is None:
+        axes = cloud.saved_crop_axes(directory, session).round(6).tolist()
+    axes = np.asarray(axes, float)
+    if axes.shape != (3, 3) or not np.isfinite(axes).all() or not np.allclose(axes @ axes.T, np.eye(3), atol=1e-4):
+        raise ValueError('Invalid saved crop axes')
+    crop = None
+    if operation == 'crop':
+        bounds = np.asarray([] if box is None else box, float)
+        if bounds.shape != (6,) or not np.isfinite(bounds).all() or (bounds[:3] >= bounds[3:]).any():
+            raise ValueError('Crop needs six finite bounds in millimetres, with low below high')
+        crop = dict(axes=axes.tolist(), lo=bounds[:3].tolist(), hi=bounds[3:].tolist())
+    scanner = cloud.Scanner(session.get('preset', 'small'), mode=session.get('mode', 'still'),
+                            remove_base=session.get('remove_base', True), log=lambda _: None)
+    try:
+        state = cloud.load_npz(directory / 'cloud_state.npz')
+        fused = cloud.VoxelCloud(float(state['point_mm']))
+        for name in ('keys', 'xyz', 'rgb', 'n', 'nrm', 'seen'):
+            setattr(fused, name, state[name])
+        fused.frames, fused.raw_points = int(state['frames']), int(state['raw_points'])
+        scanner.cloud = fused
+        scanner.scene.load(json.loads((directory / 'scene.json').read_text()))
+        scanner.crop = crop
+        policy = directory / 'cleanup.json'
+        rules = json.loads(policy.read_text()) if policy.exists() else []
+        if not isinstance(rules, list) or len(rules) > 32:
+            raise ValueError('Invalid saved lasso cleanup')
+        scanner.cleanup = [cleanup.validate(rule) for rule in rules]
+        scanner.poses = cloud.read_poses(directory / 'poses.txt')
+        filtered = scanner.output_cloud()
+        xyz, rgb, normals, seen, minimum = cloud.ply_arrays(filtered, scanner.poses,
+                                                         min_seen=int(session.get('min_seen', cloud.MIN_SEEN)))
+        pointcloud.write_ply(directory / 'cloud.ply', xyz, rgb, normals=normals, seen=seen)
+        session.update(crop=crop, crop_axes=axes.tolist(), points_kept=len(xyz), min_seen=minimum,
+                       cubes=len(filtered), cleanup_regions=len(scanner.cleanup))
+        session_file.write_text(json.dumps(session, indent=2))
+        mesh_exports.retire(directory)
+        return f'{"cropped" if crop else "crop cleared"}: {len(xyz):,} points. Generate a new mesh when ready.'
+    finally:
+        scanner.discard()
+
+
 def edit(directory, operation, rule=None, box=None):
     directory = Path(directory)
     note = metadata(directory)
@@ -154,6 +203,8 @@ def edit(directory, operation, rule=None, box=None):
         copy_files(directory, stage, reserve=2)
         if operation == 'delete-region':
             message = delete_region(stage, rule)
+        elif operation in ('crop', 'crop-off') and (stage / 'cloud_state.npz').is_file():
+            message = crop_saved(stage, operation, box)
         else:
             from . import cloud, optimise
             scanner = cloud.Scanner.restore(stage)
@@ -165,6 +216,8 @@ def edit(directory, operation, rule=None, box=None):
                 else:
                     if operation == 'optimise' and scanner.cleanup:
                         raise ValueError('Clear or undo lasso cleanup before optimising poses, then clean up again')
+                    if operation in ('crop', 'crop-off'):
+                        mesh_exports.retire(stage)  # legacy restore still keeps meshing a separate action
                     message = optimise.process(scanner, stage, operation, box=box)
             finally:
                 scanner.discard()
