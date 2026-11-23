@@ -175,8 +175,11 @@ To combine two saved free-object scans, use **Files → Align saved scans**. See
 saving a separate full session. This first stage has explicit input restrictions;
 it does not yet provide brush/lasso cleanup.
 
-In the **Files** tab, choose a take under **Saved scans**, choose **Open scan**,
-then follow **Inspect, process & download**. The separate result page provides model inspection,
+In the **Files** tab, choose a take under **Saved scans** and choose **Open scan**.
+The result viewer opens in the current tab after the host accepts the selection.
+Use **Scan → Scanner controls** there to return to capture. The **Inspect, process
+& download** link can also open the currently loaded result in another tab.
+The separate result page provides model inspection,
 processing, cropping and available PLY/STL downloads. It is distinct from the
 live capture workspace. Keep scans and their source recordings together when
 moving them to another machine.

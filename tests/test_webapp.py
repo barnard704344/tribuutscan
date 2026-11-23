@@ -636,3 +636,21 @@ if __name__ == '__main__':
     for name,test in tests:
         print(name,flush=True);test()
     print(f'{len(tests)} web service tests passed',flush=True)
+
+
+def test_saved_scan_can_open_without_scanner_but_not_during_capture_or_recording():
+    with idle_dispatcher() as (service,app):
+        folder=frames.CAPTURES/'offline-scan'
+        folder.mkdir();(folder/'cloud.ply').write_bytes(b'fixture')
+        app.scan_state='disconnected';app.lost=True
+        dispatch(service,'open',name='offline-scan')
+        assert service.model.file.ply==folder/'cloud.ply'
+        for phase in ('scanning','paused','saving'):
+            app.scan_state=phase
+            try:dispatch(service,'open',name='offline-scan')
+            except webapp.Conflict:pass
+            else:raise AssertionError('Opened a saved scan during '+phase)
+        app.scan_state='idle';app.rec['recorder']=object()
+        try:dispatch(service,'open',name='offline-scan')
+        except webapp.Conflict:pass
+        else:raise AssertionError('Opened saved scan during recording')

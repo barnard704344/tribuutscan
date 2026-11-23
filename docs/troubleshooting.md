@@ -49,6 +49,16 @@ it is not a current reading. Missing current distance can result from missing
 depth or an invalid selection. Reset aim and select the subject again if needed.
 If the gauge itself is absent, refresh the browser after checking host version.
 
+## Open scan does nothing or opens the wrong take
+
+Refresh the capture page to load the current browser code. In **Files**, choose
+the desired take, then press **Open scan**. Selecting a name alone does not open
+it. The viewer opens in the current tab after the host accepts the request;
+background refreshes should preserve your dropdown choice. Saved scans can open
+with the scanner disconnected, but capture, recording and processing must finish
+first. If the request fails, its error appears above the tool panel and the page
+stays in the capture workspace.
+
 ## Coverage says waiting, stays pink, or stops growing
 
 Check **Tracking** and **Geometry** first. Camera frames can keep arriving while

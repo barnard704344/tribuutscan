@@ -428,7 +428,7 @@ class Service:
         if action == 'alignment-save':
             return self.save_alignment(data)
         if action == 'open':
-            if app and (app.scan_state != 'idle' or app.rec['recorder'] or app.job['process']):
+            if app and (app.scan_state not in ('idle', 'disconnected') or app.rec['recorder'] or app.job['process']):
                 raise Conflict('Finish scanning and recording before opening a saved scan')
             if self.processing:
                 raise Conflict('Wait for processing to finish')
