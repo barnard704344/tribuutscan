@@ -97,7 +97,8 @@ forward this port directly onto the internet.
   Files remain in this checkout's ignored `captures/` directory.
 - **Files → Open scan → Align** loads the opened scan as the blue reference.
   Choose a second scan, then drag the amber scan with **Move scan / Rotate scan**,
-  or fit matching points. Saving creates a new full session. See
+  or fit matching points. **Refine alignment** proposes a small surface fit, with
+  optional overlap selection and one-step undo. Saving creates a new full session. See
   the [first-release limits](docs/alignment.md#first-release-limits) before using it.
 
 ## Status and limits

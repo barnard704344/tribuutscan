@@ -117,6 +117,10 @@ Align, Cleanup, Mesh and Export tabs. Edits create a copy automatically, and
 lasso/crop processing has persistent undo/redo.
 See the [alignment guide](alignment.md) for current restrictions and validation status.
 
+After rough placement, **Refine alignment** proposes a local surface fit. Select
+an optional overlap box to exclude unwanted geometry, review the sampled fit
+report, and Undo to recover the manual placement if needed.
+
 ![Align tab with direct scan manipulation controls](images/saved-alignment.png)
 
 *Synthetic saved sessions; the blue reference stays fixed while the amber scan is adjusted.*

@@ -31,7 +31,7 @@ import webbrowser
 import numpy as np
 
 from . import controller as core
-from . import alignment, cleanup, calib, frames, gpu, livescan, view3d
+from . import alignment, alignment_refine, cleanup, calib, frames, gpu, livescan, view3d
 from .image import write_png
 
 WEB = Path(__file__).parent / 'web'
@@ -203,6 +203,7 @@ class Service:
     def __init__(self, demo=False):
         self.demo = demo
         self.alignment_output = None
+        self.refinement = None
         self.last_job_failed = False
         self.instance = secrets.token_hex(8)
         self.backend_token = secrets.token_urlsafe(32)
@@ -285,6 +286,9 @@ class Service:
                         self.processing_thread.join(timeout=1)
                     self.last_job_failed = self.processing.returncode != 0
                     self.error = self.processing_result or f'Processing exited with code {self.processing.returncode}'
+                    if self.refinement and self.refinement.get('pending'):
+                        self.refinement = dict(job=self.refinement['job'], pending=False,
+                            error=self.error or 'Refinement did not return a result')
                     if self.alignment_output is not None:
                         if self.processing.returncode == 0 and (self.alignment_output / 'cloud.ply').is_file():
                             self.model.file = view3d.FileSource(self.alignment_output)
@@ -337,6 +341,7 @@ class Service:
                      restart_supported=True, restarting=self.restart_requested, coverage_kind='flat')
         state['distance_gauge'] = core.distance_reading(None, {}, calib.CAMERA.mode,
                                                         calib.CAMERA.law_estimate, time.monotonic())
+        state['alignment_refinement'] = self.refinement
         previews = {}
         if app:
             blocked = app.lost or app.switching['busy']
@@ -433,6 +438,8 @@ class Service:
             return alignment.fit(data.get('reference_points'), data.get('moving_points'))
         if action == 'alignment-save':
             return self.save_alignment(data)
+        if action == 'alignment-refine':
+            return self.refine_alignment(data)
         if action == 'open':
             if app and (app.scan_state not in ('idle', 'disconnected') or app.rec['recorder'] or app.job['process']):
                 raise Conflict('Finish scanning and recording before opening a saved scan')
@@ -558,10 +565,31 @@ class Service:
         spec = dict(reference=str(a), moving=str(b), output=str(out), transform=matrix, versions=versions)
         return self.saved_job('tribuutscan.alignment', spec, out)
 
-    def saved_job(self, module, spec, out=None):
+    def refine_alignment(self, data):
+        app = self.controller
+        if self.demo or self.processing or app and (app.scan_state not in ('idle', 'disconnected')
+                or app.rec['recorder'] or app.job['process'] or app.switching['busy']):
+            raise Conflict('Finish capture and processing before refining alignment')
+        a, b = scan_directory(data.get('reference')), scan_directory(data.get('moving'))
+        if a == b:
+            raise ValueError('Choose two different scans')
+        versions = [alignment.version(a), alignment.version(b)]
+        if data.get('versions') != versions:
+            raise Conflict('A source scan changed; reload both scans')
+        matrix = alignment.rigid(data.get('transform')).tolist()
+        distance, region = alignment_refine.settings(data.get('max_distance_mm', 10), data.get('region'))
+        alignment.compatible(a, b)
+        job = secrets.token_hex(12)
+        spec = dict(reference=str(a), moving=str(b), versions=versions, transform=matrix,
+                    max_distance_mm=distance, region=region)
+        self.saved_job('tribuutscan.alignment_refine', spec, refinement_id=job)
+        return dict(job=job)
+
+    def saved_job(self, module, spec, out=None, refinement_id=None):
         executable = core.VENV_PYTHON if core.VENV_PYTHON.exists() else Path(sys.executable)
         process = subprocess.Popen(core.mesh_scope(lambda message: None) + [str(executable), '-m', module], cwd=core.REPO,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            env={**os.environ, 'OMP_NUM_THREADS':'2', 'OPENBLAS_NUM_THREADS':'2'} if refinement_id else None)
         try:
             process.stdin.write(json.dumps(spec))
             process.stdin.close()
@@ -573,8 +601,18 @@ class Service:
         self.alignment_output = out
         self.last_job_failed = False
         self.processing_result = None
+        if refinement_id:
+            self.refinement = dict(job=refinement_id, pending=True)
         def read():
             for line in process.stdout:
+                if refinement_id and line.startswith(alignment_refine.RESULT_PREFIX):
+                    try:
+                        result = json.loads(line[len(alignment_refine.RESULT_PREFIX):])
+                        alignment.rigid(result['transform'])
+                        self.refinement = dict(job=refinement_id, pending=False, result=result)
+                    except (ValueError, KeyError, TypeError):
+                        self.refinement = dict(job=refinement_id, pending=False, error='Invalid refinement result')
+                    continue
                 if line.strip():
                     self.processing_result = line.strip()
         self.processing_thread = threading.Thread(target=read, daemon=True)

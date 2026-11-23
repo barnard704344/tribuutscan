@@ -17,15 +17,16 @@ private saved scans or live host credentials are included.
 | `saved-alignment.png` | Align tab with both synthetic scans loaded and Move scan selected |
 | `saved-cleanup.png` | Lasso selection preview inside Cleanup, synthetic session |
 | `alignment-drag.png` | Same two-scan view, illustrating direct tools and the amber moving-scan outline |
+| `alignment-refine.png` | Surface-refinement proposal and sampled fit report on generated curved surfaces |
 
 The pairing example uses `192.0.2.10` and `documentation-example-only`; it is not
 an operational pairing link. Screenshots show demo/disconnected state, not scan
 quality or performance. Keep captions explicit when reusing them.
 
-The alignment and saved-workspace screenshots use generated point-grid sessions
+The alignment and saved-workspace screenshots use generated point-grid or curved-surface sessions
 and the actual WebGL editors. Unlike the capture screenshots, they exercise
 saved-session editing on synthetic data rather than demo mode. The alignment
-images were refreshed after the direct move/rotate controls were added. No physical
+images were refreshed after the surface-refinement tools were added. No physical
 scanner recording is shown.
 
 When replacing images, use a separate demo service with an empty capture directory,

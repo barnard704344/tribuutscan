@@ -7,7 +7,7 @@ to be connected. Editing and processing require capture/recording to be idle.
 
 ![Saved-scan workspace showing synthetic test geometry](images/saved-workspace.png)
 
-*All screenshots here use synthetic point-grid sessions, not private scanner data.*
+*All screenshots here use synthetic sessions, not private scanner data.*
 
 ## View
 
@@ -33,6 +33,13 @@ this workspace. Switching tabs preserves the loaded pair for the same opened sca
 For quick manual alignment, choose **Move scan** or **Rotate scan** and drag the
 amber scan directly. The blue reference stays fixed. Use **Orbit view** to move
 the camera. Each completed drag is one undo step; Escape cancels an active drag.
+
+After rough positioning, **Refine alignment** fits the nearby overlapping surfaces
+on the host. Optionally use **Select overlap** to restrict the fit to a boxed
+shared region; excluded preview points dim. Inspect the proposed result and its
+sampled fit report, then Undo/Redo or save it. Failed fits leave the placement
+unchanged. See the [refinement walkthrough](alignment.md#refine-the-overlapping-surfaces)
+for selection, cutoff settings and limits.
 
 See [alignment](alignment.md) for restrictions. Align uncropped, single-piece
 free-object scans with matching range and calibration **before** lasso cleanup.

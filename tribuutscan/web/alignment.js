@@ -11,6 +11,7 @@ controls.enableDamping=true;
 const ray=new THREE.Raycaster(), pointer=new THREE.Vector2();
 let clouds={}, loaded=null, epoch=0, loading=false, saving=false, awaiting=false, mode=null;
 let manipulation='orbit', drag=null;
+let region=null, regionSelecting=false, regionDrag=null;
 const movingBox=new THREE.Box3Helper(new THREE.Box3(),0xffc45c);movingBox.visible=false;scene.add(movingBox);
 let base=new THREE.Matrix4(), past=[], future=[], landmarks={reference:[],moving:[]};
 const nudges=['tx','ty','tz','rx','ry','rz'];
@@ -30,22 +31,26 @@ function buttons(){
  $('frame').disabled=loading||saving||awaiting||!clouds.reference;
  for(const id of ['reference','moving'])$(id).disabled=loading||saving||awaiting;
  for(const id of nudges)$(id).disabled=!ready();
+ for(const id of ['refine','select-overlap','match-distance'])$(id).disabled=!ready();
+ $('clear-overlap').disabled=!ready()||(!region&&!regionSelecting);
+ $('select-overlap').setAttribute('aria-pressed',String(regionSelecting));
  for(const option of $('moving').options)option.disabled=!!option.value&&option.value===$('reference').value;
  syncManipulation();
  $('pair-count').textContent=`Reference: ${landmarks.reference.length} · Moving: ${landmarks.moving.length}`;
 }
 function matrix(){return clouds.moving?.matrix.clone()||new THREE.Matrix4();}
 function apply(m,remember=true){
+ clearOverlap();$('refine-report').textContent='Inspect the placement from several angles before saving.';
  if(remember){past.push(matrix());if(past.length>100)past.shift();future=[];}
  base.copy(m);clouds.moving.matrix.copy(m);clouds.moving.matrixWorldNeedsUpdate=true;
  for(const id of nudges)$(id).value='0';$('fit-report').textContent='';buttons();
 }
-function pickMode(next){cancelDrag();if(next)manipulation='orbit';mode=next;for(const key of ['reference','moving']){
+function pickMode(next){cancelDrag();if(next){cancelRegionDrag();regionSelecting=false;manipulation='orbit';}mode=next;for(const key of ['reference','moving']){
  if(clouds[key])clouds[key].visible=mode?key===mode:$('visibility').value==='both'||$('visibility').value===key;
  $('pick-'+key).setAttribute('aria-pressed',String(mode===key));
- }syncManipulation();
+ }$('select-overlap').setAttribute('aria-pressed',String(regionSelecting));syncManipulation();
 }
-function dispose(){cancelDrag();movingBox.visible=false;for(const item of Object.values(clouds)){
+function dispose(){cancelDrag();clearOverlap();movingBox.visible=false;for(const item of Object.values(clouds)){
  scene.remove(item);item.traverse(o=>{o.geometry?.dispose();o.material?.dispose();});
  }clouds={};}
 function makeCloud(buf,key){
@@ -108,16 +113,16 @@ for(const key of ['reference','moving']){
  $('pick-'+key).onclick=()=>{pickMode(mode===key?null:key);$('status').textContent=mode?`Click distinct features on the ${key} scan in matching order. Click its pick button again to finish.`:'Orbit to inspect the alignment.';};
 }
 function syncManipulation(){
- const editing=manipulation!=='orbit'&&!mode&&ready()&&clouds.moving?.visible;
+ const editing=manipulation!=='orbit'&&!mode&&!regionSelecting&&ready()&&clouds.moving?.visible;
  for(const name of ['orbit','move','rotate']){
   $('tool-'+name).setAttribute('aria-pressed',String(manipulation===name));
   $('tool-'+name).disabled=name!=='orbit'&&(!ready()||!clouds.moving?.visible);
  }
  controls.mouseButtons.LEFT=editing?null:THREE.MOUSE.ROTATE;
  controls.touches.ONE=editing?null:THREE.TOUCH.ROTATE;
- controls.enableDamping=!editing;controls.enabled=!drag;
+ controls.enableDamping=!editing&&!regionSelecting;controls.enabled=!drag&&!regionSelecting;
  movingBox.visible=!!editing;
- canvas.style.cursor=mode?'crosshair':editing?(drag?'grabbing':manipulation==='rotate'?'grab':'move'):'grab';
+ canvas.style.cursor=mode||regionSelecting?'crosshair':editing?(drag?'grabbing':manipulation==='rotate'?'grab':'move'):'grab';
  $('transform-hint').textContent=mode?'Click corresponding features. Drag still orbits the camera.':editing
   ?manipulation==='move'?'Drag the amber scan to move it across the view. Release to apply; Escape cancels the drag.':'Drag the amber scan to rotate it about its centre. Release to apply; Escape cancels the drag.'
   :'Orbit to inspect. Choose Move scan or Rotate scan to drag the amber scan; the blue reference stays fixed.';
@@ -125,7 +130,7 @@ function syncManipulation(){
  if(legend)legend.textContent=editing?'Drag amber scan · right-drag pans · wheel zooms · Orbit view rotates camera':'Drag to orbit · right-drag to pan · scroll to zoom';
 }
 for(const name of ['orbit','move','rotate'])$('tool-'+name).onclick=()=>{
- cancelDrag();mode=null;manipulation=name;pickMode(null);controls.update();
+ cancelRegionDrag();regionSelecting=false;cancelDrag();mode=null;manipulation=name;pickMode(null);controls.update();buttons();
 };
 function cancelDrag(){
  if(!drag)return;const previous=drag;drag=null;
@@ -173,8 +178,8 @@ canvas.addEventListener('pointerup',event=>{
  if(!final.equals(previous.start))apply(final);else syncManipulation();
 });
 for(const event of ['pointercancel','lostpointercapture'])canvas.addEventListener(event,e=>{if(drag?.id===e.pointerId)cancelDrag();});
-window.addEventListener('blur',cancelDrag);
-window.addEventListener('keydown',event=>{if(event.key==='Escape'){cancelDrag();manipulation='orbit';pickMode(null);}});
+window.addEventListener('blur',()=>{cancelDrag();cancelRegionDrag();});
+window.addEventListener('keydown',event=>{if(event.key==='Escape'){cancelRegionDrag();regionSelecting=false;cancelDrag();manipulation='orbit';pickMode(null);buttons();}});
 $('visibility').onchange=()=>{if($('visibility').value==='reference')manipulation='orbit';pickMode(null);};
 canvas.addEventListener('pointerdown',e=>{canvas.down={x:e.clientX,y:e.clientY};});
 canvas.addEventListener('pointerup',e=>{
@@ -192,6 +197,91 @@ $('fit').onclick=async()=>{awaiting=true;buttons();error();try{
  apply(new THREE.Matrix4().set(...result.transform.flat()));pickMode(null);
  $('fit-report').textContent=`Picked-point fit: ${result.landmark_rmse_mm.toFixed(2)} mm RMS. This is not a surface-accuracy measurement.`;
  }catch(e){error(e.message);}finally{awaiting=false;buttons();}};
+function clearOverlap(){
+ cancelRegionDrag();region=null;regionSelecting=false;
+ for(const [key,item] of Object.entries(clouds)){
+  item.geometry.deleteAttribute('color');item.material.vertexColors=false;item.material.color.set(key==='reference'?'#53b9ff':'#ffc45c');item.material.needsUpdate=true;
+ }
+ $('overlap-status').textContent='Using whole scans. Only nearby surface matches influence refinement.';
+}
+function cancelRegionDrag(){
+ const previous=regionDrag;regionDrag=null;$('overlap-box').setAttribute('hidden','');
+ if(previous&&canvas.hasPointerCapture(previous.id))canvas.releasePointerCapture(previous.id);
+}
+function regionPoint(event){
+ const rect=canvas.getBoundingClientRect();return {x:Math.max(0,Math.min(rect.width,event.clientX-rect.left)),y:Math.max(0,Math.min(rect.height,event.clientY-rect.top)),width:rect.width,height:rect.height};
+}
+function showOverlap(){
+ const projection=new THREE.Matrix4().set(...region.matrix.flat()), counts=[];
+ const polygon=region.polygon, xmin=Math.min(...polygon.map(p=>p[0])),xmax=Math.max(...polygon.map(p=>p[0])),ymin=Math.min(...polygon.map(p=>p[1])),ymax=Math.max(...polygon.map(p=>p[1]));
+ for(const [key,item] of Object.entries(clouds)){
+  const attribute=item.geometry.attributes.position,colors=new Float32Array(attribute.count*3),bright=new THREE.Color(key==='reference'?'#53b9ff':'#ffc45c'),dim=new THREE.Color('#354254');let count=0;
+  const matrix=projection.clone().multiply(item.matrix);
+  for(let i=0;i<attribute.count;i++){
+   const p=new THREE.Vector4(attribute.getX(i),attribute.getY(i),attribute.getZ(i),1).applyMatrix4(matrix);
+   const x=p.x/p.w,y=p.y/p.w,z=p.z/p.w,inside=p.w>0&&z>=-1&&z<=1&&x>=xmin&&x<=xmax&&y>=ymin&&y<=ymax;
+   (inside?bright:dim).toArray(colors,i*3);if(inside)count++;
+  }
+  counts.push(`${key}: ${count.toLocaleString()}`);item.geometry.setAttribute('color',new THREE.BufferAttribute(colors,3));item.material.color.set('#ffffff');item.material.vertexColors=true;item.material.needsUpdate=true;
+ }
+ $('overlap-status').textContent=`Selected preview points — ${counts.join(' · ')}. Dim points are excluded. Moving either scan clears this selection.`;
+}
+$('select-overlap').onclick=()=>{
+ const next=!regionSelecting;clearOverlap();cancelDrag();mode=null;manipulation='orbit';pickMode(null);regionSelecting=next;
+ if(next){$('visibility').value='both';pickMode(null);$('overlap-status').textContent='Drag a box across the shared surface of both scans. Escape cancels.';}
+ buttons();
+};
+$('clear-overlap').onclick=()=>{clearOverlap();buttons();};
+canvas.addEventListener('pointerdown',event=>{
+ if(!regionSelecting||!ready())return;
+ event.stopImmediatePropagation();event.preventDefault();
+ if(event.button!==0)return;
+ if(regionDrag){cancelRegionDrag();return;}
+ regionDrag={id:event.pointerId,start:regionPoint(event)};canvas.setPointerCapture(event.pointerId);
+},true);
+canvas.addEventListener('pointermove',event=>{
+ if(!regionDrag||event.pointerId!==regionDrag.id)return;
+ event.stopImmediatePropagation();const p=regionPoint(event),a=regionDrag.start,box=$('overlap-box');
+ $('overlap-overlay').setAttribute('viewBox',`0 0 ${p.width} ${p.height}`);
+ for(const [name,value] of Object.entries({x:Math.min(a.x,p.x),y:Math.min(a.y,p.y),width:Math.abs(a.x-p.x),height:Math.abs(a.y-p.y)}))box.setAttribute(name,value);
+ box.removeAttribute('hidden');
+},true);
+canvas.addEventListener('pointerup',event=>{
+ if(!regionDrag||event.pointerId!==regionDrag.id)return;
+ event.stopImmediatePropagation();const a=regionDrag.start,p=regionPoint(event);cancelRegionDrag();regionSelecting=false;
+ if(Math.abs(a.x-p.x)<8||Math.abs(a.y-p.y)<8){error('Draw a larger overlap box.');buttons();return;}
+ camera.updateMatrixWorld(true);const projection=camera.projectionMatrix.clone().multiply(camera.matrixWorldInverse),e=projection.elements;
+ const xmin=Math.min(a.x,p.x)/p.width*2-1,xmax=Math.max(a.x,p.x)/p.width*2-1,ymin=1-Math.max(a.y,p.y)/p.height*2,ymax=1-Math.min(a.y,p.y)/p.height*2;
+ region={matrix:Array.from({length:4},(_,r)=>Array.from({length:4},(_,c)=>e[c*4+r])),polygon:[[xmin,ymin],[xmax,ymin],[xmax,ymax],[xmin,ymax]]};
+ showOverlap();error();buttons();
+},true);
+for(const type of ['pointercancel','lostpointercapture'])canvas.addEventListener(type,event=>{if(regionDrag?.id===event.pointerId){cancelRegionDrag();buttons();}});
+$('refine').onclick=async()=>{
+ if(!$('match-distance').reportValidity())return;
+ cancelDrag();cancelRegionDrag();regionSelecting=false;pickMode(null);awaiting=true;buttons();error();
+ const id=epoch;
+ $('refine-report').textContent='Refining shared surfaces on the host…';
+ try{
+  const instance=(await api('/api/state')).instance,deadline=Date.now()+120000;
+  const elements=matrix().elements,transform=Array.from({length:4},(_,r)=>Array.from({length:4},(_,c)=>elements[c*4+r]));
+  const job=await command({action:'alignment-refine',...loaded,transform,max_distance_mm:Number($('match-distance').value),region});
+  for(;;){
+   if(Date.now()>deadline)throw Error('The host is still busy. Check Host status before retrying.');
+   await new Promise(resolve=>setTimeout(resolve,500));const state=await api('/api/state');
+   if(state.instance!==instance)throw Error('Host restarted; keep the manual placement and retry.');
+   if(state.processing)continue;
+   const refinement=state.alignment_refinement;
+   if(refinement?.job!==job.job)throw Error('Another refinement replaced this result. Retry with the current scans.');
+   if(refinement.error||state.job_failed)throw Error(refinement.error||state.job_result||'Refinement failed');
+   const result=refinement.result;if(!result)throw Error('Refinement did not return a proposal');
+   if(id!==epoch)return;
+   apply(new THREE.Matrix4().set(...result.transform.flat()));
+   $('refine-report').textContent=`Surface match: ${result.before_rmse_mm.toFixed(2)} → ${result.after_rmse_mm.toFixed(2)} mm RMS; moving-scan overlap ${(result.before_overlap*100).toFixed(0)}% → ${(result.after_overlap*100).toFixed(0)}% within ${result.max_distance_mm} mm. Shift ${result.shift_mm.toFixed(2)} mm, turn ${result.rotation_degrees.toFixed(2)}°. Sampled surfaces only; inspect the result. Undo restores the previous placement.`;
+   $('status').textContent='Refinement preview applied. Inspect from several angles, then save or Undo.';break;
+  }
+ }catch(e){error(e.message);$('refine-report').textContent='Refinement was not applied. Your previous placement is unchanged.';}
+ finally{awaiting=false;buttons();}
+};
 $('centre').onclick=()=>{const a=clouds.reference.geometry.boundingBox.getCenter(new THREE.Vector3()),b=clouds.moving.geometry.boundingBox.getCenter(new THREE.Vector3());apply(new THREE.Matrix4().makeTranslation(...a.sub(b).toArray()));pickMode(null);frame();};
 $('frame').onclick=frame;
 $('reset').onclick=()=>apply(new THREE.Matrix4());
@@ -219,7 +309,7 @@ $('save').onclick=async()=>{
 new ResizeObserver(()=>{const r=canvas.parentElement.getBoundingClientRect();renderer.setSize(r.width,r.height,false);camera.aspect=r.width/r.height;camera.updateProjectionMatrix();}).observe(canvas.parentElement);
 const animate=()=>{controls.update();if(movingBox.visible&&clouds.moving)movingBox.box.setFromObject(clouds.moving);renderer.render(scene,camera);};
 renderer.setAnimationLoop(animate);
-if(embedded){window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===parent&&event.data?.type==='alignment-visible'){if(!event.data.visible)cancelDrag();renderer.setAnimationLoop(event.data.visible?animate:null);}});parent.postMessage({type:'alignment-ready'},location.origin);}
+if(embedded){window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===parent&&event.data?.type==='alignment-visible'){if(!event.data.visible){cancelDrag();cancelRegionDrag();}renderer.setAnimationLoop(event.data.visible?animate:null);}});parent.postMessage({type:'alignment-ready'},location.origin);}
 try{
  const state=await api('/api/state');
  const options=()=>state.scans.map(name=>{const option=document.createElement('option');option.value=option.textContent=name;return option;});

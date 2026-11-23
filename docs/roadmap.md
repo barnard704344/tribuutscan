@@ -1,7 +1,7 @@
 # Saved-workspace roadmap
 
-Proposed order as of 23 November 2026. These are ideas, not implemented features
-or a release schedule. Current behaviour is documented in the
+Priorities as of 23 November 2026. Items are proposed unless marked implemented;
+this is not a release schedule. Current behaviour is documented in the
 [saved-workspace guide](saved-workspace.md) and [build status](build-status.md).
 
 The existing path is capture → open → align → clean up → mesh → export.
@@ -25,12 +25,13 @@ controlled smoothing, hole filling and mesh reduction. Preserve original session
 editing-copy history and the distinction between measured and reconstructed
 surfaces. Mesh reduction should report geometric deviation, not just triangle count.
 
-## 3. Refine alignment
+## 3. Alignment refinement: implemented, awaiting real-scan validation
 
-Add optional surface registration after the existing direct move/rotate or
-landmark alignment. Show overlap and fit quality, let users restrict the fitting
-region and inspect the proposed result before applying it. Keep the manual result
-recoverable through undo.
+Local surface refinement is now available after direct move/rotate or landmark
+alignment, with an optional overlap box, sampled fit report and one-step undo.
+See the [alignment guide](alignment.md#refine-the-overlapping-surfaces) for its
+limits. Next, validate partial real scans and difficult/repeated surfaces before
+extending its automatic registration behaviour.
 
 ## 4. Compare with a reference
 

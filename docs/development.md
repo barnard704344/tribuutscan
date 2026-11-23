@@ -40,6 +40,7 @@ Choose checks for the changed paths and report what actually ran.
 | HTTP host, pairing, previews, restart | `tribuutscan/webapp.py` |
 | Browser capture and saved-result pages | `tribuutscan/web/` |
 | Saved-scan manual alignment and full-session save | `tribuutscan/alignment.py`, `tribuutscan/web/alignment.*` |
+| Bounded local surface refinement worker | `tribuutscan/alignment_refine.py` |
 | Editable copies, transactional history and cleanup masks | `tribuutscan/edit_session.py`, `tribuutscan/cleanup.py` |
 | Shared capture controller and optional desktop adapter | `tribuutscan/controller.py`, `tribuutscan/viewer.py` |
 | Scan worker and progress/performance messages | `tribuutscan/livescan.py` |
@@ -120,6 +121,20 @@ moving scan's centre. Keep the reference unchanged and each completed gesture to
 one preview undo step. Escape, pointer cancellation, lost capture, window blur and
 hiding the tab must revert an unfinished gesture. Test mouse and touch input,
 tab-switch preservation, saved rigid transforms and unchanged source files.
+
+Run the refinement checks with:
+
+```sh
+OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 .venv/bin/python tests/run_checks.py test_alignment_refine
+```
+
+The host starts refinement in a separate
+worker using the existing processing guard and optional memory scope. Keep its
+structured result tied to the requesting job, with source-version checks before
+and after work. Test partial overlap/noise, ambiguous patches, common world-space
+selection after manual placement, rejection without a preview edit, and a single
+undo step for an accepted proposal. Refinement is CPU/Open3D work and is separate
+from the live GPU pipeline.
 
 ## Repository hygiene
 

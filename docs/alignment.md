@@ -6,7 +6,7 @@ You can use it without the scanner connected, with the scanning environment inst
 
 ![Saved-scan alignment workspace with synthetic test geometry](images/web-alignment.png)
 
-*Browser screenshot using synthetic point-grid sessions, not a physical scan.*
+*Browser screenshot using synthetic sessions, not a physical scan.*
 
 ## First-release limits
 
@@ -52,6 +52,44 @@ alignment and landmark selections.
 ![Direct movement and rotation tools with the moving scan outlined](images/alignment-drag.png)
 
 *Synthetic browser test: the outlined amber scan is adjustable; the blue reference is fixed.*
+
+## Refine the overlapping surfaces
+
+After rough placement with dragging or matching points, use **Refine alignment**
+to propose a small surface adjustment. The blue reference stays fixed. This is a
+local fit, so it needs the shared surfaces already close together.
+
+1. Show **Both scans** and inspect the overlap. Optionally choose **Select overlap**
+   and drag a box around useful shared geometry. Selected points retain their
+   blue/amber colour; excluded points dim. Selection goes through the surface and
+   stays in the selected world-space region when you orbit. **Use whole scans**
+   clears it. A manual transform or completed refinement also clears the selection.
+2. Set **Maximum matching distance** (1–50 mm; default 10 mm) to cover the remaining
+   placement error. This is a correspondence cutoff, not a measurement tolerance.
+   Only nearby surface matches influence the fit. Use a region with corners or
+   varied shape, excluding supports, background and mismatched areas.
+3. Press **Refine alignment**. A separate CPU worker on the host performs robust
+   multi-scale point-to-plane registration. Capture/recording/processing must be
+   idle. The browser remains responsive; the scan inputs are locked until it finishes.
+4. Inspect the proposed overlay from several angles. The report compares sampled
+   nearest-match RMS and the share of sampled moving points within the cutoff,
+   plus the centre shift and rotation. These numbers do not measure dimensional
+   accuracy or prove the correct pose. **Undo** restores the rough placement in
+   one step; **Redo** restores the proposal. **Save aligned copy** saves the chosen
+   transform using the full session data.
+
+![Refinement preview on synthetic curved surfaces](images/alignment-refine.png)
+
+Refinement uses up to 30,000 sampled points per selected scan, with a bounded
+iteration budget. It rejects insufficient overlap, ambiguous/flat geometry,
+large corrections or a worsened nearest-match RMS. A rejected job leaves the
+previous placement unchanged. At least 100 selected points per scan and 20%
+moving-point overlap are required; these are acceptance guards, not quality
+certification. Similar or repeated shapes can still produce misleading fits.
+
+The existing saved-session restrictions above also apply to refinement. Source
+files and source versions are checked before and after processing. No source
+scan is modified, and refinement does not run trajectory optimisation.
 
 ## Save and clean up
 

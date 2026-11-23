@@ -76,6 +76,21 @@ Saving requires uncropped, single-piece Head / free object sessions with matchin
 camera calibration and range. Lasso-cleaned or bare exported PLY files are not
 compatible full sessions. See [alignment restrictions](alignment.md#first-release-limits).
 
+## Refine alignment refuses the fit or gives an unexpected result
+
+Roughly position the scans first. **Maximum matching distance** is the largest
+separation allowed for a match; increase it only enough to cover the remaining
+placement error. Use **Select overlap** to exclude supports or areas visible in
+only one scan. The box selects through surfaces, so check the bright/dim preview.
+Include varied shape rather than a flat or symmetric patch. Too few points or
+too little overlap cannot produce a reliable local fit.
+
+A failed refinement leaves the previous placement unchanged. Undo an unexpected
+proposal and use matching points or a better shared region. The fit report covers
+sampled nearby matches; a small RMS does not prove the whole scan is aligned.
+If the command is unavailable after updating, restart the idle scanner host and
+refresh the browser to load both Python and browser changes.
+
 ## Cleanup deletes too much, or optimisation is refused
 
 Lasso selection goes through the model, including surfaces behind the visible

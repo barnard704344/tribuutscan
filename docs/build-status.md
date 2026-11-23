@@ -19,6 +19,9 @@ known validation gaps, not a hardware certification or release guarantee.
 - Integrated alignment loads the opened scan as reference and a selected second
   scan automatically. Mouse/touch move and rotate tools adjust the moving scan
   directly, with preview undo/redo, optional landmark fitting and full-session save.
+- Local surface refinement after rough positioning, with optional overlap-box
+  selection, sampled fit statistics and one-step preview undo. A separate CPU
+  worker preserves UI responsiveness and shares the idle-processing guards.
 - Retained upstream calibration, tracking/recovery, optimisation, GPU fusion/meshing,
   CPU fallback and output pipeline. See [technical reference](technical-reference.md).
 
@@ -66,7 +69,18 @@ cancellation, saving and reopening the result. Tab switching preserved the pair.
 Desktop, laptop and phone layouts were checked. These used synthetic sessions;
 real-scene alignment quality and interaction with large scans still need a trial.
 
-The documentation audit refreshes the current workflow and screenshots; it does
+Surface-refinement checks cover known rigid offsets, noise/partial overlap,
+outliers, world-space selection, ambiguous planar patches, invalid input,
+unchanged sources, stale versions and asynchronous authenticated job results.
+Browser checks exercised rejected empty selection, mouse/touch overlap selection,
+touch cancellation, a successful proposal, single-step undo/redo and saving the
+recovered transform to a new full session. The 54 targeted Python checks and
+capture JavaScript checks passed; desktop/laptop/phone layouts were checked.
+The synthetic trial reduced sampled nearest-match RMS from about 1.99 mm to
+0.03 mm and recovered its known 2° offset. This does not establish scanner accuracy
+or real-scene registration quality.
+
+This checkpoint updates the tools, workflow documentation and screenshots; it does
 not add a fresh hardware or performance acceptance result. Proposed inspection
 and cleanup additions are tracked separately in the [roadmap](roadmap.md).
 
