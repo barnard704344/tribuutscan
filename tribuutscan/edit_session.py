@@ -201,7 +201,10 @@ def edit(directory, operation, rule=None, box=None):
     with tempfile.TemporaryDirectory(prefix='.edit-work-', dir=directory.parent) as tmp:
         stage = Path(tmp)
         copy_files(directory, stage, reserve=2)
-        if operation == 'delete-region':
+        if operation == 'remove-islands':
+            from . import islands
+            message = islands.apply(stage, rule)
+        elif operation == 'delete-region':
             message = delete_region(stage, rule)
         elif operation in ('crop', 'crop-off') and (stage / 'cloud_state.npz').is_file():
             message = crop_saved(stage, operation, box)

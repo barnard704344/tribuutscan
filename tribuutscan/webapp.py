@@ -31,7 +31,7 @@ import webbrowser
 import numpy as np
 
 from . import controller as core
-from . import alignment, alignment_refine, cleanup, calib, frames, gpu, livescan, scan_library, view3d
+from . import alignment, alignment_refine, cleanup, calib, frames, gpu, livescan, scan_library, view3d, islands
 from .image import write_png
 
 WEB = Path(__file__).parent / 'web'
@@ -205,6 +205,7 @@ class Service:
         self.library = scan_library.Library(frames.CAPTURES)
         self.alignment_output = None
         self.refinement = None
+        self.island_preview = None
         self.last_job_failed = False
         self.instance = secrets.token_hex(8)
         self.backend_token = secrets.token_urlsafe(32)
@@ -290,6 +291,8 @@ class Service:
                     if self.refinement and self.refinement.get('pending'):
                         self.refinement = dict(job=self.refinement['job'], pending=False,
                             error=self.error or 'Refinement did not return a result')
+                    if self.island_preview and self.island_preview.get('pending'):
+                        self.island_preview = dict(job=self.island_preview['job'], pending=False, error=self.error or 'Preview failed')
                     if self.alignment_output is not None:
                         if self.processing.returncode == 0 and (self.alignment_output / 'cloud.ply').is_file():
                             self.model.file = view3d.FileSource(self.alignment_output)
@@ -347,6 +350,9 @@ class Service:
         state['distance_gauge'] = core.distance_reading(None, {}, calib.CAMERA.mode,
                                                         calib.CAMERA.law_estimate, time.monotonic())
         state['alignment_refinement'] = self.refinement
+        preview = self.island_preview
+        state['mesh_islands_preview'] = ({**preview, 'result':{k:v for k,v in preview['result'].items() if k != 'mask'}}
+                                        if preview and 'result' in preview else preview)
         try:
             state['scan_names'] = self.library.labels(scans)
         except ValueError:
@@ -609,11 +615,11 @@ class Service:
         self.saved_job('tribuutscan.alignment_refine', spec, refinement_id=job)
         return dict(job=job)
 
-    def saved_job(self, module, spec, out=None, refinement_id=None):
+    def saved_job(self, module, spec, out=None, refinement_id=None, islands_id=None):
         executable = core.VENV_PYTHON if core.VENV_PYTHON.exists() else Path(sys.executable)
         process = subprocess.Popen(core.mesh_scope(lambda message: None) + [str(executable), '-m', module], cwd=core.REPO,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            env={**os.environ, 'OMP_NUM_THREADS':'2', 'OPENBLAS_NUM_THREADS':'2'} if refinement_id else None)
+            env={**os.environ, 'OMP_NUM_THREADS':'2', 'OPENBLAS_NUM_THREADS':'2'} if refinement_id or islands_id or spec.get('operation') == 'remove-islands' else None)
         try:
             process.stdin.write(json.dumps(spec))
             process.stdin.close()
@@ -627,8 +633,19 @@ class Service:
         self.processing_result = None
         if refinement_id:
             self.refinement = dict(job=refinement_id, pending=True)
+        if islands_id:
+            self.island_preview = dict(job=islands_id, pending=True)
         def read():
             for line in process.stdout:
+                if islands_id and line.startswith(islands.RESULT_PREFIX):
+                    try:
+                        result = json.loads(line[len(islands.RESULT_PREFIX):])
+                        if not isinstance(result, dict) or not isinstance(result.get('mask'), str):
+                            raise ValueError('Invalid preview payload')
+                        self.island_preview = dict(job=islands_id, pending=False, result=result)
+                    except (ValueError, TypeError):
+                        self.island_preview = dict(job=islands_id, pending=False, error='Invalid island preview')
+                    continue
                 if refinement_id and line.startswith(alignment_refine.RESULT_PREFIX):
                     try:
                         result = json.loads(line[len(alignment_refine.RESULT_PREFIX):])
@@ -667,11 +684,27 @@ class Service:
             spec = dict(operation='copy', source=str(path), output=str(out), version=alignment.version(path))
             return self.saved_job('tribuutscan.edit_session', spec, out)
         operation = data.get('operation')
-        if operation not in ('delete-region', 'reset-cleanup', 'undo', 'redo'):
+        if operation == 'preview-islands':
+            rule = data.get('rule')
+            islands.settings(rule)
+            version = view3d.mesh_version(path / 'mesh.ply')
+            if not version or version != data.get('mesh_version'):
+                raise Conflict('The mesh changed; reload before previewing islands')
+            job = secrets.token_hex(12)
+            self.saved_job('tribuutscan.islands', dict(directory=str(path), rule=rule, mesh_version=version), islands_id=job)
+            return dict(job=job)
+        if operation not in ('delete-region', 'reset-cleanup', 'undo', 'redo', 'remove-islands'):
             raise ValueError('Unknown cleanup operation')
         if not (path / '.editing.json').is_file():
             raise Conflict('Create an editable copy first')
         rule = cleanup.validate(data.get('rule')) if operation == 'delete-region' else None
+        if operation == 'remove-islands':
+            rule = data.get('rule')
+            islands.settings(rule)
+            digest = rule.get('mesh_hash')
+            if not isinstance(digest, str) or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+                raise ValueError('Preview the mesh before removing islands')
+        self.island_preview = None
         return self.saved_job('tribuutscan.edit_session', dict(directory=str(path), operation=operation, rule=rule))
 
     def process(self, data):
@@ -786,6 +819,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(dict(token=self.server.token, urls=getattr(self.server, 'connection_urls', [])))
         if path == '/api/state':
             return self.reply(json.dumps(self.service.state(), allow_nan=False).encode())
+        if path == '/api/islands/result':
+            values = parse_qs(urlsplit(self.path).query)
+            preview = self.service.island_preview
+            if not preview or values.get('job') != [preview['job']]:
+                return self.json(dict(error='This preview is no longer available; preview again'), 404)
+            if preview.get('pending') or 'result' not in preview:
+                return self.json(dict(error=preview.get('error', 'Preview is still running')), 409)
+            return self.json(preview)
         if path == '/api/library/bin-plan':
             try:
                 return self.json(self.service.library.bin_plan())

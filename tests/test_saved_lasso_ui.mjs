@@ -19,7 +19,7 @@ function fixture(){
  const context={THREE,console,setTimeout,Date,Promise,canvas,camera,points:new THREE.Points(geometry,new THREE.PointsMaterial()),
   data:{n:3,xyz},lastInfo:{name:'source-scan',version:'v1',phase:'done',editing:{}},renderedModel:{name:'source-scan',version:'v1'},
   controls:{enabled:true,enableDamping:true,update(){}},busy:false,lasso:false,lassoPointer:null,selectedRegion:null,stroke:[],selectionKeep:null,selectionCount:0,deletePreview:null,desiredMesh:true,cloudKey:'v1',
-  $:element,colours:()=>new Float32Array(9),updateTools(){},showWhich(){},status(message,error=false){messages.push({message,error});},
+  $:element,clearIslandPreview(){},colours:()=>new Float32Array(9),updateTools(){},showWhich(){},status(message,error=false){messages.push({message,error});},
   closeCrop(){context.cropPreviewClosed=true;},editable:async()=>{},host:async()=>({revision:1,instance:'test'}),savedCommand:async()=>{},waitJob:async()=>'',window:{addEventListener(){}},messages};
  vm.createContext(context);vm.runInContext(source,context);
  function pointer(type,x,y,id=1){listeners.get(type)?.({pointerId:id,button:0,clientX:x,clientY:y,preventDefault(){},stopImmediatePropagation(){}});}

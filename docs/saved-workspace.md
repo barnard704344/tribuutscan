@@ -110,6 +110,14 @@ remesh during the crop. Older sessions without a fused-state file use the slower
 frame-restore fallback once. The completion message waits for updated points to
 reload in the viewport.
 
+## Floating mesh islands
+
+**Cleanup → Remove floating mesh islands** previews small disconnected surface
+components in pink before removal. The largest component is always kept. Apply
+uses an editing copy and Undo/Redo; source points and recordings stay unchanged.
+This is mesh-only cleanup and rebuilding the mesh replaces it. See
+[floating mesh islands](mesh-cleanup.md) for export behaviour and safeguards.
+
 ## Mesh
 
 **Generate mesh** fuses recorded depth when the recordings and matching calibration
@@ -138,8 +146,9 @@ and use its Reverse engineer workspace. Projects and STEP downloads are saved
 through ScanRuler and are not automatically imported back into this library.
 The ScanRuler section is hidden on phones. See [CAD handoff](cad-handoff.md).
 
-This release adds manual lasso/crop cleanup, integrated alignment and a desktop CAD handoff. Automatic
-island removal, hole-repair brushes, measurement/section tools, CAD deviation maps
+This release adds lasso/crop cleanup, previewed mesh-island removal, integrated
+alignment and a desktop CAD handoff. Hole-repair brushes, measurement/section
+tools and CAD deviation maps
 and native reverse engineering remain future work; see the [proposed roadmap](roadmap.md).
 Synthetic automated and browser checks
 do not replace validation on real scans.

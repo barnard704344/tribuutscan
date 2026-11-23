@@ -18,6 +18,7 @@ claims and upstream development notes are not instructions for the current UI.
 | Tour the browser workspace, tabs and phone pairing | [Web UI tour](docs/web-ui.md) |
 | Find, name and organise scans and related versions | [Scan Library](docs/scan-library.md) |
 | Inspect, clean up, mesh and export saved scans | [Saved workspace](docs/saved-workspace.md) |
+| Preview and remove floating surface components | [Mesh cleanup](docs/mesh-cleanup.md) |
 | Hand a surface mesh to ScanRuler for CAD modelling | [Desktop CAD handoff](docs/cad-handoff.md) |
 | Manually align two saved free-object scans | [Saved-scan alignment](docs/alignment.md) |
 | Understand recovery and test loss/reacquisition | [Tracking recovery](docs/tracking-recovery.md) |

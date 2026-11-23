@@ -168,6 +168,23 @@ This checkpoint updates the tools, workflow documentation and screenshots; it do
 not add a fresh hardware or performance acceptance result. Proposed inspection
 and cleanup additions are tracked separately in the [roadmap](roadmap.md).
 
+## Floating mesh islands — 23 November 2026
+
+Cleanup now previews small edge-connected surface components in pink and removes
+only the previewed size class, always retaining the largest component. Applying
+uses an editable copy and persistent Undo/Redo. Source points/recordings are left
+unchanged; stale printable/solid exports are retired. Rebuilding a mesh replaces
+this mesh-only cleanup. See [mesh cleanup](mesh-cleanup.md).
+
+Fifty-seven checks passed across islands, edit-session, webapp, mesh exports,
+handoff and alignment refinement. A follow-up 41-check run covered the one-time
+preview-result route and compact regular status payloads. JavaScript checks
+covered preview rendering/cancellation/apply and stale selection, with lasso and
+handoff regressions. The browser flow checked preview/cancel, automatic copying,
+removal, a fresh component count, Undo/Redo and desktop/laptop/phone widths using
+synthetic geometry. Very large-mesh performance and thresholds on real objects
+remain to be validated.
+
 ## Desktop CAD handoff — 23 November 2026
 
 A desktop-only ScanRuler section under Export uses the existing STL download

@@ -14,7 +14,7 @@
 <div id="panel-view" role="tabpanel" aria-labelledby="tab-view" data-panel="view"><section><h2>Model</h2><dl><dt>Points</dt><dd id="points">–</dd><dt>Point spacing</dt><dd id="pd">–</dd><dt>Source points</dt><dd id="raw">–</dd><dt>Accepted views</dt><dd id="frames">–</dd></dl><span hidden><span id="capture"></span><span id="tracking"></span><span id="geometry"></span><span id="last-view-label"></span><span id="last-view"></span><span id="scanhint"></span></span><div id="piece-picker" hidden><label>Pieces<select id="piece"></select></label><p id="piece-note"></p></div>
 <label>Display<select id="show"><option value="cloud">Point cloud</option><option value="mesh" disabled>Mesh (not generated)</option><option value="solid" disabled>Printable solid (not generated)</option></select></label><div id="sizebox"><label>Point size<input id="size" type="range" min="0.3" max="4" step="0.1" value="1.5"></label></div><label>Colour<select id="mode"><option value="rgb">Camera colour</option><option value="coverage">Observation coverage</option><option value="grey">Neutral grey</option><option value="seen">Times seen</option><option value="height">Height</option></select></label><div id="coverage-legend" hidden><ul id="coverage-colours"><li><span class="swatch light"></span>Amber · seen 1–2 times</li><li><span class="swatch repeat"></span>Blue · seen 3+ times</li></ul><p id="coverage-note"></p></div><button id="reset" class="wide">Fit model to view</button><div class="buttons"><button data-direction="front">Front</button><button data-direction="right">Right</button><button data-direction="top">Top</button></div></section></div>
 <div id="panel-align" role="tabpanel" aria-labelledby="tab-align" data-panel="align" hidden><p>Loading alignment workspace…</p></div>
-<div id="panel-cleanup" role="tabpanel" aria-labelledby="tab-cleanup" data-panel="cleanup" hidden><section><h2>Remove unwanted regions</h2><p>Edits are saved to a separate copy automatically. Originals stay unchanged.</p><button id="lasso-start" class="wide">Draw lasso selection</button><p>Lasso selects through all surfaces along the viewing direction. Orbit to a useful angle first.</p><div class="buttons"><button id="lasso-delete" disabled>Delete selected region</button><button id="lasso-cancel">Cancel selection</button></div><p id="selection-count"></p><button id="cleanup-clear" class="wide">Clear all lasso cleanup</button></section><section><h2>Crop and base</h2><button id="crop-open" class="wide">Adjust crop box</button><button data-action="crop-off" id="crop-off" class="wide">Clear crop</button><div id="cropbox" hidden><p>Move the box faces to keep what is inside.</p>
+<div id="panel-cleanup" role="tabpanel" aria-labelledby="tab-cleanup" data-panel="cleanup" hidden><section><h2>Remove floating mesh islands</h2><label for="island-threshold">Components smaller than (triangles)</label><input id="island-threshold" type="number" min="1" max="1000000" step="1" value="1000"><button id="island-preview" class="wide" disabled>Preview islands</button><p id="island-status">Generate a surface mesh to inspect its disconnected components.</p><div class="buttons"><button id="island-apply" disabled>Remove previewed</button><button id="island-cancel" disabled>Cancel preview</button></div><p>The largest component is always kept. Check pink islands before removing: separate parts may be intentional. This edits the mesh only; regenerating it replaces these changes.</p></section><section><h2>Remove unwanted regions</h2><p>Edits are saved to a separate copy automatically. Originals stay unchanged.</p><button id="lasso-start" class="wide">Draw lasso selection</button><p>Lasso selects through all surfaces along the viewing direction. Orbit to a useful angle first.</p><div class="buttons"><button id="lasso-delete" disabled>Delete selected region</button><button id="lasso-cancel">Cancel selection</button></div><p id="selection-count"></p><button id="cleanup-clear" class="wide">Clear all lasso cleanup</button></section><section><h2>Crop and base</h2><button id="crop-open" class="wide">Adjust crop box</button><button data-action="crop-off" id="crop-off" class="wide">Clear crop</button><div id="cropbox" hidden><p>Move the box faces to keep what is inside.</p>
 <label for="c0">Left<output id="v0">0 mm</output></label><input id="c0" type="range" min="0" max="1" step="1" value="0">
 <label for="c3">Right<output id="v3">0 mm</output></label><input id="c3" type="range" min="0" max="1" step="1" value="0">
 <label for="c1">Bottom<output id="v1">0 mm</output></label><input id="c1" type="range" min="0" max="1" step="1" value="0">
@@ -51,6 +51,7 @@ const shapes = { mesh: { obj: null, version: null, rgb: null }, solid: { obj: nu
 const SHAPE_NAMES = { mesh: "Mesh", solid: "Solid" };  // the scanned surface; the closed solid (as the STL)
 const $ = (id) => document.getElementById(id);
 let lastInfo=null, busy=false, tool='view', desiredMesh=false, lasso=false, selectedRegion=null, stroke=[], refreshFailed=false;
+let islandPreview=null;
 let lassoPointer=null, selectionKeep=null, selectionCount=0, deletePreview=null, renderedModel=null;
 const coverageRGB = {
   light: new THREE.Color(0xffc45c).toArray(),
@@ -258,6 +259,7 @@ function cropAxes() {  // the box's axes (rows, the page's axes): the saved crop
 }
 
 function openCrop() {
+  clearIslandPreview();
   if (!data || !data.n) return;
   clearLasso();
   const A = cropAxes(), lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity], xyz = data.xyz;
@@ -386,6 +388,10 @@ async function runAction(action,label,query=''){
 function updateTools(){
   const done=lastInfo?.phase==='done',remote=location.pathname.startsWith('/model/');
   document.querySelectorAll('[data-action]').forEach(el=>{el.disabled=busy||!done||!remote;el.classList.toggle('later',el.disabled);});
+  $('island-preview').disabled=busy||!done||!remote||!lastInfo?.mesh;
+  $('island-apply').disabled=busy||!islandPreview||!islandPreview.result.removed_triangles;
+  $('island-cancel').disabled=busy||!islandPreview;$('island-threshold').disabled=busy;
+  if(!islandPreview)$('island-status').textContent=lastInfo?.mesh?'Preview small disconnected components. No changes are saved until applied.':'Generate a surface mesh first.';
   $('copy-scan').disabled=busy||!done||!remote||tool==='align';
   $('edit-undo').disabled=busy||!done||!lastInfo?.editing?.can_undo;
   $('edit-redo').disabled=busy||!done||!lastInfo?.editing?.can_redo;
@@ -409,6 +415,7 @@ async function poll() {
     const response = await fetch("info.json");
     if (!response.ok) throw new Error("could not load scan info");
     const info = await response.json();
+    if(islandPreview&&(islandPreview.name!==info.name||islandPreview.version!==info.version||islandPreview.mesh!==info.mesh))clearIslandPreview();
     if(lastInfo&&lastInfo.name!==info.name&&info.editing?.source!==lastInfo.name){
       framed=false;cloudKey=null;clearLasso();for(const kind in shapes){dropShape(kind);shapes[kind].version=null;}
     }
@@ -550,7 +557,7 @@ function selectTool(name,focus=false){
   const reference=lastInfo?.name||'';
   if(name==='align'&&frame.dataset.reference!==reference){frame.dataset.reference=reference;frame.src='/alignment?embedded=1&reference='+encodeURIComponent(reference);}
   frame.contentWindow?.postMessage({type:'alignment-visible',visible:name==='align'},location.origin);
-  if(name!=='cleanup')clearLasso();
+  if(name!=='cleanup'){clearLasso();clearIslandPreview();}
   updateTools();resize();
 }
 const tabs=Array.from(document.querySelectorAll('[data-tool]'));
@@ -572,8 +579,62 @@ $('copy-scan').onclick=async()=>{
   try{await editable(true);status('Editable copy saved. The original remains unchanged.');}
   catch(error){status(error.message,true);}finally{busy=false;updateTools();}
 };
+// Island previews alter only the local display. Removal runs through editable history.
+function clearIslandPreview(){
+ if(!islandPreview)return;
+ const p=islandPreview;islandPreview=null;
+ if(shapes.mesh.obj===p.object)p.object.geometry.setIndex(p.originalIndex);
+ scene.remove(p.overlay);p.overlay.geometry.dispose();p.overlay.material.dispose();
+ updateTools();
+}
+function renderIslandPreview(result,snapshot){
+ const object=shapes.mesh.obj,index=object?.geometry.index;
+ if(!index||index.count!==result.triangles*3)throw Error('The displayed mesh changed. Preview again.');
+ const bytes=Uint8Array.from(atob(result.mask),c=>c.charCodeAt(0));
+ if(bytes.length!==Math.ceil(result.triangles/8))throw Error('Incomplete island preview');
+ const kept=new Uint32Array(result.kept_triangles*3),removed=new Float32Array(result.removed_triangles*9);
+ const positions=object.geometry.getAttribute('position');let k=0,r=0;
+ for(let face=0;face<result.triangles;face++)for(let corner=0;corner<3;corner++){
+  const vertex=index.getX(face*3+corner);
+  if(bytes[face>>3]&(1<<(face&7))){removed[r++]=positions.getX(vertex);removed[r++]=positions.getY(vertex);removed[r++]=positions.getZ(vertex);}
+  else kept[k++]=vertex;
+ }
+ if(k!==kept.length||r!==removed.length)throw Error('Invalid island preview counts');
+ const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(removed,3));
+ const overlay=new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({color:0xff6496,side:THREE.DoubleSide,transparent:true,opacity:.9}));
+ islandPreview={...snapshot,result,object,originalIndex:index,overlay};
+ object.geometry.setIndex(new THREE.BufferAttribute(kept,1));scene.add(overlay);$('show').value='mesh';showWhich();
+ $('island-status').textContent=`${result.removed_components.toLocaleString()} of ${result.components.toLocaleString()} islands selected · ${result.removed_triangles.toLocaleString()} triangles in pink. Largest component kept.`;
+}
+$('island-threshold').oninput=()=>clearIslandPreview();
+$('island-cancel').onclick=()=>{clearIslandPreview();status('Island preview cancelled. No mesh changes saved.');};
+$('island-preview').onclick=async()=>{
+ if(busy||lastInfo?.phase!=='done'||!lastInfo?.mesh)return;
+ const minimum=Number($('island-threshold').value);
+ if(!Number.isInteger(minimum)||minimum<1||minimum>1000000){status('Choose a threshold from 1 to 1,000,000 triangles.',true);return;}
+ clearLasso();clearIslandPreview();busy=true;updateTools();status('Analysing mesh islands on the host…');
+ const snapshot={name:lastInfo.name,version:lastInfo.version,mesh:lastInfo.mesh};
+ try{
+  const job=await savedCommand('edit-operation',{operation:'preview-islands',mesh_version:snapshot.mesh,rule:{min_triangles:minimum}});
+  await waitJob();const state=await host('/api/state'),preview=state.mesh_islands_preview;
+  if(!preview||preview.job!==job.job||preview.error||!preview.result)throw Error(preview?.error||'Another preview replaced this result. Preview again.');
+  if(lastInfo.name!==snapshot.name||lastInfo.version!==snapshot.version||lastInfo.mesh!==snapshot.mesh)throw Error('The scan changed. Preview again.');
+  if(shapes.mesh.version!==snapshot.mesh||!shapes.mesh.obj){if(!await loadMesh('mesh'))throw Error('Mesh unavailable');shapes.mesh.version=snapshot.mesh;}
+  const full=await host('/api/islands/result?job='+encodeURIComponent(job.job));
+  if(full.job!==job.job||!full.result)throw Error('This preview is no longer available. Preview again.');
+  if(lastInfo.name!==snapshot.name||lastInfo.version!==snapshot.version||lastInfo.mesh!==snapshot.mesh)throw Error('The scan changed. Preview again.');
+  renderIslandPreview(full.result,snapshot);status('Pink islands are previewed only. Orbit to inspect, then remove or cancel.');
+ }catch(e){status(e.message,true);}finally{busy=false;updateTools();}
+};
+$('island-apply').onclick=async()=>{
+ if(busy||!islandPreview||!islandPreview.result.removed_triangles)return;
+ const result=islandPreview.result;
+ clearIslandPreview();desiredMesh=true;
+ await cleanupAction('remove-islands',{min_triangles:result.min_triangles,mesh_hash:result.mesh_hash});
+};
+
 async function cleanupAction(operation,rule=null){
-  if(busy)return;busy=true;updateTools();status('Saving cleanup…');
+  if(busy)return;clearIslandPreview();busy=true;updateTools();status('Saving cleanup…');
   const requestedCount=selectionCount;
   let committed=false;
   if(operation==='delete-region'&&selectionKeep&&points){
@@ -608,6 +669,7 @@ function drawStroke(){
   if(!stroke.length)return;ctx.strokeStyle='#73dbb0';ctx.fillStyle='#73dbb022';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(...stroke[0]);for(const point of stroke.slice(1))ctx.lineTo(...point);ctx.closePath();ctx.fill();ctx.stroke();
 }
 $('lasso-start').onclick=()=>{
+  clearIslandPreview();
   clearLasso();controls.enableDamping=false;controls.update();lasso=true;controls.enabled=false;desiredMesh=false;$('show').value='cloud';showWhich();
   $('view-hint').textContent='Draw around unwanted points. Selection goes through the model. Cancel to orbit again.';
 };

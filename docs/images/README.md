@@ -13,6 +13,7 @@ private saved scans or live host credentials are included.
 | `web-phone-pairing.png` | Pairing dialog cropped by the browser |
 | `web-mobile.png` | Full page at a 390×844 phone viewport |
 | `web-alignment.png` | Full 1920×1080 Align tab immediately after the opened scan loads as reference |
+| `mesh-islands-preview.png` | Pink floating-island preview beside a synthetic sphere, Cleanup tab |
 | `saved-cad-handoff.png` | Export tab with shared STL download and desktop ScanRuler handoff, synthetic surface |
 | `saved-workspace.png` | New saved-result workspace, View tab, synthetic session |
 | `saved-alignment.png` | Align tab with both synthetic scans loaded and Move scan selected |

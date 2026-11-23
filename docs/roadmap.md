@@ -20,7 +20,8 @@ fit residuals and clear indication of which points support each fit.
 
 ## 2. Finish cleanup
 
-Extend the current lasso/crop/base tools with previewed island removal, plane cuts,
+Previewed floating-island removal is implemented with editing-copy Undo/Redo; see
+[mesh cleanup](mesh-cleanup.md). Extend the lasso/crop/base tools with plane cuts,
 controlled smoothing, hole filling and mesh reduction. Preserve original sessions,
 editing-copy history and the distinction between measured and reconstructed
 surfaces. Mesh reduction should report geometric deviation, not just triangle count.
