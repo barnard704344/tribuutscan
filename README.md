@@ -18,6 +18,7 @@ claims and upstream development notes are not instructions for the current UI.
 | Tour the browser workspace, tabs and phone pairing | [Web UI tour](docs/web-ui.md) |
 | Find, name and organise scans and related versions | [Scan Library](docs/scan-library.md) |
 | Inspect, clean up, mesh and export saved scans | [Saved workspace](docs/saved-workspace.md) |
+| Inspect, exclude and manually realign accepted frame ranges | [Frame editor](docs/frame-editor.md) |
 | Preview and remove floating surface components | [Mesh cleanup](docs/mesh-cleanup.md) |
 | Hand a surface mesh to ScanRuler for CAD modelling | [Desktop CAD handoff](docs/cad-handoff.md) |
 | Manually align two saved free-object scans | [Saved-scan alignment](docs/alignment.md) |
@@ -96,7 +97,7 @@ forward this port directly onto the internet.
   coverage classifications. There is no extra live point-cloud window.
 - **Resume** restores the normal layout and capture. **Stop & Save** saves the
   take and starts optimisation; meshing follows if enabled.
-- Saved scans open in a matching **View / Align / Cleanup / Mesh / Export**
+- Saved scans open in a matching **View / Frames / Align / Cleanup / Mesh / Export**
   workspace, with automatic editing copies, lasso deletion and persistent undo/redo.
   **Export** includes a desktop ScanRuler handoff using the STL download and a separate browser tab.
   Files remain in this checkout's ignored `captures/` directory.

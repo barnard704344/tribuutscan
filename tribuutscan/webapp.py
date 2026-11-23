@@ -31,7 +31,7 @@ import webbrowser
 import numpy as np
 
 from . import controller as core
-from . import alignment, alignment_refine, cleanup, calib, frames, gpu, livescan, scan_library, view3d, islands
+from . import alignment, alignment_refine, cleanup, calib, frames, gpu, livescan, scan_library, view3d, islands, frame_editor
 from .image import write_png
 
 WEB = Path(__file__).parent / 'web'
@@ -619,7 +619,7 @@ class Service:
         executable = core.VENV_PYTHON if core.VENV_PYTHON.exists() else Path(sys.executable)
         process = subprocess.Popen(core.mesh_scope(lambda message: None) + [str(executable), '-m', module], cwd=core.REPO,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            env={**os.environ, 'OMP_NUM_THREADS':'2', 'OPENBLAS_NUM_THREADS':'2'} if refinement_id or islands_id or spec.get('operation') == 'remove-islands' else None)
+            env={**os.environ, 'OMP_NUM_THREADS':'2', 'OPENBLAS_NUM_THREADS':'2'} if refinement_id or islands_id or spec.get('operation') == 'remove-islands' or spec.get('operation','').startswith('frame-') else None)
         try:
             process.stdin.write(json.dumps(spec))
             process.stdin.close()
@@ -693,7 +693,7 @@ class Service:
             job = secrets.token_hex(12)
             self.saved_job('tribuutscan.islands', dict(directory=str(path), rule=rule, mesh_version=version), islands_id=job)
             return dict(job=job)
-        if operation not in ('delete-region', 'reset-cleanup', 'undo', 'redo', 'remove-islands'):
+        if operation not in ('delete-region', 'reset-cleanup', 'undo', 'redo', 'remove-islands', 'frame-exclude', 'frame-include', 'frame-transform', 'frame-reset'):
             raise ValueError('Unknown cleanup operation')
         if not (path / '.editing.json').is_file():
             raise Conflict('Create an editable copy first')
@@ -704,6 +704,12 @@ class Service:
             digest = rule.get('mesh_hash')
             if not isinstance(digest, str) or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
                 raise ValueError('Preview the mesh before removing islands')
+        if operation.startswith('frame-'):
+            rule = data.get('rule')
+            if not isinstance(rule, dict) or rule.get('signature') != frame_editor.signature(path):
+                raise Conflict('The frames changed; reload the timeline')
+            if operation != 'frame-reset':
+                frame_editor.rule(rule, operation)
         self.island_preview = None
         return self.saved_job('tribuutscan.edit_session', dict(directory=str(path), operation=operation, rule=rule))
 
@@ -801,6 +807,11 @@ class Handler(BaseHTTPRequestHandler):
             filename = 'library.html' if path == '/library' else path[1:]
             kind = 'text/html; charset=utf-8' if path == '/library' else 'text/javascript' if path.endswith('.js') else 'text/css'
             return self.reply((WEB / filename).read_bytes(), kind)
+        if path in ('/frames', '/frame-editor.js'):
+            if path == '/frames' and not self.paired():
+                return self.reply(b'', 'text/plain', status=303, headers={'Location':'/'})
+            filename = 'frame-editor.html' if path == '/frames' else 'frame-editor.js'
+            return self.reply((WEB / filename).read_bytes(), 'text/html; charset=utf-8' if path == '/frames' else 'text/javascript')
         if path in ('/alignment', '/alignment.js', '/alignment.css'):
             if path == '/alignment' and not self.paired():
                 return self.reply(b'', 'text/plain', status=303, headers={'Location':'/'})
@@ -819,6 +830,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(dict(token=self.server.token, urls=getattr(self.server, 'connection_urls', [])))
         if path == '/api/state':
             return self.reply(json.dumps(self.service.state(), allow_nan=False).encode())
+        if path in ('/api/frames/catalogue', '/api/frames/preview'):
+            try:
+                values = parse_qs(urlsplit(self.path).query)
+                directory = scan_directory(values.get('scan', [None])[0])
+                if path.endswith('catalogue'):
+                    return self.json(frame_editor.catalogue(directory))
+                first, last = int(values.get('first', ['-1'])[0]), int(values.get('last', ['-1'])[0])
+                payload = frame_editor.preview(directory, first, last, values.get('part', [''])[0], values.get('signature', [''])[0])
+                return self.reply(payload, 'application/octet-stream')
+            except (ValueError, OSError, KeyError) as error:
+                return self.json(dict(error=str(error)), 400)
         if path == '/api/islands/result':
             values = parse_qs(urlsplit(self.path).query)
             preview = self.service.island_preview

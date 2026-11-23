@@ -95,6 +95,7 @@ All captures and local state live beneath the checkout's ignored `captures/`.
 | `factory.json`, `calibration.json`, `calib/` | Local calibration data |
 | `.webapp.json` | Private launcher/pairing session information |
 | `.webapp-settings.json` | Persisted subject choice |
+| `frame-source.zip`, `frame-edits.json` | Editing-copy baseline frame samples/poses and current range corrections; raw recordings remain referenced |
 | `.scan-library.json` | Display names, per-entry revisions and reversible bin markers; folders stay in place |
 | `.library-thumbnails/` | Host-local sampled PNG preview cache, available only through paired routes |
 | `viewer.log` | Host log |

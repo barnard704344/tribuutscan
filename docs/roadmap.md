@@ -8,6 +8,13 @@ The existing path is capture → open → align → clean up → mesh → export
 Keep these tools in the saved workspace, working on the currently opened session,
 with processing on the host so a paired phone can use the same tools.
 
+## Accepted-frame recovery: implemented, awaiting real-scan validation
+
+The [frame editor](frame-editor.md) now supports accepted-frame visibility, range
+exclusion/restoration, safe rebuilds, manual rigid section alignment and persistent
+Undo/Redo. Next validate real interruptions and larger recordings; raw image
+playback, re-tracking unposed frames and live GPU rewind remain future work.
+
 ## 1. Inspect and measure
 
 Start with a movable section plane and two-point distance measurement in

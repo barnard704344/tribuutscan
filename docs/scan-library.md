@@ -15,7 +15,7 @@ owned storage and available outputs. Search names, folder IDs, dates or names of
 related versions. Filter originals, editing copies or aligned scans; show scans
 with a mesh or point clouds only. Sort by date, name or size.
 
-**Open scan** selects that session and opens the existing **View / Align / Cleanup /
+**Open scan** selects that session and opens the existing **View / Frames / Align / Cleanup /
 Mesh / Export** workspace. Alignment automatically uses the opened scan as its
 reference. Processing and download controls stay in the saved workspace, rather
 than being duplicated in the library. **Scan Library** in its header returns to

@@ -23,6 +23,15 @@ The side panel reports point count, spacing and accepted views. Blank live
 capture/tracking fields are not presented as saved-scan status. A chosen display
 mode stays selected when polling reloads generated artifacts.
 
+## Frames
+
+**Frames** inspects saved tracking statuses and keyframe contributions, excludes
+or restores inclusive frame ranges, and manually realigns a selected section.
+Rebuilds use an editing copy with persistent Undo/Redo and preserve the original
+capture. Work on an uncropped free-object scan before lasso cleanup. Non-keyframes
+can be pose-only; untracked frames cannot be recovered automatically here. See
+[accepted frame editor](frame-editor.md).
+
 ## Align
 
 ![Alignment within the saved workspace](images/saved-alignment.png)

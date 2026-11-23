@@ -183,7 +183,7 @@ version, then choose **Open scan**. The result viewer opens in the current tab
 after the host accepts the selection. See the [library guide](scan-library.md)
 for display names, grouping, storage details and safe bin/restore.
 Use **← Capture** there to return to capture.
-The saved-result workspace groups **View**, **Align**, **Cleanup**, **Mesh** and
+The saved-result workspace groups **View**, **Frames**, **Align**, **Cleanup**, **Mesh** and
 **Export** tools. See the [saved-workspace guide](saved-workspace.md) for safe
 editing copies, lasso deletion, undo/redo, cropping and PLY/STL downloads.
 The opened scan becomes the reference automatically in Align; selecting a second

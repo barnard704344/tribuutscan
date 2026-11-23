@@ -14,7 +14,7 @@ known validation gaps, not a hardware certification or release guarantee.
 - Classified coverage from the GPU volume, including paused host-rendered camera
   rotation/zoom and restoration of the live layout on resume.
 - Saved-scan inspection, processing/downloads, continuation and safe idle host restart.
-- Saved-result workspace with View, Align, Cleanup, Mesh and Export tabs, automatic
+- Saved-result workspace with View, Frames, Align, Cleanup, Mesh and Export tabs, automatic
   editing copies, lasso-through deletion, crop/base tools and persistent edit undo/redo.
 - Integrated alignment loads the opened scan as reference and a selected second
   scan automatically. Mouse/touch move and rotate tools adjust the moving scan
@@ -167,6 +167,24 @@ preservation, mesh retirement, invalid bounds and legacy fallback.
 This checkpoint updates the tools, workflow documentation and screenshots; it does
 not add a fresh hardware or performance acceptance result. Proposed inspection
 and cleanup additions are tracked separately in the [roadmap](roadmap.md).
+
+## Accepted-frame editor — 23 November 2026
+
+The saved workspace now has Frames: accepted-pose/status inspection, sampled
+keyframe visibility, inclusive range exclusion/restoration, rebuilds from retained
+contributions and manual rigid section correction through the existing alignment
+controls. Editing copies, a preserved baseline archive and persistent Undo/Redo
+protect originals. Future meshing consumes only retained corrected poses. Nested
+recording links are rebased when copying sessions. See [frame editor](frame-editor.md).
+
+Seventy-three checks passed across frame editing, editing history, alignment,
+refinement, web host, islands, handoff and library. The browser flow exercised
+exclusion, automatic copying, Undo, section-alignment handoff, mouse move/rotate
+drags with preview undo, a numerical 10 mm
+correction check and desktop/laptop/phone widths, including the embedded editor.
+Screenshots use synthetic sessions. Raw image playback, re-tracking unposed
+frames and live GPU rewind remain outside this implementation; real interrupted
+scans and large-session performance need validation.
 
 ## Floating mesh islands — 23 November 2026
 

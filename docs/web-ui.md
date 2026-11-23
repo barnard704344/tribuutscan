@@ -142,4 +142,11 @@ The library uses the same paired LAN session and adapts to phone width. See the
 Saved scans have a desktop-only ScanRuler section in **Export**. Download the STL
 above it, open ScanRuler and load it there for modelling. If no saved STL exists,
 the download exports the current surface in millimetres. It is a
-manual file handoff; projects and STEP files are saved through ScanRuler. All layouts retain five tabs; the ScanRuler section is hidden on phones. See [CAD handoff](cad-handoff.md).
+manual file handoff; projects and STEP files are saved through ScanRuler. The saved workspace also has Frames for accepted-frame repair; the ScanRuler section is hidden on phones. See [CAD handoff](cad-handoff.md).
+
+## Accepted frame repair
+
+**Frames** opens the timeline and section-repair workspace. Inspect sampled
+keyframe contributions, exclude/include ranges, or align a selected section
+against retained frames with the existing mouse/landmark controls. Rebuilds and
+Undo/Redo run through editing-copy history. See [frame editor](frame-editor.md).

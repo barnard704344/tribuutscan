@@ -8,7 +8,7 @@ import tempfile
 import numpy as np
 
 FILES = ('cloud.ply', 'session.json', 'keyframes.npz', 'merged.npz', 'scene.json',
-         'frame_poses.txt', 'track.csv', 'labels.npz', 'cleanup.json')
+         'frame_poses.txt', 'track.csv', 'labels.npz', 'cleanup.json', 'frame-edits.json', 'frame-source.zip')
 
 
 def rigid(value):
@@ -70,6 +70,8 @@ def compatible(a, b):
         if any(not (Path(directory) / name).is_file() for name in FILES[1:5]):
             raise ValueError('Both scans need their saved session, keyframes, merged frames and scene')
         info = metadata(directory)
+        if (Path(directory) / 'frame-edits.json').exists():
+            raise ValueError('Align separate scans before frame editing, or reset frame edits first')
         if (Path(directory) / 'cleanup.json').exists():
             raise ValueError('Align before lasso cleanup, or clear cleanup first')
         if info.get('mode') != 'free' or info.get('crop') or len(info.get('piece_list') or [0]) > 1:

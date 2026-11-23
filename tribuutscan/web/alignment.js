@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import {OrbitControls} from '/model/OrbitControls.js';
 const $=id=>document.getElementById(id), canvas=$('view');
-const embedded=new URLSearchParams(location.search).get('embedded')==='1';
+const frameParams=new URLSearchParams(location.search),frameScan=frameParams.get('frame_scan');
+const embedded=frameParams.get('embedded')==='1';
 if(embedded)document.body.classList.add('embedded');
 const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
@@ -67,7 +68,8 @@ function frame(){
  ray.params.Points.threshold=size/100;controls.update();
 }
 async function fetchCloud(key,name){
- const r=await fetch('/api/alignment/cloud?scan='+encodeURIComponent(name),{signal:AbortSignal.timeout(30000)});
+ const endpoint=frameScan?'/api/frames/preview?'+new URLSearchParams({scan:frameScan,first:frameParams.get('first'),last:frameParams.get('last'),signature:frameParams.get('signature'),part:key}):'/api/alignment/cloud?scan='+encodeURIComponent(name);
+ const r=await fetch(endpoint,{signal:AbortSignal.timeout(30000)});
  if(!r.ok){let result;try{result=await r.json();}catch{}throw Error(result?.error||'Could not load scan; check browser pairing.');}
  return [key,await r.arrayBuffer(),r.headers.get('X-Scan-Version')];
 }
@@ -299,6 +301,7 @@ for(const id of nudges){$(id).addEventListener('input',()=>nudge());$(id).addEve
 $('save').onclick=async()=>{
  saving=true;buttons();error();pickMode(null);try{
  const m=matrix(),elements=m.elements,transform=Array.from({length:4},(_,r)=>Array.from({length:4},(_,c)=>elements[c*4+r]));
+ if(frameScan){parent.postMessage({type:'frame-section-save',transform,first:Number(frameParams.get('first')),last:Number(frameParams.get('last')),signature:frameParams.get('signature')},location.origin);return;}
  const job=await command({action:'alignment-save',...loaded,transform});$('status').textContent='Saving a new aligned session on the host…';
  while(saving){await new Promise(r=>setTimeout(r,1000));const status=await api('/api/state');if(status.processing)continue;
  if(!status.scans.includes(job.output))throw Error(status.message||'Alignment did not produce a new session.');
@@ -311,6 +314,14 @@ const animate=()=>{controls.update();if(movingBox.visible&&clouds.moving)movingB
 renderer.setAnimationLoop(animate);
 if(embedded){window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===parent&&event.data?.type==='alignment-visible'){if(!event.data.visible){cancelDrag();cancelRegionDrag();}renderer.setAnimationLoop(event.data.visible?animate:null);}});parent.postMessage({type:'alignment-ready'},location.origin);}
 try{
+ if(frameScan){
+  $('reference').replaceChildren(new Option('Retained frames','reference'));$('moving').replaceChildren(new Option('Selected section','moving'));
+  $('reference').value='reference';$('moving').value='moving';
+  $('reference').closest('section').hidden=true;$('refine').closest('details').hidden=true;
+  $('save').textContent='Apply section transform';$('save').parentElement.querySelector('h2').textContent='3 · Rebuild edited section';
+  $('save').parentElement.querySelector('p').textContent='Applies a rigid correction to accepted poses in the selected range, with editing-copy Undo/Redo.';
+  await load();$('status').textContent='Selected section loaded. Move or rotate amber against blue, inspect, then apply.';
+ }else{
  const state=await api('/api/state');
  const options=()=>state.scans.map(name=>{const option=document.createElement('option');option.value=name;option.textContent=state.scan_names?.[name]||name;return option;});
  $('reference').replaceChildren(...options());
@@ -322,4 +333,5 @@ try{
  $('load').textContent='Reload previews';
  if($('reference').value)await loadReference();
  else{$('status').textContent='No saved scans yet. Capture a scan, then open it from Files.';buttons();}
+}
 }catch(e){error(e.message);$('load').disabled=true;}

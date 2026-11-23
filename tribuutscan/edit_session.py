@@ -1,5 +1,6 @@
 """Create editable saved-session copies and transactional, disk-backed edit history."""
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -13,7 +14,7 @@ from . import alignment, cleanup, mesh_exports, view3d
 MARKER = '.editing.json'
 HISTORY = '.edit-history'
 LIMIT = 6
-EXTENSIONS = {'.ply', '.stl', '.json', '.npz', '.csv', '.txt'}
+EXTENSIONS = {'.ply', '.stl', '.json', '.npz', '.csv', '.txt', '.zip'}
 
 
 def files(directory):
@@ -60,6 +61,16 @@ def clone(source, output, expected):
     with tempfile.TemporaryDirectory(prefix='.edit-copy-', dir=output.parent) as tmp:
         stage = Path(tmp)
         copy_files(source, stage)
+        session_path = stage / 'session.json'
+        if session_path.exists():
+            session = json.loads(session_path.read_text())
+            changed = False
+            for entry in session.get('sources', []):
+                rec = os.path.relpath((source / entry['rec']).resolve(), output.resolve())
+                changed |= rec != entry['rec']
+                entry['rec'] = rec
+            if changed:
+                session_path.write_text(json.dumps(session, indent=2))
         write_meta(stage, dict(source=source.name, created=time.time(), revisions=[], cursor=-1))
         if alignment.version(source) != expected:
             raise ValueError('The source changed during copying')
@@ -201,7 +212,10 @@ def edit(directory, operation, rule=None, box=None):
     with tempfile.TemporaryDirectory(prefix='.edit-work-', dir=directory.parent) as tmp:
         stage = Path(tmp)
         copy_files(directory, stage, reserve=2)
-        if operation == 'remove-islands':
+        if operation.startswith('frame-'):
+            from . import frame_editor
+            message = frame_editor.edit(stage, operation, rule)
+        elif operation == 'remove-islands':
             from . import islands
             message = islands.apply(stage, rule)
         elif operation == 'delete-region':
@@ -209,6 +223,8 @@ def edit(directory, operation, rule=None, box=None):
         elif operation in ('crop', 'crop-off') and (stage / 'cloud_state.npz').is_file():
             message = crop_saved(stage, operation, box)
         else:
+            if operation in ('optimise', 'small', 'medium', 'large') and (stage / 'frame-edits.json').exists():
+                raise ValueError('Reset frame edits before changing spacing or optimising; meshing the retained frames is available')
             from . import cloud, optimise
             scanner = cloud.Scanner.restore(stage)
             try:

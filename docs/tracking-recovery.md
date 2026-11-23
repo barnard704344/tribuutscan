@@ -67,3 +67,10 @@ on a physical scanner. For a scanner trial:
 Keep the recording and diagnostics for comparison. Head movement, missing depth,
 symmetry and little overlap can still prevent reliable recovery. See
 [build status](build-status.md) for remaining hardware/performance validation.
+
+## Repair an accepted saved section
+
+The saved workspace now has a [Frames editor](frame-editor.md) for inspecting
+tracking statuses, excluding accepted ranges, rebuilding from retained views and
+manually applying a rigid correction to a selected section. This is saved-data
+repair with Undo/Redo, not live GPU rewind or automatic re-tracking of lost frames.
