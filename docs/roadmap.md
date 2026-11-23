@@ -45,10 +45,3 @@ Save annotations, measurements and view state with the session, and provide a
 portable project/export workflow that accounts for raw-recording dependencies.
 Full STEP reverse engineering is a larger later project, beyond the first
 inspection and cleanup tools.
-
-## Design reference
-
-[ScanRuler's official feature list](https://github.com/CNCKitchen/ScanRuler#what-it-does)
-provides useful examples of section measurements, fitted features, mesh cleanup,
-deviation and portable projects. This roadmap describes independently implemented
-features for this fork. It does not introduce ScanRuler source code or dependencies.
