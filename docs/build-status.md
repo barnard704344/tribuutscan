@@ -5,9 +5,11 @@ known validation gaps, not a hardware certification or release guarantee.
 
 ## Implemented in this fork
 
-- Browser workspace and LAN pairing; capture and processing remain on the host.
+- Browser workspace and LAN pairing, including locally generated phone QR codes;
+  capture and processing remain on the host.
 - Coverage, Colour and IR on the left; Depth and distance guidance in the centre;
-  auxiliary controls and collapsed connection details on the right.
+  tools grouped into Scan, Camera, Files and Host tabs on the right, with persistent
+  scan actions. Desktop layout targets 1920×1080 and adapts to smaller screens.
 - Subject selection for heads/free objects versus tabletop scans, with persistence.
 - Classified coverage from the GPU volume, including paused host-rendered camera
   rotation/zoom and restoration of the live layout on resume.
@@ -17,6 +19,18 @@ known validation gaps, not a hardware certification or release guarantee.
 
 These are present in source. Their presence does not imply every lifecycle path,
 scene or GPU has passed a fresh physical acceptance trial at this checkpoint.
+
+### Web UI verification — 23 November 2026
+
+The tabbed layout, QR pairing and UI cleanup passed 34 web-host/launcher checks
+and the JavaScript UI checks, including tab keyboard navigation, persistent scan
+actions, coverage pane swapping and QR rendering/cleanup. Browser layout checks
+covered 1920×1080, 1366×768 and 390-pixel phone width, including paused desktop
+layout. A rendered pairing QR was independently decoded to its intended link.
+
+The [web UI tour](web-ui.md) includes reviewed screenshots from an isolated demo
+session. This validates presentation and navigation, not a new hardware scan,
+dimensional accuracy or sustained processing throughput.
 
 ## Latest checkpoint needing validation
 

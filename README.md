@@ -15,6 +15,7 @@ claims and upstream development notes are not instructions for the current UI.
 | Task | Documentation |
 | --- | --- |
 | Install, connect a phone and capture a scan | [User guide](docs/user-guide.md) |
+| Tour the browser workspace, tabs and phone pairing | [Web UI tour](docs/web-ui.md) |
 | Fix connection, depth, tracking or startup problems | [Troubleshooting](docs/troubleshooting.md) |
 | Understand the scanner, calibration, GPU pipeline and output files | [Technical reference](docs/technical-reference.md) |
 | Develop, test and measure changes | [Development guide](docs/development.md) |
@@ -63,16 +64,24 @@ For a host without a desktop browser:
 ./tribuutscan-viewer.sh --no-browser
 ```
 
-The service prints its local URL and pairing links. In the workspace, expand
-**Host & connection** on the right and choose **Connect a phone** to pair another
-browser. The default listener is `0.0.0.0:8765`. Pairing protects controls, previews
+The service prints its local URL and pairing links. In the workspace, open
+the **Host** tab on the right and choose **Connect a phone** to pair another
+browser by scanning its QR code or opening the pairing link. QR codes are generated
+locally. The default listener is `0.0.0.0:8765`. Pairing protects controls, previews
 and downloads, but HTTP does not encrypt the connection. Use a trusted LAN; do not
 forward this port directly onto the internet.
 
 ## This fork's workflow
 
+![Browser scan workspace with left previews, central Depth and tabbed controls](docs/images/web-workspace.png)
+
+*1920×1080 browser screenshot in demo mode. No scanner is connected; see the
+[illustrated web UI tour](docs/web-ui.md) for the tools and phone layout.*
+
 - Coverage, Colour and IR previews sit on the left; Depth and its distance gauge
-  occupy the centre. Auxiliary status and phone pairing are in the right column.
+  occupy the centre. The desktop workspace fits a 1920×1080 display and adapts to
+  smaller screens. The right column groups tools into **Scan**, **Camera**,
+  **Files** and **Host** tabs; start/stop and pause stay available across tabs.
 - Use **Head / free object** for a head or a held subject. Use **Object on a table**
   when support-plane detection is appropriate. The selected subject is remembered.
 - **Pause & inspect** moves coverage to the centre. Drag to turn the coverage
@@ -110,5 +119,8 @@ them, not automatically to this build.
 
 The project is MIT licensed. The original copyright and permission notice remain
 in [LICENSE](LICENSE). The vendored Three.js assets retain their own
-[licence notice](tribuutscan/web/THREE-LICENSE). This independent project is not
+[licence notice](tribuutscan/web/THREE-LICENSE). The bundled
+[Nayuki QR generator](tribuutscan/web/qrcodegen.js) retains its MIT notice in the
+source header ([upstream](https://www.nayuki.io/page/qr-code-generator-library)).
+This independent project is not
 endorsed by Creality or Orbbec.

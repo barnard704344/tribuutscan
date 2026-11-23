@@ -25,8 +25,8 @@ host rather than replacing it. Check `captures/viewer.log` and terminal output.
 
 ## Phone cannot connect or asks for pairing again
 
-Use the host's LAN address and configured port, not `localhost`. Expand **Host &
-connection** and use the current pairing link/code. Manual host starts regenerate
+Use the host's LAN address and configured port, not `localhost`. Open the **Host**
+tab and use the current pairing QR/link/code. Manual host starts regenerate
 credentials. Guest Wi-Fi isolation, a firewall, or a listener restricted to
 `127.0.0.1` can prevent access. Both devices need a route to the host.
 

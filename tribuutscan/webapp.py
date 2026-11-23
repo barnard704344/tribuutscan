@@ -608,10 +608,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        if path in ('/', '/scanner.css', '/scanner.js'):
+        if path in ('/', '/scanner.css', '/scanner.js', '/qrcodegen.js'):
             file, kind = {'/': ('scanner.html', 'text/html; charset=utf-8'),
                           '/scanner.css': ('scanner.css', 'text/css'),
-                          '/scanner.js': ('scanner.js', 'text/javascript')}[path]
+                          '/scanner.js': ('scanner.js', 'text/javascript'),
+                          '/qrcodegen.js': ('qrcodegen.js', 'text/javascript')}[path]
             return self.reply((WEB / file).read_bytes(), kind)
         if not self.paired():
             return self.reply(json.dumps({'error': 'Pair this browser first'}).encode(), status=401)

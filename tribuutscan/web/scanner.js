@@ -1,5 +1,22 @@
 'use strict';
 const $ = id => document.getElementById(id);
+const toolTabs=Array.from(document.querySelectorAll('[data-tab]'));
+function selectToolTab(name, focus=false) {
+  if(!toolTabs.some(tab=>tab.dataset.tab===name))return;
+  for(const tab of toolTabs) {
+    const selected=tab.dataset.tab===name;
+    tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;
+    if(selected&&focus)tab.focus();
+  }
+  for(const panel of document.querySelectorAll('[data-tab-panel]'))panel.hidden=panel.dataset.tabPanel!==name;
+}
+for(const [index,tab] of toolTabs.entries()) {
+  tab.addEventListener('click',()=>selectToolTab(tab.dataset.tab));
+  tab.addEventListener('keydown',event=>{
+    const next={ArrowRight:(index+1)%toolTabs.length,ArrowLeft:(index+toolTabs.length-1)%toolTabs.length,Home:0,End:toolTabs.length-1}[event.key];
+    if(next!==undefined){event.preventDefault();selectToolTab(toolTabs[next].dataset.tab,true);}
+  });
+}
 let state = null, pending = false, paired = false, stale = true;
 let lastReceived = 0, lastDistance = null;
 let inspection=null, inspectionEpoch=0;
@@ -27,21 +44,40 @@ async function pair(token) {
   }
 }
 $('pair-form').addEventListener('submit',event=>{event.preventDefault();pair($('token').value.trim());});
+function pairingCode(url) {
+  const qr=qrcodegen.QrCode.encodeText(url,qrcodegen.QrCode.Ecc.MEDIUM);
+  const canvas=document.createElement('canvas'), border=4, scale=8;
+  canvas.className='pairing-qr';
+  canvas.width=canvas.height=(qr.size+border*2)*scale;
+  canvas.setAttribute('role','img');
+  canvas.setAttribute('aria-label','Scan to pair with this scanner host');
+  const ctx=canvas.getContext('2d');
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#000';
+  for(let y=0;y<qr.size;y++)for(let x=0;x<qr.size;x++)
+    if(qr.getModule(x,y))ctx.fillRect((x+border)*scale,(y+border)*scale,scale,scale);
+  return canvas;
+}
 $('share').addEventListener('click',async()=>{
   try {
     const access=await json('/api/access');
     const links=$('access-links');
     links.replaceChildren(...access.urls.map(url=>{
-      const label=document.createElement('label'), input=document.createElement('input');
+      const card=document.createElement('div'), label=document.createElement('label'), input=document.createElement('input');
+      card.className='pairing-address';
+      try {card.append(pairingCode(url));}
+      catch(e) {const note=document.createElement('p');note.textContent='QR code unavailable. Use the pairing link below.';card.append(note);}
       label.textContent='Open on the same network';input.readOnly=true;input.value=url;
-      input.addEventListener('click',()=>input.select());label.append(input);return label;
+      input.addEventListener('click',()=>input.select());label.append(input);card.append(label);return card;
     }));
+    if(!access.urls.length)links.textContent='No LAN address found. Check the host network connection and listen address.';
     $('access-code').textContent=access.token;
     $('access-dialog').showModal();
   }catch(e){$('command-error').textContent=e.message;$('command-error').hidden=false;}
 });
 $('close-access').onclick=()=>$('access-dialog').close();
-function showPairing() { $('pairing').hidden = false; $('workspace').hidden = true; $('share').hidden=true; $('connection').textContent = 'Pairing required'; }
+$('access-dialog').addEventListener('close',()=>{$('access-links').replaceChildren();$('access-code').textContent='';});
+function showPairing() { $('access-dialog').close(); $('pairing').hidden = false; $('workspace').hidden = true; $('share').hidden=true; $('connection').textContent = 'Pairing required'; }
 function options(select, values, selected) {
   if (JSON.stringify(Array.from(select.options, x=>x.value)) !== JSON.stringify(values)) {
     select.replaceChildren(...values.map(value => {const o=document.createElement('option');o.value=value;o.textContent=value;return o;}));

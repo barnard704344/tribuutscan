@@ -39,7 +39,7 @@ Choose checks for the changed paths and report what actually ran.
 | --- | --- |
 | HTTP host, pairing, previews, restart | `tribuutscan/webapp.py` |
 | Browser capture and saved-result pages | `tribuutscan/web/` |
-| Shared capture controller and desktop adapter | `tribuutscan/viewer.py` |
+| Shared capture controller and optional desktop adapter | `tribuutscan/controller.py`, `tribuutscan/viewer.py` |
 | Scan worker and progress/performance messages | `tribuutscan/livescan.py` |
 | Scanner tracking and point-cloud merge | `tribuutscan/cloud.py` |
 | GPU operations and model tracking | `tribuutscan/gpu.py`, `tribuutscan/gputrack.py` |
@@ -55,6 +55,16 @@ restart guards. Restart must wait until capture/recording/processing is idle.
 Paused inspection must render the existing classified coverage volume from a
 different camera. It must not replace coverage with a point-cloud view. Keep
 inspection requests bounded and coalesced, and discard late replies after resume.
+
+The browser controls use accessible Scan/Camera/Files/Host tabs. Capture actions
+stay outside the tab panels. Keep element IDs unique and avoid rebuilding camera
+canvases when switching tabs or pausing. The bundled `web/qrcodegen.js` generates
+pairing QR codes locally; preserve its MIT header when updating it.
+
+For layout changes, check 1920×1080, a smaller laptop viewport and phone width,
+including paused coverage and open tool lists. Update the illustrated
+[web UI tour](web-ui.md) and [screenshots](images/README.md) using an isolated demo
+session with example credentials, rather than publishing live pairing tokens.
 
 ## Measuring performance
 

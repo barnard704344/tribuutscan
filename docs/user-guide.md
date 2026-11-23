@@ -55,18 +55,47 @@ accepts the same options and uses the environment explicitly.
 
 1. Keep the scanner connected to the host, and connect both devices to the same
    trusted network.
-2. Expand **Host & connection** in the right column and choose **Connect a phone**.
-3. Open a pairing link on the remote device, or open the host's LAN address and
+2. Open the **Host** tab in the right column and choose **Connect a phone**.
+3. Scan the displayed QR code with the phone camera and open its link to pair
+   automatically. If several addresses appear, use one reachable from the phone.
+   You can also open a pairing link manually, or open the host's LAN address and
    enter the access code. Use the host's address, not `localhost`, on a phone.
 4. Allow the selected TCP port through the host firewall for the local network.
 
-Keep pairing links private. A manual host start generates new credentials. An
-in-app restart preserves pairing so existing browsers can reconnect. The camera,
+QR codes are generated locally; the pairing link is not sent to a QR service.
+Keep QR codes and pairing links private. A manual host start generates new
+credentials. An in-app restart preserves pairing so existing browsers can reconnect. The camera,
 GPU and files stay on the host; downloads are saved by the device running the browser.
 
 The service uses plain HTTP. For access outside the LAN, use a VPN or an
 authenticated HTTPS reverse proxy. If using a proxy, preserve the request Host
 and Origin relationship used by the command gateway.
+
+## Workspace and tools
+
+See the [illustrated web UI tour](web-ui.md) for desktop, camera tools, QR pairing
+and phone screenshots.
+
+The desktop workspace fills the available screen up to 1920 pixels wide. Coverage,
+Colour and IR stay on the left, with Depth in the centre. On desktop, longer tool
+lists scroll inside the right panel so they do not push the scan views off screen.
+Phones use a stacked layout.
+
+| Tab | Tools |
+| --- | --- |
+| Scan | Subject, spacing, capture options, continuation and separate pieces |
+| Camera | Depth range, exposure, hardware controls, IMU and markers |
+| Files | Saved scans, processing/downloads and raw recording |
+| Host | Connection, phone QR pairing, restart and host messages |
+
+Start/stop, pause/resume, cancel and current status remain visible above the tab
+contents. Changing tabs does not stop capture. Keyboard users can move between
+tabs with Left/Right arrows, Home and End.
+
+The **Host** tab contains the single collapsed **Messages from the host** log.
+Performance appears beside the current phase above the capture buttons rather
+than occupying a separate panel. The top banner and bottom branding footer have
+been removed to leave more space for the scan views.
 
 ## Capture a head or object
 
@@ -141,8 +170,8 @@ refresh reloads HTML/CSS/JavaScript; it does not reload the host's Python code.
 
 ## Inspect and export saved results
 
-Choose a take under **Saved scans**, choose **Open scan**, then follow **Inspect,
-process & download**. The separate result page provides model inspection,
+In the **Files** tab, choose a take under **Saved scans**, choose **Open scan**,
+then follow **Inspect, process & download**. The separate result page provides model inspection,
 processing, cropping and available PLY/STL downloads. It is distinct from the
 live capture workspace. Keep scans and their source recordings together when
 moving them to another machine.

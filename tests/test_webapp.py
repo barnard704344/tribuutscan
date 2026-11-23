@@ -62,15 +62,18 @@ def test_web_help_and_import_need_neither_tkinter_nor_a_display():
 def test_pairing_protects_status_previews_models_and_downloads():
     with running_service() as (service, base):
         request = client(base, paired=False)
-        for path in ['/api/state', '/preview/depth.png', '/preview/coverage-view.png', '/model/', '/model/cloud.ply', '/model/mesh.stl']:
+        for path in ['/api/access', '/api/state', '/preview/depth.png', '/preview/coverage-view.png', '/model/', '/model/cloud.ply', '/model/mesh.stl']:
             assert request(path)[0] == 401, path
-        for path in ['/', '/scanner.css', '/scanner.js']:
+        for path in ['/', '/scanner.css', '/scanner.js', '/qrcodegen.js']:
             assert request(path)[0] == 200
         assert request('/api/pair', {'token': 'wrong'})[0] == 401
         status, body, headers = request('/api/pair', {'token': 'test-pairing-code'})
         assert status == 200
         assert 'HttpOnly' in headers['Set-Cookie'] and 'SameSite=Strict' in headers['Set-Cookie']
         assert request('/api/state')[0] == 200
+        access_status, access_body, access_headers = request('/api/access')
+        assert access_status == 200 and json.loads(access_body)['token'] == 'test-pairing-code'
+        assert access_headers['Cache-Control'] == 'no-store'
         assert request('/model/info.json')[0] == 200
         assert request('/model/cloud.bin')[0] == 200
         assert request('/model/../../secrets.txt')[0] == 404

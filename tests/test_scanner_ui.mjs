@@ -4,16 +4,22 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const root = new URL('../tribuutscan/web/', import.meta.url);
 const html=fs.readFileSync(new URL('scanner.html',root),'utf8');
+const ids=Array.from(html.matchAll(/\bid="([^"]+)"/g),m=>m[1]);
+assert.equal(new Set(ids).size,ids.length,'Workspace element IDs must be unique');
+assert.equal((html.match(/Messages from the host/g)||[]).length,1);
 const elements=[];
 class Element {
   constructor(tag='div',attrs='') {
     this.tagName=tag.toUpperCase();this.style={setProperty(name,value){this[name]=value;}};this.dataset={};this.children=[];this.listeners={};this.disabled=false;
     this.hidden=/\bhidden\b/.test(attrs);this.type=(attrs.match(/type="([^"]*)"/)||[])[1];
     this.id=(attrs.match(/id="([^"]*)"/)||[])[1];this._value='';
-    for(const [,name,value] of attrs.matchAll(/data-([\w-]+)="([^"]*)"/g))this.dataset[name]=value;
+    for(const [,name,value] of attrs.matchAll(/data-([\w-]+)="([^"]*)"/g))this.dataset[name.replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=value;
     elements.push(this);
   }
   setAttribute(name,value){this[name]=value;}
+  focus(){document.activeElement=this;}
+  showModal(){this.open=true;}
+  close(){this.open=false;this.listeners.close?.();}
   get options(){return this.children;}
   get value(){return this._value;}
   set value(value){this._value=value;}
@@ -23,7 +29,7 @@ class Element {
     if(child.parentElement)child.parentElement.children=child.parentElement.children.filter(e=>e!==child);
     child.parentElement=this;this.children.push(child);
   }}
-  getContext(){return {fillRect(){},fillText(){},drawImage(){}};}
+  getContext(){return this.context??={rects:[],fillRect(...rect){this.rects.push([this.fillStyle,...rect]);},fillText(){},drawImage(){}};}
 }
 const stack=[];
 for(const [token,tag,attrs] of html.matchAll(/<\/?(\w+)([^>]*)>/g)) {
@@ -37,13 +43,14 @@ const document={
   getElementById(id){return elements.find(e=>e.id===id);},
   createElement(tag){return new Element(tag);},
   querySelectorAll(selector){
-    const name=selector.match(/\[data-([^\]]+)\]/)?.[1];
+    const name=selector.match(/\[data-([^\]]+)\]/)?.[1]?.replace(/-([a-z])/g,(_,c)=>c.toUpperCase());
     return elements.filter(e=>name && Object.hasOwn(e.dataset,name));
   }
 };
 const context=vm.createContext({document,window:{addEventListener(){}},location:{origin:'http://host',pathname:'/'},
   console,Date,JSON,URLSearchParams,Array,Number,AbortController,AbortSignal,setTimeout(){},fetch(){throw Error('Unexpected network request');}});
 let source=fs.readFileSync(new URL('scanner.js',root),'utf8');
+new vm.Script(fs.readFileSync(new URL('qrcodegen.js',root),'utf8')).runInContext(context);
 source=source.replace(/\(async\(\)=>\{[\s\S]*?\}\)\(\);/,'');
 new vm.Script(source).runInContext(context);
 function render(phase,extra={}) {
@@ -51,6 +58,24 @@ function render(phase,extra={}) {
   context.fixture=state;vm.runInContext('render(fixture); pending=false; updateDisabled();',context);
 }
 const get=id=>document.getElementById(id);
+assert.equal(get('tools-scan').hidden,false);
+for(const name of ['camera','files','host'])assert.equal(get('tools-'+name).hidden,true);
+get('tab-host').listeners.click();
+assert.equal(get('tools-host').hidden,false);
+assert.equal(get('tools-scan').hidden,true);
+assert.equal(get('tab-host')['aria-selected'],'true');
+assert.equal(get('tab-host').tabIndex,0);
+get('tab-host').listeners.keydown({key:'ArrowRight',preventDefault(){}});
+assert.equal(get('tools-scan').hidden,false);
+assert.equal(document.activeElement,get('tab-scan'));
+get('tab-scan').listeners.keydown({key:'End',preventDefault(){}});
+assert.equal(get('tools-host').hidden,false);
+get('tab-host').listeners.keydown({key:'Home',preventDefault(){}});
+assert.equal(get('tools-scan').hidden,false);
+// Changing a tool tab must not hide the persistent scan actions or move the cameras.
+assert.equal(get('scan-main').parentElement,get('pause').parentElement.parentElement);
+assert.notEqual(get('scan-main').parentElement,get('tools-scan'));
+assert.equal(get('messages').parentElement.parentElement,get('tools-host'));
 render('scanning');
 const coveragePane=get('coverage-pane'),depthPane=get('depth-pane'),coverageCanvas=get('coverage-view');
 assert.equal(coveragePane.parentElement,get('side-view'));
@@ -187,3 +212,36 @@ render('resuming');releaseLate({});await lateLoading;
 assert.equal(vm.runInContext('inspection',context),null);
 assert.equal(get('coverage-view').dataset.inspecting,'false');
 console.log('Coverage camera rotation, touch zoom, coalesced requests and resume checks passed');
+
+// Pairing QR codes encode the exact host-provided link, including its token fragment.
+const urls=['http://192.168.1.20:8765/#token=example-private-code',
+  'http://10.0.0.20:8765/#token=example-private-code'];
+let accessRequests=[];
+context.fetch=async url=>{accessRequests.push(url);return {ok:true,json:async()=>({urls,token:'example-private-code'})};};
+await get('share').listeners.click();
+assert.deepEqual(accessRequests,['/api/access']);
+assert.equal(get('access-dialog').open,true);
+assert.equal(get('access-code').textContent,'example-private-code');
+assert.equal(get('access-links').children.length,2);
+for(const [i,card] of get('access-links').children.entries()) {
+  const [canvas,label]=card.children;
+  assert.equal(canvas.tagName,'CANVAS');
+  assert.equal(label.children[0].value,urls[i]);
+  context.qrUrl=urls[i];
+  const qr=vm.runInContext('qrcodegen.QrCode.encodeText(qrUrl,qrcodegen.QrCode.Ecc.MEDIUM)',context);
+  assert.equal(canvas.width,(qr.size+8)*8);
+  assert.equal(canvas.height,canvas.width);
+  assert.deepEqual(canvas.context.rects[0],['#fff',0,0,canvas.width,canvas.height]);
+  const expected=[];
+  for(let y=0;y<qr.size;y++)for(let x=0;x<qr.size;x++)
+    if(qr.getModule(x,y))expected.push(['#000',(x+4)*8,(y+4)*8,8,8]);
+  assert.deepEqual(canvas.context.rects.slice(1),expected);
+}
+get('close-access').onclick();
+assert.equal(get('access-links').children.length,0);
+assert.equal(get('access-code').textContent,'');
+context.fetch=async()=>({ok:true,json:async()=>({urls:[],token:'example-private-code'})});
+await get('share').listeners.click();
+assert.match(get('access-links').textContent,/No LAN address found/);
+get('access-dialog').close();
+console.log('Local pairing QR codes, multiple addresses, empty network and credential cleanup checks passed');
