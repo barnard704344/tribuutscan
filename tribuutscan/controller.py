@@ -1505,7 +1505,7 @@ class Controller:
         """Go on with the newest saved scan (saved by this version: it has merged.npz)."""
         if self.scan_state != "idle":
             return
-        saved = sorted(d for d in fr.CAPTURES.glob("*-scan") if (d / "merged.npz").exists())
+        saved = sorted(d for d in fr.CAPTURES.glob("*-scan") if (d / "merged.npz").exists() and not (d / ".editing.json").exists())
         if not saved:
             self.log("nothing to continue: no saved scan with its frames yet")
             return

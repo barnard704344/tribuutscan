@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import {OrbitControls} from '/model/OrbitControls.js';
 const $=id=>document.getElementById(id), canvas=$('view');
+const embedded=new URLSearchParams(location.search).get('embedded')==='1';
+if(embedded)document.body.classList.add('embedded');
 const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 const scene=new THREE.Scene();scene.background=new THREE.Color('#070e17');
@@ -115,15 +117,18 @@ $('save').onclick=async()=>{
  const job=await command({action:'alignment-save',...loaded,transform});$('status').textContent='Saving a new aligned session on the host…';
  while(saving){await new Promise(r=>setTimeout(r,1000));const status=await api('/api/state');if(status.processing)continue;
  if(!status.scans.includes(job.output))throw Error(status.message||'Alignment did not produce a new session.');
- $('result').onclick=async event=>{event.preventDefault();try{await command({action:'open',name:job.output});location.href='/model/';}catch(e){error(e.message);}};
+ $('result').onclick=async event=>{event.preventDefault();try{await command({action:'open',name:job.output});if(embedded)parent.postMessage({type:'alignment-result'},location.origin);else location.href='/model/';}catch(e){error(e.message);}};
  $('result').hidden=false;$('status').textContent=`Saved ${job.output}. Open the result to inspect, crop and mesh it.`;break;}
  }catch(e){error(e.message);}finally{saving=false;buttons();}
 };
 new ResizeObserver(()=>{const r=canvas.parentElement.getBoundingClientRect();renderer.setSize(r.width,r.height,false);camera.aspect=r.width/r.height;camera.updateProjectionMatrix();}).observe(canvas.parentElement);
-renderer.setAnimationLoop(()=>{controls.update();renderer.render(scene,camera);});
+const animate=()=>{controls.update();renderer.render(scene,camera);};
+renderer.setAnimationLoop(animate);
+if(embedded){window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===parent&&event.data?.type==='alignment-visible')renderer.setAnimationLoop(event.data.visible?animate:null);});parent.postMessage({type:'alignment-ready'},location.origin);}
 try{
  const state=await api('/api/state');for(const key of ['reference','moving']){
  $(key).replaceChildren(...state.scans.map(name=>{const option=document.createElement('option');option.value=option.textContent=name;return option;}));
- }if(state.scans.length>1)$('moving').selectedIndex=1;
+ }const reference=new URLSearchParams(location.search).get('reference');if(state.scans.includes(reference))$('reference').value=reference;
+ const other=state.scans.find(name=>name!==$('reference').value);if(other)$('moving').value=other;
  $('load').disabled=state.scans.length<2;$('status').textContent=state.scans.length<2?'Two saved scans are needed. You can return here after capturing them.':'Choose two saved scans, then load their previews.';
 }catch(e){error(e.message);$('load').disabled=true;}

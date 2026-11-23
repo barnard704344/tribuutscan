@@ -1,180 +1,30 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>triBUUTSCAN 3D</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Saved scan workspace · triBUUTSCAN</title>
 <style>
-  :root {
-    --bg: #15171a; --panel: #1f2226; --line: #33373d; --text: #e6e8eb; --muted: #9aa1aa;
-    --accent: #e0457b; --good: #4caf50;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif; overflow: hidden; }
-  #view { position: fixed; inset: 0; display: block; }
-  header { position: fixed; top: 0; left: 0; right: 0; height: 40px; display: flex; align-items: center;
-    gap: 4px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line); z-index: 2; }
-  header .brand { font-weight: 700; margin-right: 16px; letter-spacing: .02em; }
-  header .brand span { color: var(--accent); }
-  .menu { position: relative; }
-  .menu > button { background: none; border: 0; color: var(--text); padding: 8px 12px; border-radius: 6px;
-    font: inherit; cursor: pointer; }
-  .menu > button:hover, .menu.open > button { background: var(--line); }
-  .menu ul { display: none; position: absolute; top: 36px; left: 0; min-width: 220px; margin: 0; padding: 6px;
-    list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(0,0,0,.4); }
-  .menu.open ul { display: block; }
-  .menu li { padding: 7px 10px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
-  .menu li:hover { background: var(--line); }
-  .menu li.later { color: var(--muted); cursor: default; }
-  .menu li.later:hover { background: none; }
-  .menu li small { color: var(--muted); margin-left: 6px; }
-  #status { margin-left: auto; color: var(--muted); font-size: 13px; }
-  #status b { color: var(--good); font-weight: 600; }
-  aside { position: fixed; top: 52px; right: 12px; width: 250px; max-height: calc(100dvh - 64px); overflow-y: auto; padding: 12px 14px; z-index: 2;
-    background: rgba(31,34,38,.92); border: 1px solid var(--line); border-radius: 10px; }
-  aside h2 { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 600;
-    text-transform: uppercase; letter-spacing: .05em; }
-  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0 0 12px; font-size: 13px; }
-  dt { color: var(--muted); }
-  dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
-  label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 13px; }
-  input[type=range], select { width: 100%; accent-color: var(--accent); }
-  select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
-    padding: 5px; font: inherit; }
-  .hint { margin-top: 12px; color: var(--muted); font-size: 12px; }
-  #coverage-legend { margin: 10px 0 0; font-size: 12px; }
-  #coverage-legend ul { list-style: none; margin: 0; padding: 0; }
-  #coverage-legend li { margin: 3px 0; }
-  #coverage-legend .swatch { display: inline-block; vertical-align: -1px; margin-right: 5px;
-    width: 10px; height: 10px; border-radius: 50%; }
-  #coverage-legend .light { background: #ffc45c; }
-  #coverage-legend .repeat { background: #53b9ff; }
-  #coverage-legend .hint { margin-top: 6px; }
-  .bad { color: #ff6b6b; font-weight: 600; }
-  #empty { position: fixed; inset: 0; display: none; place-items: center; text-align: center;
-    color: var(--muted); pointer-events: none; z-index: 1; padding: 0 24px; }
-  #empty.show { display: grid; }
-  #cropbox { right: auto; left: 12px; }
-  #cropbox label { display: flex; justify-content: space-between; margin: 8px 0 2px; }
-  #cropbox output { color: var(--text); font-variant-numeric: tabular-nums; }
-  .buttons { display: flex; gap: 8px; margin-top: 12px; }
-  .buttons button { flex: 1; padding: 6px; border-radius: 6px; border: 1px solid var(--line); font: inherit;
-    background: var(--bg); color: var(--text); cursor: pointer; }
-  .buttons button.main { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-  @media (max-width: 600px) { aside { left: 12px; right: 12px; width: auto; top: auto; bottom: 12px; }
-    #cropbox { top: 52px; bottom: auto; } }
-  @media (max-width: 600px) {
-    header { height: auto; min-height: 44px; flex-wrap: wrap; padding: 6px 8px; }
-    header .brand { width: 100%; margin: 0; }
-    header #status { font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-    .menu > button { min-height: 38px; padding: 6px 8px; }
-    .menu:focus-within ul { display: block; }
-    aside { max-height: 42vh; overflow-y: auto; }
-    #cropbox { top: 110px; bottom: auto; max-height: calc(100vh - 130px); }
-  }
-</style>
-<script type="importmap">{ "imports": { "three": "./three.module.min.js" } }</script>
-</head>
-<body>
-<canvas id="view"></canvas>
-<div id="empty"><div>No points yet.<br>Keep the object at the green distance in the viewer and move slowly.</div></div>
-<header>
-  <div class="brand">tri<span>BUUT</span>SCAN</div>
-  <div class="menu"><button>Scan</button><ul>
-    <li id="scanner-controls">Scanner controls<small>open the capture workspace</small></li>
-  </ul></div>
-  <div class="menu"><button>Process</button><ul>
-    <li data-action="optimise">Optimise again<small>loops + pose graph</small></li>
-    <li data-action="small">Merge again: small<small>0.5 mm</small></li>
-    <li data-action="medium">Merge again: medium<small>1 mm</small></li>
-    <li data-action="large">Merge again: large<small>2 mm</small></li>
-    <li data-action="mesh">Make mesh<small>fuse the frames</small></li>
-    <li data-action="base-off">Remove base<small>save without the table</small></li>
-    <li data-action="base-on">Keep base<small>save with the table under it</small></li>
-  </ul></div>
-  <div class="menu"><button>Crop</button><ul>
-    <li id="crop-open">Crop box…<small>keep what is inside</small></li>
-    <li id="crop-off" data-action="crop-off" class="later">Clear crop<small>everything back</small></li>
-  </ul></div>
-  <div class="menu"><button>Export</button><ul>
-    <li id="dl-ply">Download cloud.ply</li>
-    <li id="dl-mesh" class="later">Download mesh.ply<small>make a mesh first</small></li>
-    <li id="dl-stl" class="later">Download mesh.stl<small>make a full mesh first</small></li>
-    <li id="dl-solid" class="later">Download solid.ply<small>closed, with colour: Blender</small></li>
-    <li id="dl-png">Save view as PNG</li>
-  </ul></div>
-  <div class="menu"><button>View</button><ul>
-    <li id="reset">Reset view <small>R</small></li>
-  </ul></div>
-  <div id="status">connecting…</div>
-</header>
-<aside>
-  <h2 id="name">Cloud</h2>
-  <dl>
-    <dt>Points</dt><dd id="points">–</dd>
-    <dt>Point distance</dt><dd id="pd">–</dd>
-    <dt>Raw points</dt><dd id="raw">–</dd>
-    <dt>Capture</dt><dd id="capture">–</dd>
-    <dt>Tracking</dt><dd id="tracking">–</dd>
-    <dt>Geometry</dt><dd id="geometry">–</dd>
-    <dt title="Views incorporated into the scan, out of all processed views">Accepted views</dt><dd id="frames">–</dd>
-    <dt id="last-view-label" hidden>Last accepted</dt><dd id="last-view" hidden>–</dd>
-  </dl>
-  <div class="hint" id="scanhint" hidden></div>
-  <div id="piece-picker" hidden>
-    <label for="piece">Pieces</label>
-    <select id="piece" aria-describedby="piece-note"></select>
-    <div class="hint" id="piece-note">Unaligned pieces. Inspect one at a time.</div>
-  </div>
-  <label for="show">Show</label>
-  <select id="show">
-    <option value="cloud">Cloud</option>
-    <option value="mesh" disabled>Mesh (make one first)</option>
-    <option value="solid" disabled>Solid (make a mesh first)</option>
-  </select>
-  <div id="sizebox">
-    <label for="size">Point size</label>
-    <input id="size" type="range" min="0.3" max="4" step="0.1" value="1.5">
-  </div>
-  <label for="mode">Colour</label>
-  <select id="mode">
-    <option value="rgb">Camera colour</option>
-    <option value="coverage">Scan coverage</option>
-    <option value="grey">Grey (mesh shape)</option>
-    <option value="seen">Times seen (blue few, red many)</option>
-    <option value="height">Height</option>
-  </select>
-  <div id="coverage-legend" hidden>
-    <ul id="coverage-colours">
-      <li><span class="swatch light"></span>Amber · seen 1–2 times; take more views</li>
-      <li><span class="swatch repeat"></span>Blue · seen 3+ times</li>
-    </ul>
-    <p class="hint" id="coverage-note"></p>
-  </div>
-  <div class="hint">Drag to orbit, right-drag to pan, scroll to zoom.</div>
-</aside>
-<aside id="cropbox" hidden>
-  <h2>Crop box</h2>
-  <label for="c0">Left<output id="v0">0 mm</output></label>
-  <input id="c0" type="range" min="0" max="1" step="1" value="0">
-  <label for="c3">Right<output id="v3">0 mm</output></label>
-  <input id="c3" type="range" min="0" max="1" step="1" value="0">
-  <label for="c1">Bottom<output id="v1">0 mm</output></label>
-  <input id="c1" type="range" min="0" max="1" step="1" value="0">
-  <label for="c4">Top<output id="v4">0 mm</output></label>
-  <input id="c4" type="range" min="0" max="1" step="1" value="0">
-  <label for="c2">Back<output id="v2">0 mm</output></label>
-  <input id="c2" type="range" min="0" max="1" step="1" value="0">
-  <label for="c5">Front<output id="v5">0 mm</output></label>
-  <input id="c5" type="range" min="0" max="1" step="1" value="0">
-  <div class="buttons"><button id="crop-apply" class="main">Apply</button><button id="crop-cancel">Cancel</button></div>
-  <div class="hint">Each slider moves one face of the box in; at 0 it stands 5 mm clear of the object. The faces
-    are level with the table (or square to the platform's turn). Apply keeps what is inside: cloud, mesh, STL and solid (the solid is cut flat at the
-    bottom face). Crop › Clear crop brings everything back.</div>
-</aside>
+:root{color-scheme:dark;--bg:#0b121d;--panel:#111d2d;--raised:#172639;--line:#2b3d52;--text:#edf4fc;--muted:#a4b6ca;--accent:#73dbb0;font:14px/1.5 system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}a{color:var(--accent)}header{height:56px;display:flex;align-items:center;gap:20px;padding:0 16px;border-bottom:1px solid var(--line)}header h1{font-size:15px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}button,input,select{font:inherit;border:1px solid var(--line);border-radius:7px;background:var(--raised);color:var(--text);min-height:40px;padding:8px}button{font-weight:600;cursor:pointer}button:hover:enabled{background:#26405b}button:disabled,.later{opacity:.45;cursor:default}.primary{background:var(--accent);color:#09251c}button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #81c8ff;outline-offset:2px}[hidden]{display:none!important}.workspace-body{display:grid;grid-template-columns:minmax(0,1fr) 340px;position:relative;height:calc(100dvh - 56px)}.viewport{position:relative;min-height:300px;min-width:0;background:#070e17}#view,#selection{position:absolute;inset:0;width:100%;height:100%;display:block}#view{touch-action:none}#selection{pointer-events:none}#empty{position:absolute;inset:0;display:none;place-items:center;color:var(--muted);padding:24px;text-align:center;pointer-events:none}#empty.show{display:grid}.view-hint{position:absolute;bottom:12px;left:16px;color:var(--muted);font-size:12px;pointer-events:none}.tools{background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}.tool-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;padding:5px;border-bottom:1px solid var(--line);background:var(--panel);flex-shrink:0;z-index:4}.tool-tabs button{background:transparent;border-color:transparent;font-size:12px;padding:8px 2px;min-width:0}.tool-tabs button[aria-selected=true]{color:var(--accent);background:var(--raised);border-color:var(--line)}.tool-content{overflow:auto;min-height:0;padding:14px}.tool-content section+section{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}h2{font-size:14px;margin:0 0 12px}p,label,dt{color:var(--muted);font-size:12px}p{margin:8px 0}label{display:block;margin:12px 0 4px}select,input[type=range]{width:100%}dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:0 0 16px}dd{margin:0;text-align:right;font-size:12px}button.wide{width:100%;margin-top:8px}.buttons{display:flex;gap:6px;margin-top:8px}.buttons button{flex:1;font-size:12px}.downloads{display:grid;gap:8px}.downloads button{text-align:left}.history{display:flex;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line)}.history button{flex:1;min-height:34px;font-size:12px;padding:6px}#status{padding:10px 14px;margin:0;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted);overflow-wrap:anywhere}#status[data-error=true]{color:#ffb6bf}#edit-state{font-size:12px;color:var(--accent);white-space:nowrap}#coverage-legend{font-size:12px;color:var(--muted)}#coverage-legend ul{list-style:none;padding:0}.swatch{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}.light{background:#ffc45c}.repeat{background:#53b9ff}#cropbox label{display:flex;justify-content:space-between}#cropbox output{color:var(--text)}.bad{color:#ffb6bf}#alignment-frame{position:absolute;inset:0;width:100%;height:100%;border:0;z-index:2}.align-active .tools{background:transparent;pointer-events:none;z-index:3}.align-active .tool-tabs{pointer-events:auto}.align-active .tool-content,.align-active .history,.align-active #status{visibility:hidden}.align-active .viewport{visibility:hidden}
+@media(max-width:760px){header{height:auto;min-height:56px;flex-wrap:wrap;gap:8px;padding:10px}header h1{order:3;flex-basis:100%;font-size:13px}#copy-scan{margin-left:auto;font-size:12px}#edit-state{font-size:11px}.workspace-body{display:flex;flex-direction:column;height:auto}.viewport{height:52dvh;min-height:300px}.tools{border-left:0;border-top:1px solid var(--line)}.tool-content{max-height:65dvh}.align-active{height:calc(100dvh - 100px)}.align-active .viewport{height:0;min-height:0}.align-active .tools{height:48px}.align-active #alignment-frame{top:48px;height:calc(100% - 48px)}}
+</style><script type="importmap">{"imports":{"three":"./three.module.min.js"}}</script></head><body>
+<header><a id="scanner-controls" href="/">← Capture</a><h1 id="name">Saved scan workspace</h1><span id="edit-state">Original</span><button id="copy-scan" class="primary">Save edited copy</button></header>
+<main class="workspace-body" id="workspace-body"><section class="viewport" id="viewport"><canvas id="view" aria-label="Saved scan model"></canvas><canvas id="selection"></canvas><div id="empty"><div>No saved model loaded. Return to Capture → Files to open a scan.</div></div><div class="view-hint" id="view-hint">Drag to orbit · right-drag to pan · scroll to zoom</div></section>
+<aside class="tools"><nav class="tool-tabs" role="tablist" aria-label="Saved scan tools">
+<button id="tab-view" role="tab" data-tool="view" aria-controls="panel-view" aria-selected="true">View</button><button id="tab-align" role="tab" data-tool="align" aria-controls="panel-align" aria-selected="false" tabindex="-1">Align</button><button id="tab-cleanup" role="tab" data-tool="cleanup" aria-controls="panel-cleanup" aria-selected="false" tabindex="-1">Cleanup</button><button id="tab-mesh" role="tab" data-tool="mesh" aria-controls="panel-mesh" aria-selected="false" tabindex="-1">Mesh</button><button id="tab-export" role="tab" data-tool="export" aria-controls="panel-export" aria-selected="false" tabindex="-1">Export</button></nav>
+<p id="status" role="status">Loading saved scan…</p><div class="history"><button id="edit-undo" disabled>Undo</button><button id="edit-redo" disabled>Redo</button></div>
+<div class="tool-content">
+<div id="panel-view" role="tabpanel" aria-labelledby="tab-view" data-panel="view"><section><h2>Model</h2><dl><dt>Points</dt><dd id="points">–</dd><dt>Point spacing</dt><dd id="pd">–</dd><dt>Source points</dt><dd id="raw">–</dd><dt>Accepted views</dt><dd id="frames">–</dd></dl><span hidden><span id="capture"></span><span id="tracking"></span><span id="geometry"></span><span id="last-view-label"></span><span id="last-view"></span><span id="scanhint"></span></span><div id="piece-picker" hidden><label>Pieces<select id="piece"></select></label><p id="piece-note"></p></div>
+<label>Display<select id="show"><option value="cloud">Point cloud</option><option value="mesh" disabled>Mesh (not generated)</option><option value="solid" disabled>Printable solid (not generated)</option></select></label><div id="sizebox"><label>Point size<input id="size" type="range" min="0.3" max="4" step="0.1" value="1.5"></label></div><label>Colour<select id="mode"><option value="rgb">Camera colour</option><option value="coverage">Observation coverage</option><option value="grey">Neutral grey</option><option value="seen">Times seen</option><option value="height">Height</option></select></label><div id="coverage-legend" hidden><ul id="coverage-colours"><li><span class="swatch light"></span>Amber · seen 1–2 times</li><li><span class="swatch repeat"></span>Blue · seen 3+ times</li></ul><p id="coverage-note"></p></div><button id="reset" class="wide">Fit model to view</button><div class="buttons"><button data-direction="front">Front</button><button data-direction="right">Right</button><button data-direction="top">Top</button></div></section></div>
+<div id="panel-align" role="tabpanel" aria-labelledby="tab-align" data-panel="align" hidden><p>Loading alignment workspace…</p></div>
+<div id="panel-cleanup" role="tabpanel" aria-labelledby="tab-cleanup" data-panel="cleanup" hidden><section><h2>Remove unwanted regions</h2><p>Edits are saved to a separate copy automatically. Originals stay unchanged.</p><button id="lasso-start" class="wide">Draw lasso selection</button><p>Lasso selects through all surfaces along the viewing direction. Orbit to a useful angle first.</p><div class="buttons"><button id="lasso-delete" disabled>Delete selected region</button><button id="lasso-cancel">Cancel selection</button></div><p id="selection-count"></p><button id="cleanup-clear" class="wide">Clear all lasso cleanup</button></section><section><h2>Crop and base</h2><button id="crop-open" class="wide">Adjust crop box</button><button data-action="crop-off" id="crop-off" class="wide">Clear crop</button><div id="cropbox" hidden><p>Move the box faces to keep what is inside.</p>
+<label for="c0">Left<output id="v0">0 mm</output></label><input id="c0" type="range" min="0" max="1" step="1" value="0">
+<label for="c3">Right<output id="v3">0 mm</output></label><input id="c3" type="range" min="0" max="1" step="1" value="0">
+<label for="c1">Bottom<output id="v1">0 mm</output></label><input id="c1" type="range" min="0" max="1" step="1" value="0">
+<label for="c4">Top<output id="v4">0 mm</output></label><input id="c4" type="range" min="0" max="1" step="1" value="0">
+<label for="c2">Back<output id="v2">0 mm</output></label><input id="c2" type="range" min="0" max="1" step="1" value="0">
+<label for="c5">Front<output id="v5">0 mm</output></label><input id="c5" type="range" min="0" max="1" step="1" value="0">
+<div class="buttons"><button id="crop-apply" class="primary">Apply crop</button><button id="crop-cancel">Cancel</button></div></div><div class="buttons"><button data-action="base-off">Remove base</button><button data-action="base-on">Keep base</button></div></section></div>
+<div id="panel-mesh" role="tabpanel" aria-labelledby="tab-mesh" data-panel="mesh" hidden><section><h2>Build surface</h2><button data-action="mesh" class="wide primary">Generate mesh</button><p>Uses recorded depth when available. A rough point-cloud surface is the fallback when recordings cannot be used.</p><p id="mesh-status"></p></section><section><h2>Reprocess source geometry</h2><button data-action="optimise" class="wide">Optimise alignment</button><p>Optimise before lasso cleanup. Geometry changes may retire generated meshes.</p><label>Rebuild point cloud spacing</label><div class="buttons"><button data-action="small">0.5 mm</button><button data-action="medium">1 mm</button><button data-action="large">2 mm</button></div></section></div>
+<div id="panel-export" role="tabpanel" aria-labelledby="tab-export" data-panel="export" hidden><section><h2>Download</h2><div class="downloads"><button id="dl-ply">Point cloud · PLY</button><button id="dl-mesh" disabled>Surface mesh · PLY</button><button id="dl-stl" disabled>Printable mesh · STL</button><button id="dl-solid" disabled>Coloured solid · PLY</button><button id="dl-png">Save current view · PNG</button></div><p>PLY coordinates are metres. STL coordinates are millimetres. Check orientation and scale in the receiving application.</p><p id="export-status"></p></section></div>
+</div></aside><iframe id="alignment-frame" title="Saved scan alignment" hidden></iframe></main>
 <script type="module">
+
 import * as THREE from "three";
 import { OrbitControls } from "./OrbitControls.js";
 
@@ -182,7 +32,7 @@ const canvas = document.getElementById("view");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x15171a);
+scene.background = new THREE.Color(0x070e17);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 50);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -198,6 +48,7 @@ let pieceScan = null, selectedPiece = null, pieceSignature = "", pieceEpoch = 0,
 const shapes = { mesh: { obj: null, version: null, rgb: null }, solid: { obj: null, version: null, rgb: null } };
 const SHAPE_NAMES = { mesh: "Mesh", solid: "Solid" };  // the scanned surface; the closed solid (as the STL)
 const $ = (id) => document.getElementById(id);
+let lastInfo=null, busy=false, tool='view', desiredMesh=false, lasso=false, selectedRegion=null, stroke=[], refreshFailed=false;
 const coverageRGB = {
   light: new THREE.Color(0xffc45c).toArray(),
   repeat: new THREE.Color(0x53b9ff).toArray(),
@@ -214,11 +65,14 @@ let cropExt = null, unclipOnMesh = false;  // the box with every slider at 0: [l
 const CROP_MARGIN_MM = 5;  // a face left at 0 stands this far clear of the cloud (the mesh reaches up to ~1.3 mm past it)
 
 function resize() {
-  renderer.setSize(window.innerWidth, window.innerHeight, false);
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const rect=$('viewport').getBoundingClientRect();
+  renderer.setSize(rect.width, rect.height, false);
+  camera.aspect = rect.width / rect.height;
+  $('selection').width=rect.width;$('selection').height=rect.height;
   camera.updateProjectionMatrix();
 }
 window.addEventListener("resize", resize);
+new ResizeObserver(resize).observe($("viewport"));
 resize();
 
 function ramp(t) {  // blue -> cyan -> green -> yellow -> red
@@ -399,6 +253,7 @@ function cropAxes() {  // the box's axes (rows, the page's axes): the saved crop
 
 function openCrop() {
   if (!data || !data.n) return;
+  clearLasso();
   const A = cropAxes(), lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity], xyz = data.xyz;
   for (let i = 0; i < data.n; i++) {
     const x = xyz[3 * i], y = xyz[3 * i + 1], z = xyz[3 * i + 2];
@@ -427,7 +282,7 @@ function openCrop() {
   cropGroup.matrix.makeBasis(...A.map((a) => new THREE.Vector3(...a)));  // box axes -> the page's
   cropGroup.matrixWorldNeedsUpdate = true;
   cropGroup.visible = true;
-  $("cropbox").hidden = false;
+  selectTool("cleanup");$("cropbox").hidden = false;
   cropChanged();
 }
 
@@ -470,27 +325,63 @@ function closeCrop(keepClipping) {
   if (!keepClipping) setClipping(null);
 }
 
-async function runAction(action, label, query = "") {  // a Process action; its message in the status line
-  $("status").textContent = `working: ${label}…`;
-  messageAt = Date.now() + 600000;  // until the answer comes
-  try {
-    const remote = location.pathname.startsWith("/model/");
-    const options = { method: "POST", headers: {"X-Tribuutscan": "1"} };
-    if (remote) {
-      const response = await fetch("/api/state");
-      if (!response.ok) throw new Error("Reconnect using the host's pairing link");
-      const state = await response.json();
-      options.headers = {"Content-Type": "application/json", "X-Tribuutscan": "1"};
-      options.body = JSON.stringify({revision: state.revision, instance: state.instance});
-    }
-    const r = await (await fetch(`process/${action}${query}`, options)).json();
-    $("status").textContent = r.error || r.message;
-    messageAt = Date.now();
-    return r.message;
-  } catch (e) {
-    $("status").textContent = "failed: server stopped";
-    return "";
+function status(message,error=false){
+  $('status').textContent=message;$('status').dataset.error=String(error);
+  messageAt=error?Infinity:Date.now();
+}
+async function host(path,data){
+  const response=await fetch(path,{method:data===undefined?'GET':'POST',headers:data===undefined?{}:{'Content-Type':'application/json','X-Tribuutscan':'1'},body:data===undefined?undefined:JSON.stringify(data),signal:AbortSignal.timeout(25000)});
+  let result;try{result=await response.json();}catch{throw Error('The host returned an invalid response');}
+  if(!response.ok)throw Error(result.error||`Host request failed (${response.status})`);return result;
+}
+async function savedCommand(action,extra={}){
+  const snapshot=lastInfo;if(!snapshot)throw Error('Wait for the saved model to load');
+  const state=await host('/api/state');
+  return host('/api/command',{action,name:snapshot.name,model_version:snapshot.version,revision:state.revision,instance:state.instance,...extra});
+}
+async function waitJob(output=null){
+  let result;
+  do{await new Promise(resolve=>setTimeout(resolve,400));result=await host('/api/state');}while(result.processing);
+  if(result.job_failed)throw Error(result.job_result||result.message||'Processing failed');
+  if(output&&!result.scans.includes(output))throw Error(result.job_result||'The new session was not created');
+  for(let i=0;i<60;i++){
+    if(lastInfo&&lastInfo.phase==='done'&&(!output||lastInfo.name===output))break;
+    await new Promise(resolve=>setTimeout(resolve,100));
   }
+  if(output&&lastInfo?.name!==output)throw Error('Another browser changed the selection; reopen the new copy from Files');
+  return result.job_result||'Finished';
+}
+async function editable(force=false){
+  if(!force&&lastInfo?.editing)return;
+  status('Creating a separate editable copy…');
+  const job=await savedCommand('edit-copy');await waitJob(job.output);
+}
+async function runAction(action,label,query=''){
+  if(busy)return '';busy=true;updateTools();status(`Working: ${label}…`);
+  try{
+    await editable();status(`Working: ${label}…`);desiredMesh=action==='mesh';
+    const state=await host('/api/state');const snapshot=lastInfo;
+    await host(`process/${action}${query}`,{name:snapshot.name,model_version:snapshot.version,revision:state.revision,instance:state.instance});
+    const message=await waitJob();if(action==='mesh')desiredMesh=true;
+    status(message);return message;
+  }catch(e){status(e.message,true);return '';}
+  finally{busy=false;updateTools();}
+}
+function updateTools(){
+  const done=lastInfo?.phase==='done',remote=location.pathname.startsWith('/model/');
+  document.querySelectorAll('[data-action]').forEach(el=>{el.disabled=busy||!done||!remote;el.classList.toggle('later',el.disabled);});
+  $('copy-scan').disabled=busy||!done||!remote||tool==='align';
+  $('edit-undo').disabled=busy||!done||!lastInfo?.editing?.can_undo;
+  $('edit-redo').disabled=busy||!done||!lastInfo?.editing?.can_redo;
+  $('lasso-start').disabled=busy||!done||!data?.n||!remote;
+  $('lasso-delete').disabled=busy||!done||!selectedRegion;
+  $('cleanup-clear').disabled=busy||!done||!remote||!session.cleanup_regions;
+  $('crop-open').disabled=busy||!done;$('crop-apply').disabled=busy||!done;
+  $('crop-open').classList.toggle('later',!done||busy);
+  for(const [id,key] of [['dl-mesh','mesh'],['dl-stl','stl'],['dl-solid','solid']])$(id).disabled=!lastInfo?.[key]||busy;
+  $('edit-state').textContent=lastInfo?.editing?'Editable copy':'Original · edits create a copy';
+  $('mesh-status').textContent=lastInfo?.mesh?'Surface mesh available. Regenerate after geometry cleanup.':'No surface mesh generated yet.';
+  $('export-status').textContent=lastInfo?.stl?(lastInfo.stl_state==='closed'?'Closed STL available.':'STL available; check closure before printing.'):'Generate a mesh to enable mesh exports.';
 }
 
 async function poll() {
@@ -498,7 +389,11 @@ async function poll() {
     const response = await fetch("info.json");
     if (!response.ok) throw new Error("could not load scan info");
     const info = await response.json();
-    session = info.session || {};
+    if(lastInfo&&lastInfo.name!==info.name&&info.editing?.source!==lastInfo.name){
+      framed=false;cloudKey=null;clearLasso();for(const kind in shapes){dropShape(kind);shapes[kind].version=null;}
+    }
+    lastInfo=info;session = info.session || {};
+    updateTools();
     const piece = updatePieces(info);
     const key = JSON.stringify([pieceScan, piece?.id ?? null, piece?.version ?? info.version]);
     // Show telemetry without waiting for a potentially large geometry download.
@@ -522,12 +417,12 @@ async function poll() {
     $("scanhint").textContent = live ? [live.hint, live.unjoined].filter(Boolean).join(" ") : "";
     // Orbit/zoom remain unchanged when the scan freezes. Processing is for finished scans only.
     const unfinished = info.phase !== "done";
-    document.querySelectorAll("[data-action]").forEach((li) => li.classList.toggle("later", unfinished));
-    $("crop-open").classList.toggle("later", unfinished);
+    document.querySelectorAll("[data-action]").forEach((li) => li.classList.toggle("later", unfinished||busy));
+    $("crop-open").classList.toggle("later", unfinished||busy);
     if (info.phase === "paused")
       $("status").textContent = "Paused · rotate or zoom here · Resume or Stop & Save in the scanner";
     else if (Date.now() - messageAt > 8000) {  // a Process result stays readable for a while
-      $("status").innerHTML = info.phase === "optimising" ? "<b>●</b> optimising…" : "<b>●</b> connected";
+      status(info.phase === "optimising" ? "Processing saved scan on the host…" : info.editing ? "Editable copy · changes are saved on the host" : "Saved scan · editing creates a separate copy");
     }
     if (key !== cloudKey && await load(piece?.id ?? null)) {
       cloudKey = key;
@@ -537,7 +432,7 @@ async function poll() {
     $("dl-ply").classList.toggle("later", info.phase === "paused" || !$("piece-picker").hidden);
     $("dl-mesh").classList.toggle("later", !info.mesh);
     $("dl-stl").classList.toggle("later", !info.stl);
-    $("dl-stl").querySelector("small").textContent = !info.stl ? "make a full mesh first"
+    $("dl-stl").title = !info.stl ? "make a full mesh first"
       : info.stl_state === "closed" ? "mm, closed, for slicers"
       : info.stl_state === "open" ? "mm, unsealed surface"
       : "mm, closure not recorded";
@@ -552,16 +447,17 @@ async function poll() {
         if (!(await loadMesh(kind))) continue;
         shape.version = info[kind];
         reloaded = true;
-        if (kind === "mesh") { $("show").value = "mesh"; showWhich(); }
+        if (kind === "mesh"&&desiredMesh) { $("show").value = "mesh";desiredMesh=false;showWhich(); }
       } else if (!info[kind] && shape.obj) {
         dropShape(kind); shape.version = null;
         if ($("show").value === kind) $("show").value = "cloud";
         showWhich();
       }
     }
+    if(refreshFailed){refreshFailed=false;status("Saved scan reconnected");}
     if (reloaded && unclipOnMesh) { unclipOnMesh = false; setClipping(null); }  // the cropped mesh is here
   } catch (e) {
-    $("status").textContent = "could not refresh scan; retrying…";
+    refreshFailed=true;status(`Could not refresh saved scan: ${e.message}. Retrying…`,true);
   }
   setTimeout(poll, 500);
 }
@@ -573,7 +469,7 @@ $("mode").addEventListener("change", () => {
     if (shapes[kind].obj) shapes[kind].obj.geometry.setAttribute("color", new THREE.BufferAttribute(meshColours(kind), 3));
   coverageLegend();
 });
-$("show").addEventListener("change", showWhich);
+$("show").addEventListener("change",()=>{desiredMesh=false;showWhich();});
 $("piece").addEventListener("change", () => {
   selectedPiece = Number($("piece").value);
   pieceEpoch++;
@@ -606,17 +502,97 @@ $("dl-png").addEventListener("click", () => {
   const a = document.createElement("a");
   a.href = canvas.toDataURL("image/png"); a.download = "triBUUTSCAN-view.png"; a.click();
 });
-document.querySelectorAll(".menu > button").forEach((b) => b.addEventListener("click", (e) => {
-  const menu = b.parentElement, open = menu.classList.contains("open");
-  document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open"));
-  if (!open) menu.classList.add("open");
-  e.stopPropagation();
-}));
-document.addEventListener("click", () => document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open")));
 
-(function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+function selectTool(name,focus=false){
+  tool=name;
+  for(const tab of document.querySelectorAll('[data-tool]')){
+    const active=tab.dataset.tool===name;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;if(active&&focus)tab.focus();
+  }
+  for(const panel of document.querySelectorAll('[data-panel]'))panel.hidden=panel.dataset.panel!==name;
+  $('workspace-body').classList.toggle('align-active',name==='align');
+  const frame=$('alignment-frame');frame.hidden=name!=='align';
+  const reference=lastInfo?.name||'';
+  if(name==='align'&&frame.dataset.reference!==reference){frame.dataset.reference=reference;frame.src='/alignment?embedded=1&reference='+encodeURIComponent(reference);}
+  frame.contentWindow?.postMessage({type:'alignment-visible',visible:name==='align'},location.origin);
+  if(name!=='cleanup')clearLasso();
+  updateTools();resize();
+}
+const tabs=Array.from(document.querySelectorAll('[data-tool]'));
+for(const [index,tab] of tabs.entries()){
+  tab.addEventListener('click',()=>selectTool(tab.dataset.tool));
+  tab.addEventListener('keydown',event=>{
+    const next={ArrowRight:(index+1)%tabs.length,ArrowLeft:(index+tabs.length-1)%tabs.length,Home:0,End:tabs.length-1}[event.key];
+    if(next!==undefined){event.preventDefault();selectTool(tabs[next].dataset.tool,true);}
+  });
+}
+window.addEventListener('message',event=>{
+  if(event.origin!==location.origin||event.source!==$('alignment-frame').contentWindow)return;
+  if(event.data?.type==='alignment-ready')$('alignment-frame').contentWindow.postMessage({type:'alignment-visible',visible:tool==='align'},location.origin);
+  if(event.data?.type==='alignment-result')location.reload();
+});
+$('copy-scan').onclick=async()=>{
+  if(busy)return;busy=true;updateTools();
+  try{await editable(true);status('Editable copy saved. The original remains unchanged.');}
+  catch(error){status(error.message,true);}finally{busy=false;updateTools();}
+};
+async function cleanupAction(operation,rule=null){
+  if(busy)return;busy=true;updateTools();status('Saving cleanup…');
+  try{await editable();await savedCommand('edit-operation',{operation,rule});const message=await waitJob();clearLasso();cloudKey=null;status(message);}
+  catch(error){status(error.message,true);}finally{busy=false;updateTools();}
+}
+$('edit-undo').onclick=()=>cleanupAction('undo');$('edit-redo').onclick=()=>cleanupAction('redo');
+$('cleanup-clear').onclick=()=>cleanupAction('reset-cleanup');
+function clearLasso(){
+  lasso=false;selectedRegion=null;stroke=[];controls.enabled=true;
+  $('selection').getContext('2d').clearRect(0,0,$('selection').width,$('selection').height);
+  $('selection-count').textContent='';$('view-hint').textContent='Drag to orbit · right-drag to pan · scroll to zoom';
+  if(points&&data)points.geometry.setAttribute('color',new THREE.BufferAttribute(colours(),3));
+  updateTools();
+}
+function drawStroke(){
+  const overlay=$('selection'),ctx=overlay.getContext('2d');ctx.clearRect(0,0,overlay.width,overlay.height);
+  if(!stroke.length)return;ctx.strokeStyle='#73dbb0';ctx.fillStyle='#73dbb022';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(...stroke[0]);for(const point of stroke.slice(1))ctx.lineTo(...point);ctx.closePath();ctx.fill();ctx.stroke();
+}
+$('lasso-start').onclick=()=>{
+  clearLasso();lasso=true;controls.enabled=false;$('show').value='cloud';showWhich();
+  $('view-hint').textContent='Draw around unwanted points. Selection goes through the model. Cancel to orbit again.';
+};
+$('lasso-cancel').onclick=clearLasso;
+canvas.addEventListener('pointerdown',event=>{
+  if(!lasso||busy||event.button!==0)return;
+  const rect=canvas.getBoundingClientRect();stroke=[[event.clientX-rect.left,event.clientY-rect.top]];selectedRegion=null;canvas.setPointerCapture(event.pointerId);drawStroke();
+});
+canvas.addEventListener('pointermove',event=>{
+  if(!lasso||!canvas.hasPointerCapture(event.pointerId))return;
+  const rect=canvas.getBoundingClientRect(),point=[event.clientX-rect.left,event.clientY-rect.top];
+  if(Math.hypot(point[0]-stroke.at(-1)[0],point[1]-stroke.at(-1)[1])>6){stroke.push(point);drawStroke();}
+});
+canvas.addEventListener('pointerup',event=>{
+  if(!lasso||!canvas.hasPointerCapture(event.pointerId))return;canvas.releasePointerCapture(event.pointerId);
+  if(stroke.length<3)return;const rect=canvas.getBoundingClientRect(),step=Math.max(1,Math.ceil(stroke.length/48));stroke=stroke.filter((_,i)=>i%step===0);if(stroke.length<3)return;
+  camera.updateMatrixWorld(true);const matrix=new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
+  const polygon=stroke.map(([x,y])=>[Math.max(-1,Math.min(1,2*x/rect.width-1)),Math.max(-1,Math.min(1,1-2*y/rect.height))]);
+  selectedRegion={matrix:Array.from({length:4},(_,r)=>Array.from({length:4},(_,c)=>matrix.elements[c*4+r])),polygon};
+  const rgb=colours(),v=new THREE.Vector3();let count=0;
+  for(let i=0;i<data.n;i++){
+    v.fromArray(data.xyz,i*3).applyMatrix4(matrix);if(v.z<-1||v.z>1)continue;
+    let inside=false;for(let a=0,b=polygon.length-1;a<polygon.length;b=a++){
+      const p=polygon[a],q=polygon[b];if((p[1]>v.y)!==(q[1]>v.y)&&v.x<(q[0]-p[0])*(v.y-p[1])/(q[1]-p[1])+p[0])inside=!inside;
+    }
+    if(inside){count++;rgb.set([1,.25,.4],i*3);}
+  }
+  points.geometry.setAttribute('color',new THREE.BufferAttribute(rgb,3));drawStroke();
+  $('selection-count').textContent=`${count.toLocaleString()} displayed points selected through the model.`;
+  if(!count)selectedRegion=null;updateTools();
+});
+$('lasso-delete').onclick=()=>cleanupAction('delete-region',selectedRegion);
+for(const button of document.querySelectorAll('[data-direction]'))button.onclick=()=>{
+  clearLasso();frame();const distance=camera.position.distanceTo(controls.target),vectors={front:[0,0,1],right:[1,0,0],top:[0,1,.0001]};
+  camera.position.copy(controls.target).addScaledVector(new THREE.Vector3(...vectors[button.dataset.direction]).normalize(),distance);controls.update();
+};
+
+(function animate() { requestAnimationFrame(animate); if(tool!=="align"){controls.update(); renderer.render(scene, camera);} })();
 coverageLegend();
 poll();
-</script>
-</body>
-</html>
+
+</script></body></html>

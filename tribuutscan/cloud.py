@@ -769,6 +769,7 @@ class Scanner:
         self.track_log = []  # per frame: (index, status, pose or None); for evaluation
         self.on_merge = None  # optional callback(index, world_xyz_mm, rgb, world_normals, pose)
         self.remove_base = remove_base  # the saved/shown cloud leaves the base out (it is merged either way)
+        self.cleanup = []
         self.crop = None  # the 3D page's crop box, {"axes", "lo", "hi"} (in_crop): the output keeps what is inside
         self.last_view = None  # (pixels, object mask, base mask, shape) of the last tracked frame, for the viewer
         self.labels = {}  # index -> view_mask of every tracked frame (what fusion takes as object / base)
@@ -1192,6 +1193,13 @@ class Scanner:
         sc.stats["camera"] = session.get("camera")
         sc.object_turns = sc.stats["object_turns"] = bool(session.get("object_turns", False))
         sc.crop = session.get("crop")
+        cleanup_file = directory / 'cleanup.json'
+        if cleanup_file.exists():
+            from . import cleanup
+            rules = json.loads(cleanup_file.read_text())
+            if not isinstance(rules, list) or len(rules) > 32:
+                raise ValueError('Invalid saved cleanup regions')
+            sc.cleanup = [cleanup.validate(rule) for rule in rules]
         sc.sources = [{**src, "rec": str((directory / src["rec"]).resolve())}
                       for src in session.get("sources", [])]  # absolute legacy paths still work
         if session.get("piece_list"):  # a scan of joined pieces (their frames already in one world)
@@ -1215,6 +1223,8 @@ class Scanner:
     @staticmethod
     def check_continue_camera(directory):
         """Refuse to mix camera calibrations or ranges in a continued scan."""
+        if (Path(directory) / ".editing.json").exists():
+            raise ValueError("continue the original capture session, not an editing copy")
         session = json.loads((Path(directory) / "session.json").read_text())
         if not isinstance(session, dict) or not isinstance(session.get("camera") or {}, dict):
             raise ValueError("invalid saved camera metadata; start a new scan")
@@ -2049,6 +2059,9 @@ class Scanner:
         inside the crop box when there is one, and (`connect`) only what is connected to the object's
         core, which drops floating leftovers."""
         scene, keep = self.scene, self.in_crop(xyz)
+        if self.cleanup:
+            from . import cleanup
+            keep &= cleanup.keep(xyz, self.cleanup)
         if scene.mode != "still" or not len(xyz):
             return keep
         if scene.plane is not None and scene.axis is not None:
@@ -2084,6 +2097,7 @@ class Scanner:
         self.stats["remove_base"], self.stats["base_found"] = self.remove_base, self.scene.plane is not None
         self.stats["sources"] = [{**src, "rec": os.path.relpath(src["rec"], Path(directory).resolve())}
                                  for src in self.sources]
+        self.stats["cleanup_regions"] = len(self.cleanup)
         self.stats["crop"], self.stats["crop_axes"] = self.crop, self.crop_axes().round(6).tolist()
         self.stats["piece_list"] = [{k: (bool(v) if k == "joined" else int(v)) for k, v in p.items()} for p in self.pieces]
         self.stats["piece_joins"] = [[int(a), int(b)] for a, b in self.piece_joins]
@@ -2099,6 +2113,10 @@ class Scanner:
         """What Optimise, continuing a scan and fusing it again need: per-frame tracking log and poses,
         labels, keyframes, marker map and the cloud's sums (track.csv, frame_poses.txt, labels.npz,
         keyframes.npz, markers.json, cloud_state.npz, merged.npz, scene.json)."""
+        if self.cleanup:
+            (directory / 'cleanup.json').write_text(json.dumps(self.cleanup))
+        else:
+            (directory / 'cleanup.json').unlink(missing_ok=True)
         write_poses(directory / "frame_poses.txt", self.frame_poses())
         tracked = [i for i, _ in self.frame_poses() if self.labels.get(i) is not None]
         if tracked:

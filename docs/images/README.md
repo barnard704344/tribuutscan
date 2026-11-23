@@ -12,13 +12,16 @@ live host credentials are included.
 | `web-phone-pairing.png` | Pairing dialog cropped by the browser |
 | `web-mobile.png` | Full page at a 390×844 phone viewport |
 | `web-alignment.png` | Full 1920×1080 saved-scan alignment workspace using synthetic test sessions |
+| `saved-workspace.png` | New saved-result workspace, View tab, synthetic session |
+| `saved-alignment.png` | Align tab inside the saved-result workspace, synthetic sessions |
+| `saved-cleanup.png` | Lasso selection preview inside Cleanup, synthetic session |
 
 The pairing example uses `192.0.2.10` and `documentation-example-only`; it is not
 an operational pairing link. Screenshots show demo/disconnected state, not scan
 quality or performance. Keep captions explicit when reusing them.
 
-The alignment screenshot uses two generated point-grid sessions and the actual
-WebGL editor. Unlike the capture screenshots, it exercises saved-session editing
+The alignment and saved-workspace screenshots use generated point-grid sessions
+and the actual WebGL editors. Unlike the capture screenshots, it exercises saved-session editing
 on synthetic data rather than demo mode. No physical scanner recording is shown.
 
 When replacing images, use a separate demo service with an empty capture directory,

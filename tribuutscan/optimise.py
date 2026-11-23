@@ -377,6 +377,10 @@ def make_mesh(scanner, directory, depth=9):
     density = np.asarray(density)
     mesh.remove_vertices_by_mask(density < np.quantile(density, 0.05))
     mesh = mesh.crop(pcd.get_axis_aligned_bounding_box().scale(1.05, pcd.get_center()))
+    if scanner.cleanup:
+        from . import cleanup
+        world = np.asarray(mesh.vertices) @ cl.FLIP.T * 1000
+        mesh.remove_vertices_by_mask(~cleanup.keep(world, scanner.cleanup))
     mesh.compute_vertex_normals()
     if not len(mesh.triangles):
         return 0

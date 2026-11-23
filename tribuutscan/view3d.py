@@ -151,7 +151,14 @@ class FileSource:
                     session["crop_axes"] = cl.saved_crop_axes(self.ply.parent, session).round(6).tolist()
                 self.info = {"name": self.ply.parent.name, "points": len(rec), "session": session, "phase": "done"}
                 self.version = version
-            return self.version, self.payload, dict(self.info, **mesh_versions(self.mesh_path()))
+            editing = None
+            marker = self.ply.parent / '.editing.json'
+            if marker.exists():
+                note = json.loads(marker.read_text())
+                cursor, revisions = note.get('cursor', -1), note.get('revisions', [])
+                editing = dict(source=note.get('source'), can_undo=cursor > 0,
+                               can_redo=0 <= cursor < len(revisions)-1)
+            return self.version, self.payload, dict(self.info, editing=editing, **mesh_versions(self.mesh_path()))
 
 
 class Handler(BaseHTTPRequestHandler):

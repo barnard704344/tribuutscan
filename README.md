@@ -16,6 +16,7 @@ claims and upstream development notes are not instructions for the current UI.
 | --- | --- |
 | Install, connect a phone and capture a scan | [User guide](docs/user-guide.md) |
 | Tour the browser workspace, tabs and phone pairing | [Web UI tour](docs/web-ui.md) |
+| Inspect, clean up, mesh and export saved scans | [Saved workspace](docs/saved-workspace.md) |
 | Manually align two saved free-object scans | [Saved-scan alignment](docs/alignment.md) |
 | Fix connection, depth, tracking or startup problems | [Troubleshooting](docs/troubleshooting.md) |
 | Understand the scanner, calibration, GPU pipeline and output files | [Technical reference](docs/technical-reference.md) |
@@ -90,8 +91,8 @@ forward this port directly onto the internet.
   coverage classifications. There is no extra live point-cloud window.
 - **Resume** restores the normal layout and capture. **Stop & Save** saves the
   take and starts optimisation; meshing follows if enabled.
-- Saved scans can be processed, cropped and downloaded through **Inspect, process
-  & download**. Files remain in this checkout's ignored `captures/` directory.
+- Saved scans open in a matching **View / Align / Cleanup / Mesh / Export**
+  workspace, with automatic editing copies, lasso deletion and undo/redo. Files remain in this checkout's ignored `captures/` directory.
 - **Files → Align saved scans** opens manual two-scan alignment, matching-point
   fitting and move/rotate adjustments. Saving creates a new full session. See
   the [first-release limits](docs/alignment.md#first-release-limits) before using it.

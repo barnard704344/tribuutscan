@@ -375,6 +375,12 @@ def make_mesh(directory, which="merged", voxel_mm=VOXEL_MM, min_weight=MIN_WEIGH
         try:
             v, t, c, report["solid"] = solid.close(vertices, triangles, colours, printing_planes(scanner, vertices))
             printable = (v, t, c) if report["solid"]["edges_closed"] else None
+            if printable is not None and scanner.cleanup:
+                from . import cleanup
+                if not cleanup.keep(v, scanner.cleanup).all():
+                    printable = None
+                    report['solid']['edges_closed'] = False
+                    report['solid']['note'] = 'Solid reconstruction crossed a deleted region; exported the cleaned open surface instead'
         except Exception as e:  # (the scanned surface goes out as the STL then)
             report["solid"] = {"edges_closed": False, "error": str(e)}
     if not len(triangles):

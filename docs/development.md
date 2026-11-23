@@ -40,6 +40,7 @@ Choose checks for the changed paths and report what actually ran.
 | HTTP host, pairing, previews, restart | `tribuutscan/webapp.py` |
 | Browser capture and saved-result pages | `tribuutscan/web/` |
 | Saved-scan manual alignment and full-session save | `tribuutscan/alignment.py`, `tribuutscan/web/alignment.*` |
+| Editable copies, transactional history and cleanup masks | `tribuutscan/edit_session.py`, `tribuutscan/cleanup.py` |
 | Shared capture controller and optional desktop adapter | `tribuutscan/controller.py`, `tribuutscan/viewer.py` |
 | Scan worker and progress/performance messages | `tribuutscan/livescan.py` |
 | Scanner tracking and point-cloud merge | `tribuutscan/cloud.py` |
@@ -66,6 +67,19 @@ For layout changes, check 1920×1080, a smaller laptop viewport and phone width,
 including paused coverage and open tool lists. Update the illustrated
 [web UI tour](web-ui.md) and [screenshots](images/README.md) using an isolated demo
 session with example credentials, rather than publishing live pairing tokens.
+
+Saved-result processing creates editable copies by default in the UI. Lasso
+regions use viewer projection matrices but are evaluated against camera-world
+millimetres in `Scanner.output_mask`, including fused mesh extraction. Keep that
+coordinate conversion covered by tests. Pose optimisation is blocked after lasso
+cleanup; alignment also requires an uncleaned source. Edited copies must not become
+the capture controller's automatic continuation target.
+
+History snapshots and temporary work sessions preserve relative source-recording
+links by processing from sibling directories. Do not move processing into nested
+history directories without rebasing those links. `.editing.json` and `.edit-history/`
+belong to local ignored captures, not Git. Test with `test_edit_session` plus the
+cloud, optimisation and fusion checks when changing these paths.
 
 ## Measuring performance
 

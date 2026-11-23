@@ -108,7 +108,9 @@ controls are used, with no phone app or scanner driver required.
 **Files → Align saved scans** opens a separate workspace for two saved scans.
 It offers coloured overlays, corresponding-point fitting, numeric move/rotate
 nudges and transform undo/redo. **Save aligned copy** creates a new full session;
-the originals are preserved. The existing crop/mesh page handles the saved result.
+the originals are preserved. The [saved-result workspace](saved-workspace.md) handles the result with View,
+Align, Cleanup, Mesh and Export tabs. Edits create a copy automatically, and
+lasso/crop processing has persistent undo/redo.
 See the [alignment guide](alignment.md) for current restrictions and validation status.
 
 For installation and a complete capture walkthrough, use the [user guide](user-guide.md).

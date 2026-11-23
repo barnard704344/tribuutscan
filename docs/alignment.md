@@ -1,6 +1,6 @@
 # Aligning saved scans
 
-Open **Files → Align saved scans** in the capture workspace. This is a separate
+Open **Files → Align saved scans** in the capture workspace. It also appears in the **Align** tab of the saved-result workspace. This is a
 saved-scan tool; it does not replace the live coverage pane or its paused camera.
 You can use it without the scanner connected, with the scanning environment installed.
 
@@ -14,7 +14,7 @@ Saving currently requires two **uncropped, single-piece Head / free object**
 sessions with the same saved camera calibration fingerprint and depth range.
 Keep `session.json`, keyframes, merged-frame data and scene data with each scan.
 Keep the referenced raw recordings for later meshing. A bare PLY is not a full
-processable session. Cropped scans, tabletop sessions and multi-piece sessions
+processable session. Cropped scans, lasso-cleaned sessions, tabletop sessions and multi-piece sessions
 are rejected for now, rather than merging their incompatible masks or scene regions.
 
 ## Align and inspect
@@ -59,9 +59,10 @@ Choose **Inspect result, crop & process** when saving finishes. The existing sav
 result page provides the crop box, mesh generation and exports. Choose **Make mesh**
 there when ready; source recordings and compatible calibration must still be available.
 
-This is the first alignment stage. Brush/lasso deletion, isolated-fragment cleanup,
-automatic surface refinement and mesh-repair editing are not implemented here yet.
-The existing crop box is the available manual cleanup tool.
+After alignment, use the [Cleanup tab](saved-workspace.md#cleanup) for lasso deletion
+and crop/base cleanup on an editable copy. Align and optimise before applying
+world-space lasso cleanup. Automatic surface refinement, brush tools and automatic
+island/mesh repair are not implemented yet.
 
 The initial implementation was checked with synthetic sessions and browser
 interactions. Real head scans still need a physical validation run.

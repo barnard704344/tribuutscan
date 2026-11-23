@@ -31,7 +31,7 @@ import webbrowser
 import numpy as np
 
 from . import controller as core
-from . import alignment, calib, frames, gpu, livescan, view3d
+from . import alignment, cleanup, calib, frames, gpu, livescan, view3d
 from .image import write_png
 
 WEB = Path(__file__).parent / 'web'
@@ -203,6 +203,7 @@ class Service:
     def __init__(self, demo=False):
         self.demo = demo
         self.alignment_output = None
+        self.last_job_failed = False
         self.instance = secrets.token_hex(8)
         self.backend_token = secrets.token_urlsafe(32)
         self.controller = None
@@ -282,6 +283,7 @@ class Service:
                 if self.processing and self.processing.poll() is not None:
                     if self.processing_thread:
                         self.processing_thread.join(timeout=1)
+                    self.last_job_failed = self.processing.returncode != 0
                     self.error = self.processing_result or f'Processing exited with code {self.processing.returncode}'
                     if self.alignment_output is not None:
                         if self.processing.returncode == 0 and (self.alignment_output / 'cloud.ply').is_file():
@@ -327,7 +329,7 @@ class Service:
                                       if not p.is_symlink() and (p / 'cloud.ply').is_file()), reverse=True)
             self.next_scan_refresh = time.monotonic() + 2
         scans = self.saved_scans
-        state = dict(instance=self.instance, revision=self.revision, phase=phase, connected=False, demo=self.demo,
+        state = dict(job_failed=self.last_job_failed, job_result=self.processing_result, instance=self.instance, revision=self.revision, phase=phase, connected=False, demo=self.demo,
                      message=self.error, settings={}, controls=[], scans=scans,
                      selected=self.model.file.ply.parent.name if self.model.file else None,
                      processing=self.processing is not None, distance='Waiting for scanner',
@@ -423,6 +425,10 @@ class Service:
             self.restart_requested = True
             return
         app = self.controller
+        if action in ('edit-copy', 'edit-operation'):
+            return self.edit_saved(data)
+        if action in ('edit-copy', 'edit-operation'):
+            return self.edit_saved(data)
         if action == 'alignment-fit':
             return alignment.fit(data.get('reference_points'), data.get('moving_points'))
         if action == 'alignment-save':
@@ -550,8 +556,11 @@ class Service:
         alignment.compatible(a, b)
         out = frames.CAPTURES / (time.strftime('%Y%m%d-%H%M%S') + '-aligned-' + secrets.token_hex(4) + '-scan')
         spec = dict(reference=str(a), moving=str(b), output=str(out), transform=matrix, versions=versions)
+        return self.saved_job('tribuutscan.alignment', spec, out)
+
+    def saved_job(self, module, spec, out=None):
         executable = core.VENV_PYTHON if core.VENV_PYTHON.exists() else Path(sys.executable)
-        process = subprocess.Popen([str(executable), '-m', 'tribuutscan.alignment'], cwd=core.REPO,
+        process = subprocess.Popen(core.mesh_scope(lambda message: None) + [str(executable), '-m', module], cwd=core.REPO,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             process.stdin.write(json.dumps(spec))
@@ -562,6 +571,7 @@ class Service:
             raise
         self.processing = process
         self.alignment_output = out
+        self.last_job_failed = False
         self.processing_result = None
         def read():
             for line in process.stdout:
@@ -569,19 +579,52 @@ class Service:
                     self.processing_result = line.strip()
         self.processing_thread = threading.Thread(target=read, daemon=True)
         self.processing_thread.start()
-        return dict(output=out.name)
+        return dict(output=out.name if out else None)
+
+    def selected_saved(self, data):
+        if self.model.file is None:
+            raise Conflict('Open a saved scan first')
+        source = self.model.file
+        path = scan_directory(source.ply.parent.name)
+        if data.get('name') is not None and data['name'] != path.name:
+            raise Conflict('Another browser changed the selected scan; reload before editing')
+        expected = data.get('model_version')
+        actual = f'{source.ply.stat().st_mtime_ns}-{view3d.mesh_version(source.session)}'
+        if expected is not None and expected != actual:
+            raise Conflict('The scan changed; reload before editing')
+        return path
+
+    def edit_saved(self, data):
+        app = self.controller
+        if self.demo or self.processing or app and (app.scan_state not in ('idle', 'disconnected')
+                or app.rec['recorder'] or app.job['process'] or app.switching['busy']):
+            raise Conflict('Finish capture and processing before editing')
+        path = self.selected_saved(data)
+        if data['action'] == 'edit-copy':
+            out = frames.CAPTURES / (time.strftime('%Y%m%d-%H%M%S') + '-edit-' + secrets.token_hex(4) + '-scan')
+            spec = dict(operation='copy', source=str(path), output=str(out), version=alignment.version(path))
+            return self.saved_job('tribuutscan.edit_session', spec, out)
+        operation = data.get('operation')
+        if operation not in ('delete-region', 'reset-cleanup', 'undo', 'redo'):
+            raise ValueError('Unknown cleanup operation')
+        if not (path / '.editing.json').is_file():
+            raise Conflict('Create an editable copy first')
+        rule = cleanup.validate(data.get('rule')) if operation == 'delete-region' else None
+        return self.saved_job('tribuutscan.edit_session', dict(directory=str(path), operation=operation, rule=rule))
 
     def process(self, data):
         if self.demo:
             raise Conflict("Processing is disabled in demo mode")
         app = self.controller
-        if self.processing or app and (app.scan_state != 'idle' or app.rec['recorder'] or app.job['process']):
+        if self.processing or app and (app.scan_state not in ('idle', 'disconnected') or app.rec['recorder'] or app.job['process']):
             raise Conflict('Finish the current capture or processing job first')
         path = self.model.file.ply.parent if self.model.file else None
         if path is None:
             # The live worker owns its last scanner, but saved-file processing runs in a separate job.
             name = app.live['name'] if app else None
             path = scan_directory(name)
+        if self.model.file is not None:
+            self.selected_saved(data)
         action, box = data.get('operation'), data.get('box')
         if action not in ACTIONS:
             raise ValueError('Unknown processing action')
@@ -603,6 +646,8 @@ class Service:
             if live['proc'].is_alive():
                 raise Conflict('The previous scan worker is still releasing its model; try again shortly')
             app.check_scan()
+        if (path / '.editing.json').is_file():
+            return self.saved_job('tribuutscan.edit_session', dict(directory=str(path), operation=action, box=box))
         executable = core.VENV_PYTHON if core.VENV_PYTHON.exists() else Path(os.sys.executable)
         args = [str(executable), '-m', 'tribuutscan.web_job', str(path), action]
         if box is not None:
@@ -749,7 +794,8 @@ class Handler(BaseHTTPRequestHandler):
                 box = parse_qs(urlsplit(self.path).query).get('box', [None])[0]
                 if box is not None:
                     box = [float(v) for v in box.split(',')]
-                self.service.request(dict(action='process', operation=operation, box=box,
+                self.service.request(dict(action='process', operation=operation, box=box, name=data.get('name'),
+                                          model_version=data.get('model_version'),
                                           revision=data.get('revision'), instance=data.get('instance')))
                 return self.json({'message': 'Processing started. You can keep this page open.'})
             self.json({'error': 'Not found'}, 404)

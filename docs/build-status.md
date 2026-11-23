@@ -14,11 +14,27 @@ known validation gaps, not a hardware certification or release guarantee.
 - Classified coverage from the GPU volume, including paused host-rendered camera
   rotation/zoom and restoration of the live layout on resume.
 - Saved-scan inspection, processing/downloads, continuation and safe idle host restart.
+- Saved-result workspace with View, Align, Cleanup, Mesh and Export tabs, automatic
+  editing copies, lasso-through deletion, crop/base tools and persistent edit undo/redo.
 - Retained upstream calibration, tracking/recovery, optimisation, GPU fusion/meshing,
   CPU fallback and output pipeline. See [technical reference](technical-reference.md).
 
 These are present in source. Their presence does not imply every lifecycle path,
 scene or GPU has passed a fresh physical acceptance trial at this checkpoint.
+
+### Saved-result workspace verification — 23 November 2026
+
+Synthetic session checks covered editable copying, projection/axis conversion,
+cleanup persistence, undo/redo, redo-branch replacement, failed-operation safety,
+original-file preservation and source-recording links. Mesh checks verified that
+deleted regions are excluded and that solid reconstruction crossing a deleted
+region is not reported as a closed result. Capture continuation skips editing copies.
+
+Browser checks covered all five tabs, embedded alignment, lasso selection/deletion,
+automatic copy creation, undo/redo, mesh loading, display-mode persistence, disabled
+unavailable exports, and desktop/laptop/phone widths. Reviewed screenshots use
+synthetic geometry. Real scanner trials and broad GPU/large-session validation
+remain outstanding; no dimensional-accuracy or throughput claim follows from this UI work.
 
 ### Web UI verification — 23 November 2026
 
