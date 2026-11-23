@@ -34,6 +34,19 @@ dimensional accuracy or sustained processing throughput.
 
 ## Latest checkpoint needing validation
 
+The first browser saved-scan alignment stage supports matching-point fitting,
+manual transform adjustments, undo/redo and a new combined full session. Synthetic
+geometry/session and browser checks cover this path; a real scan trial is still
+required. It currently accepts uncropped, single-piece free-object sessions with
+matching calibration and range. Brush/lasso cleanup and automatic surface
+refinement remain future work. See [alignment](alignment.md).
+
+Six alignment regression checks and the 34 host/launcher checks passed. Browser
+checks exercised actual point picking and landmark fitting, numeric nudges,
+undo/redo, centring, a full-session save and opening the crop/processing result.
+The alignment page was checked at desktop, laptop and phone widths. These tests
+used synthetic sessions; they do not validate real-scene alignment quality.
+
 Commit `906c7c8` added a rolling performance meter and a short recovered-tracking
 indicator. The meter exposes processing FPS, average time and stage timing data;
 the UI currently shows FPS and milliseconds. Stage timings are wall-clock samples,

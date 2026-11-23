@@ -39,6 +39,7 @@ Choose checks for the changed paths and report what actually ran.
 | --- | --- |
 | HTTP host, pairing, previews, restart | `tribuutscan/webapp.py` |
 | Browser capture and saved-result pages | `tribuutscan/web/` |
+| Saved-scan manual alignment and full-session save | `tribuutscan/alignment.py`, `tribuutscan/web/alignment.*` |
 | Shared capture controller and optional desktop adapter | `tribuutscan/controller.py`, `tribuutscan/viewer.py` |
 | Scan worker and progress/performance messages | `tribuutscan/livescan.py` |
 | Scanner tracking and point-cloud merge | `tribuutscan/cloud.py` |
@@ -92,6 +93,12 @@ paths change. Confirm unsafe restart requests are refused while work is active.
 
 For dimensional claims, scan a measured reference and record calibration, range,
 surface and error. Voxel spacing and coverage percentages are not accuracy tests.
+
+Alignment checks run with `.venv/bin/python tests/run_checks.py test_alignment`.
+They exercise rigid transforms, landmark fits, viewer/camera coordinate conversion,
+frame and recording-link preservation, unchanged originals, failed-save cleanup,
+and authenticated endpoint behaviour. Use synthetic sessions to check browser
+point picking, nudge/undo/redo, saving and opening the crop/processing result.
 
 ## Repository hygiene
 

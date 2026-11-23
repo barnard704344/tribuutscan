@@ -170,6 +170,11 @@ refresh reloads HTML/CSS/JavaScript; it does not reload the host's Python code.
 
 ## Inspect and export saved results
 
+To combine two saved free-object scans, use **Files → Align saved scans**. See the
+[alignment guide](alignment.md) for matching points, move/rotate, undo/redo and
+saving a separate full session. This first stage has explicit input restrictions;
+it does not yet provide brush/lasso cleanup.
+
 In the **Files** tab, choose a take under **Saved scans**, choose **Open scan**,
 then follow **Inspect, process & download**. The separate result page provides model inspection,
 processing, cropping and available PLY/STL downloads. It is distinct from the

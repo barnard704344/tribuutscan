@@ -32,7 +32,7 @@ second host-message panel. The scan views take priority.
 | --- | --- | --- |
 | **Scan** | Subject, point spacing, base removal, meshing/raw/countdown options, continue latest scan, separate piece | Prepare a take and choose how it is saved |
 | **Camera** | Depth range, IR exposure and device controls, tracking options, retry connection | Adjust the sensor or recover its connection |
-| **Files** | Saved scans, open/live controls, inspection/download link, raw capture tools | Inspect or process results and manage recordings |
+| **Files** | Saved scans, open/live controls, inspection/download and alignment links, raw capture tools | Inspect or process results, align two saved scans and manage recordings |
 | **Host** | Connection state, phone pairing, guarded host restart, collapsed messages | Connect another browser or inspect host problems |
 
 Start/stop, pause/resume, cancel and current status remain outside the tab panels,
@@ -102,5 +102,13 @@ controls are used, with no phone app or scanner driver required.
 <img src="images/web-mobile.png" width="300" alt="Full phone page showing Depth and distance, tabbed controls, then Coverage, Colour and IR previews in demo mode">
 
 </details>
+
+## Saved-scan alignment
+
+**Files → Align saved scans** opens a separate workspace for two saved scans.
+It offers coloured overlays, corresponding-point fitting, numeric move/rotate
+nudges and transform undo/redo. **Save aligned copy** creates a new full session;
+the originals are preserved. The existing crop/mesh page handles the saved result.
+See the [alignment guide](alignment.md) for current restrictions and validation status.
 
 For installation and a complete capture walkthrough, use the [user guide](user-guide.md).

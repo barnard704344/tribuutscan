@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Align saved scans · triBUUTSCAN</title><link rel="stylesheet" href="/alignment.css">
+<script type="importmap">{"imports":{"three":"/model/three.module.min.js"}}</script><script type="module" src="/alignment.js"></script></head>
+<body><header><a href="/">← Capture</a><h1>Align saved scans</h1><span>Reference stays fixed · moving scan is adjustable</span></header>
+<main><section class="viewport"><canvas id="view" aria-label="Saved scans alignment preview"></canvas><div id="legend"><span class="reference">● Reference</span><span class="moving">● Moving</span><span>Drag to orbit · right-drag to pan · scroll to zoom</span></div></section>
+<aside>
+<section><h2>1 · Choose scans</h2><label>Reference<select id="reference"></select></label><label>Moving<select id="moving"></select></label><button id="load">Load previews</button><p>Save currently supports uncropped, single-piece Head / free object sessions with matching camera calibration and range. Keep the source recordings.</p></section>
+<section><h2>2 · Align</h2><div class="buttons"><button id="centre" disabled>Centre together</button><button id="frame" disabled>Fit view</button></div>
+<label>Preview<select id="visibility"><option value="both">Both scans</option><option value="reference">Reference only</option><option value="moving">Moving only</option></select></label>
+<p>Pick corresponding features in the same order: at least three spread-out points on each scan. The other scan hides while picking.</p>
+<div class="buttons"><button id="pick-reference" disabled>Pick reference</button><button id="pick-moving" disabled>Pick moving</button></div><p id="pair-count">Reference: 0 · Moving: 0</p><div class="buttons"><button id="fit" disabled>Align point pairs</button><button id="clear-points" disabled>Clear points</button></div>
+<details><summary>Nudge position and rotation</summary><p>Enter a change, then press Enter or leave the field to apply it. Rotation uses the moving scan's centre.</p><div class="nudge">
+<label>X · mm<input id="tx" type="number" value="0" step="1" min="-5000" max="5000"></label><label>Y · mm<input id="ty" type="number" value="0" step="1" min="-5000" max="5000"></label><label>Z · mm<input id="tz" type="number" value="0" step="1" min="-5000" max="5000"></label>
+<label>X · °<input id="rx" type="number" value="0" step="1" min="-360" max="360"></label><label>Y · °<input id="ry" type="number" value="0" step="1" min="-360" max="360"></label><label>Z · °<input id="rz" type="number" value="0" step="1" min="-360" max="360"></label></div></details>
+<div class="buttons"><button id="undo" disabled>Undo</button><button id="redo" disabled>Redo</button><button id="reset" disabled>Reset</button></div><p id="fit-report"></p></section>
+<section><h2>3 · Save a new session</h2><button id="save" disabled>Save aligned copy</button><p>The originals are preserved. Saving keeps the source-frame links for later meshing; it does not automatically optimise or certify the alignment.</p><a id="result" href="/model/" hidden>Inspect result, crop &amp; process →</a></section>
+<p id="status" role="status">Loading saved scans…</p><p id="error" role="alert" hidden></p>
+</aside></main></body></html>

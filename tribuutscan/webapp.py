@@ -31,7 +31,7 @@ import webbrowser
 import numpy as np
 
 from . import controller as core
-from . import calib, frames, gpu, livescan, view3d
+from . import alignment, calib, frames, gpu, livescan, view3d
 from .image import write_png
 
 WEB = Path(__file__).parent / 'web'
@@ -202,6 +202,7 @@ class Service:
     """Single owner for scanner commands; browser connections never own the scanner's lifetime."""
     def __init__(self, demo=False):
         self.demo = demo
+        self.alignment_output = None
         self.instance = secrets.token_hex(8)
         self.backend_token = secrets.token_urlsafe(32)
         self.controller = None
@@ -268,12 +269,12 @@ class Service:
                 else:
                     if future.set_running_or_notify_cancel():
                         try:
-                            self.dispatch(command)
+                            result = self.dispatch(command)
                             if self.controller:
                                 self.error = ""
                             self.revision += 1
                             self.publish()
-                            future.set_result(self.state())
+                            future.set_result(self.state() if result is None else result)
                         except Exception as e:
                             future.set_exception(e)
                 if self.controller:
@@ -282,6 +283,12 @@ class Service:
                     if self.processing_thread:
                         self.processing_thread.join(timeout=1)
                     self.error = self.processing_result or f'Processing exited with code {self.processing.returncode}'
+                    if self.alignment_output is not None:
+                        if self.processing.returncode == 0 and (self.alignment_output / 'cloud.ply').is_file():
+                            self.model.file = view3d.FileSource(self.alignment_output)
+                            self.model_url = self.empty_url
+                            self.next_scan_refresh = 0
+                        self.alignment_output = None
                     self.processing = None
                     self.revision += 1
                     if self.model.file:
@@ -416,6 +423,10 @@ class Service:
             self.restart_requested = True
             return
         app = self.controller
+        if action == 'alignment-fit':
+            return alignment.fit(data.get('reference_points'), data.get('moving_points'))
+        if action == 'alignment-save':
+            return self.save_alignment(data)
         if action == 'open':
             if app and (app.scan_state != 'idle' or app.rec['recorder'] or app.job['process']):
                 raise Conflict('Finish scanning and recording before opening a saved scan')
@@ -524,6 +535,42 @@ class Service:
         else:
             raise Conflict(f'{action or "Command"} is unavailable while {phase}')
 
+    def save_alignment(self, data):
+        app = self.controller
+        if self.demo or self.processing or app and (app.scan_state not in ('idle', 'disconnected')
+                or app.rec['recorder'] or app.job['process'] or app.switching['busy']):
+            raise Conflict('Finish capture and processing before saving alignment')
+        a, b = scan_directory(data.get('reference')), scan_directory(data.get('moving'))
+        if a == b:
+            raise ValueError('Choose two different scans')
+        versions = [alignment.version(a), alignment.version(b)]
+        if data.get('versions') != versions:
+            raise Conflict('A source scan changed; reload both scans')
+        matrix = alignment.rigid(data.get('transform')).tolist()
+        alignment.compatible(a, b)
+        out = frames.CAPTURES / (time.strftime('%Y%m%d-%H%M%S') + '-aligned-' + secrets.token_hex(4) + '-scan')
+        spec = dict(reference=str(a), moving=str(b), output=str(out), transform=matrix, versions=versions)
+        executable = core.VENV_PYTHON if core.VENV_PYTHON.exists() else Path(sys.executable)
+        process = subprocess.Popen([str(executable), '-m', 'tribuutscan.alignment'], cwd=core.REPO,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            process.stdin.write(json.dumps(spec))
+            process.stdin.close()
+        except Exception:
+            process.terminate()
+            process.wait()
+            raise
+        self.processing = process
+        self.alignment_output = out
+        self.processing_result = None
+        def read():
+            for line in process.stdout:
+                if line.strip():
+                    self.processing_result = line.strip()
+        self.processing_thread = threading.Thread(target=read, daemon=True)
+        self.processing_thread.start()
+        return dict(output=out.name)
+
     def process(self, data):
         if self.demo:
             raise Conflict("Processing is disabled in demo mode")
@@ -608,6 +655,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path in ('/alignment', '/alignment.js', '/alignment.css'):
+            if path == '/alignment' and not self.paired():
+                return self.reply(b'', 'text/plain', status=303, headers={'Location':'/'})
+            name = 'alignment.html' if path == '/alignment' else path[1:]
+            kind = 'text/html; charset=utf-8' if path == '/alignment' else 'text/javascript' if path.endswith('.js') else 'text/css'
+            return self.reply((WEB / name).read_bytes(), kind)
         if path in ('/', '/scanner.css', '/scanner.js', '/qrcodegen.js'):
             file, kind = {'/': ('scanner.html', 'text/html; charset=utf-8'),
                           '/scanner.css': ('scanner.css', 'text/css'),
@@ -620,6 +673,23 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(dict(token=self.server.token, urls=getattr(self.server, 'connection_urls', [])))
         if path == '/api/state':
             return self.reply(json.dumps(self.service.state(), allow_nan=False).encode())
+        if path == '/api/alignment/cloud':
+            try:
+                if self.service.processing:
+                    raise Conflict('Wait for processing to finish before loading scans')
+                name = parse_qs(urlsplit(self.path).query).get('scan', [None])[0]
+                directory = scan_directory(name)
+                before = alignment.version(directory)
+                rec = view3d.read_ply(directory / 'cloud.ply')
+                if len(rec) > 200000:
+                    rec = rec[::math.ceil(len(rec) / 200000)]
+                if before != alignment.version(directory):
+                    raise Conflict('Scan changed during loading; try again')
+                return self.reply(view3d.pack_cloud(rec), 'application/octet-stream', headers={'X-Scan-Version':before})
+            except Conflict as error:
+                return self.json({'error':str(error)},409)
+            except (ValueError, OSError, KeyError) as error:
+                return self.json({'error':str(error)},400)
         if path.startswith('/preview/'):
             name = path.removeprefix('/preview/').removesuffix('.png')
             if path != f'/preview/{name}.png' or name not in ('depth', 'colour', 'ir', 'reference', 'coverage-view'):
