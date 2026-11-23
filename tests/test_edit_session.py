@@ -70,6 +70,32 @@ def test_failed_edit_does_not_change_working_geometry_or_original():
         assert not list(root.glob('.edit-work-*'))
 
 
+def test_lasso_deletion_preserves_point_attributes_and_never_rebuilds_frames():
+    from tribuutscan import cloud
+    with tempfile.TemporaryDirectory() as tmp:
+        root=Path(tmp);source=make_session(root,'source-scan');out=root/'edited-scan'
+        info=json.loads((source/'session.json').read_text());info['capture']={'ir':{'exposure':1234}}
+        (source/'session.json').write_text(json.dumps(info))
+        edit_session.clone(source,out,alignment.version(source))
+        original=hashes(source);before=hashes(out);points=view3d.read_ply(out/'cloud.ply')
+        xyz=np.column_stack([points[k] for k in ('x','y','z')])
+        expected=points[cleanup.keep(xyz*[1000,-1000,-1000],[region()])]
+        with patch.object(cloud.Scanner,'restore',side_effect=AssertionError('Lasso must not rebuild frames')):
+            edit_session.edit(out,'delete-region',region())
+        actual=view3d.read_ply(out/'cloud.ply')
+        assert actual.dtype==expected.dtype and actual.tobytes()==expected.tobytes()
+        after=hashes(out)
+        assert all(after[k]==v for k,v in before.items() if k not in ('cloud.ply','session.json','.editing.json'))
+        saved=json.loads((out/'session.json').read_text())
+        assert saved['points_kept']==len(actual) and saved['cleanup_regions']==1 and saved['capture']==info['capture']
+        assert hashes(source)==original
+        unchanged=hashes(out);note=edit_session.metadata(out)
+        try:edit_session.edit(out,'delete-region',region(-.01))
+        except ValueError as error:assert 'No saved points' in str(error)
+        else:raise AssertionError('An empty deletion reported success')
+        assert hashes(out)==unchanged and edit_session.metadata(out)==note
+
+
 def test_continue_latest_ignores_editing_copies():
     from types import SimpleNamespace
     from unittest.mock import Mock

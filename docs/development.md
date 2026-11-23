@@ -23,6 +23,7 @@ required. The runner imports test modules, which also supports spawned workers.
 ```sh
 .venv/bin/python tests/run_checks.py test_webapp test_viewer_cli
 node tests/test_scanner_ui.mjs
+node tests/test_saved_lasso_ui.mjs
 # Full regression run when warranted:
 .venv/bin/python tests/run_checks.py
 git diff --check
@@ -81,6 +82,12 @@ links by processing from sibling directories. Do not move processing into nested
 history directories without rebasing those links. `.editing.json` and `.edit-history/`
 belong to local ignored captures, not Git. Test with `test_edit_session` plus the
 cloud, optimisation and fusion checks when changing these paths.
+
+Lasso deletion filters saved PLY records directly and retains all point attributes;
+it must not restore/remerge every source frame. Preserve raw archives and poses,
+persist the world-space cleanup policy, retire stale mesh exports and publish
+through the same staged history path. The pending browser preview must roll back
+on a failed save and must not report completion before updated geometry renders.
 
 ## Measuring performance
 

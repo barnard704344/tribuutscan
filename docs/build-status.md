@@ -104,6 +104,26 @@ initial placement was refused by the large-correction guard. Real-data UI checks
 were completed in an isolated host to avoid interfering with concurrent editing.
 Private scan images and recordings are not included in documentation or Git.
 
+### Lasso responsiveness fix — 23 November 2026
+
+Each deletion previously restored/remerged the entire session before saving. In
+a private browser trial on a 916,018-point session with 380 saved views, the old
+model remained visible after two minutes. Deletion now filters the saved PLY
+records directly, retaining point attributes, poses and source archives. The
+saved policy continues to filter later regenerated meshes.
+
+The same 253,038-point selection was removed in roughly 3–7 seconds in local
+repeat checks, including automatic copy creation and updated geometry display.
+Undo restored 916,018 points and Redo restored the 662,980-point cleaned result.
+Original captures were unchanged. These timings describe those local trials,
+not a general latency guarantee. Pending deletion now hides selected points
+immediately, restores them if saving fails, and retains the operation's status
+until the saved geometry reloads. Pointer cancellation is handled explicitly.
+
+The 55 targeted Python checks and the capture/lasso JavaScript checks passed,
+including preserved PLY attributes and archives, empty-selection rejection,
+preview rollback and waiting for the rendered saved result.
+
 This checkpoint updates the tools, workflow documentation and screenshots; it does
 not add a fresh hardware or performance acceptance result. Proposed inspection
 and cleanup additions are tracked separately in the [roadmap](roadmap.md).

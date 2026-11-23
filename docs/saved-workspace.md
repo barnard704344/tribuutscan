@@ -77,6 +77,13 @@ capture session. Use an original capture for further scanning, then edit its out
 4. Choose **Delete selected region** to save the cleanup, or **Cancel selection**
    to release the camera without deleting anything.
 
+Deletion immediately hides the selected points as a pending preview. Wait for the
+host to save and reload the edited cloud; the completion message reports how many
+points were removed and how many remain. If saving fails, the preview is restored.
+Lasso deletion filters the saved point cloud directly instead of rebuilding every
+captured frame. Frame archives, poses, colours, normals and observation counts are
+retained, and the saved cleanup rule also applies to later mesh generation.
+
 **Selection goes through all surfaces along the viewing direction**, not just the
 frontmost surface. Check the highlighted region before deleting, and use Undo
 if needed. Up to 32 lasso regions are retained per editing session. **Clear all

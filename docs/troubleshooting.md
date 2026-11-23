@@ -103,6 +103,19 @@ undo steps. The original capture and its raw recordings remain separate.
 Capture continuation skips editing copies. To add more views, continue the
 original capture and create a new editing copy afterward.
 
+## Lasso selection appears not to remove anything
+
+Drawing highlights the selection; press **Delete selected region** to remove it.
+The selection goes through the model. The selected points hide immediately as a
+pending preview, then the host confirms the removed-point count after the saved
+cloud reloads. A failed save restores the preview and shows its error.
+
+Older versions rebuilt the entire captured session for each deletion, leaving
+the unchanged model visible for minutes on large scans. Refresh the browser for
+the new feedback and drawing handlers; each new cleanup worker loads the updated
+deletion code. Existing mesh exports are retired after cleanup. Generate a new
+mesh before checking the STL, and ensure you are inspecting the editing copy.
+
 ## Coverage says waiting, stays pink, or stops growing
 
 Check **Tracking** and **Geometry** first. Camera frames can keep arriving while

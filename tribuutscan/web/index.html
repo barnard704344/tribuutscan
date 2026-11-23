@@ -49,6 +49,7 @@ const shapes = { mesh: { obj: null, version: null, rgb: null }, solid: { obj: nu
 const SHAPE_NAMES = { mesh: "Mesh", solid: "Solid" };  // the scanned surface; the closed solid (as the STL)
 const $ = (id) => document.getElementById(id);
 let lastInfo=null, busy=false, tool='view', desiredMesh=false, lasso=false, selectedRegion=null, stroke=[], refreshFailed=false;
+let lassoPointer=null, selectionKeep=null, selectionCount=0, deletePreview=null, renderedModel=null;
 const coverageRGB = {
   light: new THREE.Color(0xffc45c).toArray(),
   repeat: new THREE.Color(0x53b9ff).toArray(),
@@ -196,6 +197,9 @@ async function load(piece = null, scan = pieceScan, epoch = pieceEpoch) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(xyz, 3));
   geometry.setAttribute("color", new THREE.BufferAttribute(colours(), 3));
+  if(deletePreview&&n===deletePreview.total&&lastInfo?.version===deletePreview.version
+      &&(lastInfo.name===deletePreview.name||lastInfo.editing?.source===deletePreview.name))
+    geometry.setIndex(new THREE.BufferAttribute(deletePreview.keep,1));
   if (points) { scene.remove(points); points.geometry.dispose(); }
   points = new THREE.Points(geometry, material);
   scene.add(points);
@@ -375,6 +379,7 @@ function updateTools(){
   $('edit-redo').disabled=busy||!done||!lastInfo?.editing?.can_redo;
   $('lasso-start').disabled=busy||!done||!data?.n||!remote;
   $('lasso-delete').disabled=busy||!done||!selectedRegion;
+  $('lasso-cancel').disabled=busy;
   $('cleanup-clear').disabled=busy||!done||!remote||!session.cleanup_regions;
   $('crop-open').disabled=busy||!done;$('crop-apply').disabled=busy||!done;
   $('crop-open').classList.toggle('later',!done||busy);
@@ -421,7 +426,7 @@ async function poll() {
     $("crop-open").classList.toggle("later", unfinished||busy);
     if (info.phase === "paused")
       $("status").textContent = "Paused · rotate or zoom here · Resume or Stop & Save in the scanner";
-    else if (Date.now() - messageAt > 8000) {  // a Process result stays readable for a while
+    else if (!busy && !lasso && Date.now() - messageAt > 8000) {  // never overwrite an active edit's status
       status(info.phase === "optimising" ? "Processing saved scan on the host…" : info.editing ? "Editable copy · changes are saved on the host" : "Saved scan · editing creates a separate copy");
     }
     if (key !== cloudKey && await load(piece?.id ?? null)) {
@@ -429,6 +434,7 @@ async function poll() {
       $("points").textContent = data.n.toLocaleString();
       $("empty").classList.toggle("show", data.n === 0);
     }
+    if(key===cloudKey)renderedModel={name:info.name,version:info.version};
     $("dl-ply").classList.toggle("later", info.phase === "paused" || !$("piece-picker").hidden);
     $("dl-mesh").classList.toggle("later", !info.mesh);
     $("dl-stl").classList.toggle("later", !info.stl);
@@ -537,13 +543,36 @@ $('copy-scan').onclick=async()=>{
 };
 async function cleanupAction(operation,rule=null){
   if(busy)return;busy=true;updateTools();status('Saving cleanup…');
-  try{await editable();await savedCommand('edit-operation',{operation,rule});const message=await waitJob();clearLasso();cloudKey=null;status(message);}
-  catch(error){status(error.message,true);}finally{busy=false;updateTools();}
+  const requestedCount=selectionCount;
+  let committed=false;
+  if(operation==='delete-region'&&selectionKeep&&points){
+    deletePreview={name:lastInfo.name,version:lastInfo.version,total:data.n,keep:selectionKeep};
+    points.geometry.setIndex(new THREE.BufferAttribute(selectionKeep,1));
+  }
+  try{
+    await editable();const name=lastInfo.name,version=lastInfo.version;
+    status(operation==='delete-region'?`Removing ${requestedCount.toLocaleString()} selected points · saving on the host…`:'Saving cleanup…');
+    await savedCommand('edit-operation',{operation,rule});const message=await waitJob();committed=true;
+    cloudKey=null;
+    const deadline=Date.now()+45000;
+    while(!renderedModel||renderedModel.name!==name||renderedModel.version!==lastInfo?.version||lastInfo.version===version){
+      if(lastInfo?.name!==name)throw Error('Another browser changed the model. Reopen your edited copy from Files.');
+      if(Date.now()>deadline)throw Error('The updated model could not be reloaded. Refresh this page to show the saved result.');
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    deletePreview=null;clearLasso();status(message);
+  }catch(error){
+    if(!committed&&deletePreview&&renderedModel?.version===deletePreview.version)points?.geometry.setIndex(null);
+    deletePreview=null;clearLasso();status((committed?'Cleanup saved on the host. ':'')+error.message,true);
+  }finally{busy=false;updateTools();}
 }
 $('edit-undo').onclick=()=>cleanupAction('undo');$('edit-redo').onclick=()=>cleanupAction('redo');
 $('cleanup-clear').onclick=()=>cleanupAction('reset-cleanup');
 function clearLasso(){
+  const pointer=lassoPointer;lassoPointer=null;
+  if(pointer!==null&&canvas.hasPointerCapture(pointer))canvas.releasePointerCapture(pointer);
   lasso=false;selectedRegion=null;stroke=[];controls.enabled=true;
+  controls.enableDamping=true;selectionKeep=null;selectionCount=0;
   $('selection').getContext('2d').clearRect(0,0,$('selection').width,$('selection').height);
   $('selection-count').textContent='';$('view-hint').textContent='Drag to orbit · right-drag to pan · scroll to zoom';
   if(points&&data)points.geometry.setAttribute('color',new THREE.BufferAttribute(colours(),3));
@@ -554,37 +583,55 @@ function drawStroke(){
   if(!stroke.length)return;ctx.strokeStyle='#73dbb0';ctx.fillStyle='#73dbb022';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(...stroke[0]);for(const point of stroke.slice(1))ctx.lineTo(...point);ctx.closePath();ctx.fill();ctx.stroke();
 }
 $('lasso-start').onclick=()=>{
-  clearLasso();lasso=true;controls.enabled=false;$('show').value='cloud';showWhich();
+  clearLasso();controls.enableDamping=false;controls.update();lasso=true;controls.enabled=false;desiredMesh=false;$('show').value='cloud';showWhich();
   $('view-hint').textContent='Draw around unwanted points. Selection goes through the model. Cancel to orbit again.';
 };
 $('lasso-cancel').onclick=clearLasso;
 canvas.addEventListener('pointerdown',event=>{
   if(!lasso||busy||event.button!==0)return;
-  const rect=canvas.getBoundingClientRect();stroke=[[event.clientX-rect.left,event.clientY-rect.top]];selectedRegion=null;canvas.setPointerCapture(event.pointerId);drawStroke();
-});
+  event.preventDefault();event.stopImmediatePropagation();
+  if(lassoPointer!==null)return;
+  const rect=canvas.getBoundingClientRect();stroke=[[event.clientX-rect.left,event.clientY-rect.top]];selectedRegion=null;selectionKeep=null;selectionCount=0;lassoPointer=event.pointerId;canvas.setPointerCapture(event.pointerId);drawStroke();updateTools();
+},true);
 canvas.addEventListener('pointermove',event=>{
-  if(!lasso||!canvas.hasPointerCapture(event.pointerId))return;
+  if(!lasso||busy||lassoPointer!==event.pointerId)return;
+  event.preventDefault();event.stopImmediatePropagation();
   const rect=canvas.getBoundingClientRect(),point=[event.clientX-rect.left,event.clientY-rect.top];
   if(Math.hypot(point[0]-stroke.at(-1)[0],point[1]-stroke.at(-1)[1])>6){stroke.push(point);drawStroke();}
-});
+},true);
 canvas.addEventListener('pointerup',event=>{
-  if(!lasso||!canvas.hasPointerCapture(event.pointerId))return;canvas.releasePointerCapture(event.pointerId);
+  if(!lasso||lassoPointer!==event.pointerId)return;
+  event.preventDefault();event.stopImmediatePropagation();lassoPointer=null;
+  if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);
   if(stroke.length<3)return;const rect=canvas.getBoundingClientRect(),step=Math.max(1,Math.ceil(stroke.length/48));stroke=stroke.filter((_,i)=>i%step===0);if(stroke.length<3)return;
   camera.updateMatrixWorld(true);const matrix=new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
   const polygon=stroke.map(([x,y])=>[Math.max(-1,Math.min(1,2*x/rect.width-1)),Math.max(-1,Math.min(1,1-2*y/rect.height))]);
   selectedRegion={matrix:Array.from({length:4},(_,r)=>Array.from({length:4},(_,c)=>matrix.elements[c*4+r])),polygon};
-  const rgb=colours(),v=new THREE.Vector3();let count=0;
+  const rgb=colours(),v=new THREE.Vector3(),keep=new Uint32Array(data.n);let count=0,kept=0;
   for(let i=0;i<data.n;i++){
-    v.fromArray(data.xyz,i*3).applyMatrix4(matrix);if(v.z<-1||v.z>1)continue;
+    v.fromArray(data.xyz,i*3).applyMatrix4(matrix);if(v.z<-1||v.z>1){keep[kept++]=i;continue;}
     let inside=false;for(let a=0,b=polygon.length-1;a<polygon.length;b=a++){
       const p=polygon[a],q=polygon[b];if((p[1]>v.y)!==(q[1]>v.y)&&v.x<(q[0]-p[0])*(v.y-p[1])/(q[1]-p[1])+p[0])inside=!inside;
     }
     if(inside){count++;rgb.set([1,.25,.4],i*3);}
+    else keep[kept++]=i;
   }
   points.geometry.setAttribute('color',new THREE.BufferAttribute(rgb,3));drawStroke();
   $('selection-count').textContent=`${count.toLocaleString()} displayed points selected through the model.`;
+  selectionCount=count;selectionKeep=count?keep.slice(0,kept):null;
   if(!count)selectedRegion=null;updateTools();
-});
+},true);
+function cancelStroke(event){
+  if(lassoPointer===null||event?.pointerId!==undefined&&event.pointerId!==lassoPointer)return;
+  const pointer=lassoPointer;lassoPointer=null;
+  if(canvas.hasPointerCapture(pointer))canvas.releasePointerCapture(pointer);
+  stroke=[];selectedRegion=null;selectionKeep=null;selectionCount=0;drawStroke();
+  if(points&&data)points.geometry.setAttribute('color',new THREE.BufferAttribute(colours(),3));
+  $('selection-count').textContent='Selection cancelled. Draw a new lasso.';updateTools();
+}
+for(const type of ['pointercancel','lostpointercapture'])canvas.addEventListener(type,cancelStroke);
+window.addEventListener('blur',()=>cancelStroke());
+window.addEventListener('keydown',event=>{if(event.key==='Escape'&&lasso&&!busy)clearLasso();});
 $('lasso-delete').onclick=()=>cleanupAction('delete-region',selectedRegion);
 for(const button of document.querySelectorAll('[data-direction]'))button.onclick=()=>{
   clearLasso();frame();const distance=camera.position.distanceTo(controls.target),vectors={front:[0,0,1],right:[1,0,0],top:[0,1,.0001]};

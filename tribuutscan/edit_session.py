@@ -1,13 +1,14 @@
 """Create editable saved-session copies and transactional, disk-backed edit history."""
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
 import time
 import uuid
 
-from . import alignment, cleanup
+from . import alignment, cleanup, mesh_exports, view3d
 
 MARKER = '.editing.json'
 HISTORY = '.edit-history'
@@ -87,8 +88,40 @@ def publish(source, directory):
             p.unlink(missing_ok=True)
 
 
+def delete_region(directory, rule):
+    """Filter the saved points directly; frame archives and poses need no rebuild."""
+    import numpy as np
+    path = Path(directory) / 'cloud.ply'
+    policy = Path(directory) / 'cleanup.json'
+    rules = json.loads(policy.read_text()) if policy.exists() else []
+    if not isinstance(rules, list) or len(rules) >= 32:
+        raise ValueError('This copy has 32 cleanup regions; start a new editing pass')
+    rules = [cleanup.validate(saved) for saved in rules]
+    rule = cleanup.validate(rule)
+    rec = view3d.read_ply(path)
+    xyz = np.column_stack([rec[key] for key in ('x', 'y', 'z')])
+    keep = cleanup.keep(xyz * [1000, -1000, -1000], [rule])
+    removed = int((~keep).sum())
+    if not removed:
+        raise ValueError('No saved points are inside this selection. Draw a new lasso and try again')
+    # Preserve every saved point attribute, including normals and observation counts.
+    payload = path.read_bytes()
+    header = payload[:payload.index(b'end_header\n') + len(b'end_header\n')]
+    if b'element face ' in header:
+        raise ValueError('Lasso cleanup requires a point-cloud session')
+    count = int(keep.sum())
+    header = re.sub(rb'(?m)^element vertex \d+$', f'element vertex {count}'.encode(), header, count=1)
+    path.write_bytes(header + rec[keep].tobytes())
+    policy.write_text(json.dumps(rules + [rule]))
+    session_file = Path(directory) / 'session.json'
+    session = json.loads(session_file.read_text())
+    session.update(points_kept=count, cleanup_regions=len(rules) + 1)
+    session_file.write_text(json.dumps(session, indent=2))
+    mesh_exports.retire(directory)
+    return f'Removed {removed:,} points; {count:,} remain. Rebuild the mesh when ready.'
+
+
 def edit(directory, operation, rule=None, box=None):
-    from . import cloud, optimise
     directory = Path(directory)
     note = metadata(directory)
     if not note:
@@ -119,24 +152,22 @@ def edit(directory, operation, rule=None, box=None):
     with tempfile.TemporaryDirectory(prefix='.edit-work-', dir=directory.parent) as tmp:
         stage = Path(tmp)
         copy_files(directory, stage, reserve=2)
-        scanner = cloud.Scanner.restore(stage)
-        try:
-            if operation == 'delete-region':
-                if len(scanner.cleanup) >= 32:
-                    raise ValueError('This copy has 32 cleanup regions; start a new editing pass')
-                scanner.cleanup.append(cleanup.validate(rule))
-                _, count = scanner.save(stage)
-                message = f'Cleanup saved: {count:,} points remain. Rebuild the mesh when ready.'
-            elif operation == 'reset-cleanup':
-                scanner.cleanup = []
-                scanner.save(stage)
-                message = 'Lasso cleanup cleared; rebuild the mesh when ready'
-            else:
-                if operation == 'optimise' and scanner.cleanup:
-                    raise ValueError('Clear or undo lasso cleanup before optimising poses, then clean up again')
-                message = optimise.process(scanner, stage, operation, box=box)
-        finally:
-            scanner.discard()
+        if operation == 'delete-region':
+            message = delete_region(stage, rule)
+        else:
+            from . import cloud, optimise
+            scanner = cloud.Scanner.restore(stage)
+            try:
+                if operation == 'reset-cleanup':
+                    scanner.cleanup = []
+                    scanner.save(stage)
+                    message = 'Lasso cleanup cleared; rebuild the mesh when ready'
+                else:
+                    if operation == 'optimise' and scanner.cleanup:
+                        raise ValueError('Clear or undo lasso cleanup before optimising poses, then clean up again')
+                    message = optimise.process(scanner, stage, operation, box=box)
+            finally:
+                scanner.discard()
         revision = uuid.uuid4().hex
         stage.rename(history / revision)
     old_revisions = revisions[cursor+1:]
