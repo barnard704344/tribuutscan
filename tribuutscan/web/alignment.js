@@ -312,7 +312,7 @@ renderer.setAnimationLoop(animate);
 if(embedded){window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===parent&&event.data?.type==='alignment-visible'){if(!event.data.visible){cancelDrag();cancelRegionDrag();}renderer.setAnimationLoop(event.data.visible?animate:null);}});parent.postMessage({type:'alignment-ready'},location.origin);}
 try{
  const state=await api('/api/state');
- const options=()=>state.scans.map(name=>{const option=document.createElement('option');option.value=option.textContent=name;return option;});
+ const options=()=>state.scans.map(name=>{const option=document.createElement('option');option.value=name;option.textContent=state.scan_names?.[name]||name;return option;});
  $('reference').replaceChildren(...options());
  const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Choose a second scan…';
  $('moving').replaceChildren(placeholder,...options());$('moving').value='';

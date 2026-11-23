@@ -179,3 +179,4 @@ dialog p { margin: 12px 0 24px; }
   .telemetry span, .telemetry strong { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .distance-marker { transition: none; } }
+.library-link{display:block;padding:11px 12px;border:1px solid var(--line,#2b3d52);border-radius:7px;background:#204336;color:#73dbb0;text-align:center;text-decoration:none;font-weight:600}.library-link:hover{background:#295440}.library-link:focus-visible{outline:3px solid #81c8ff;outline-offset:2px}

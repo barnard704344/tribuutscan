@@ -28,6 +28,22 @@ known validation gaps, not a hardware certification or release guarantee.
 These are present in source. Their presence does not imply every lifecycle path,
 scene or GPU has passed a fresh physical acceptance trial at this checkpoint.
 
+### Scan Library verification — 23 November 2026
+
+The full-page Scan Library adds cached thumbnails, display names, search and
+filters, related-version groups, storage details and reversible Trash. Folder IDs
+and recording paths remain unchanged. Trash retains files and does not free space;
+portable project packaging and permanent deletion remain future work.
+
+Sixty-seven Python checks across the library, web host, alignment, edit-session,
+viewer and mesh-export modules passed. JavaScript checks covered library actions,
+stale edits, capture controls and saved lasso behaviour. Browser checks covered
+Files → Library → saved workspace → Align → Library, safe display names,
+trash/restore with a usable dependent copy, thumbnails and desktop/laptop/phone
+layouts. Documentation screenshots use synthetic geometry. A read-only catalogue
+of the current 28-entry host library completed in about 0.09 seconds; this is a
+local observation, not a large-library performance guarantee.
+
 ### Saved-result workspace verification — 23 November 2026
 
 Synthetic session checks covered editable copying, projection/axis conversion,

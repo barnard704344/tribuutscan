@@ -157,9 +157,7 @@ function render(next) {
   $('messages').textContent=(state.messages || []).join('\n');
   options($('range'),state.ranges || [],state.range);
   const scans=state.scans || [];
-  const chosen=$('saved').value;
-  options($('saved'),scans.length?scans:[''],scans.includes(chosen)?chosen:scans.includes(state.selected)?state.selected:scans[0] || '');
-  if(!scans.length) $('saved').options[0].textContent='No saved scans yet';
+  $('library-summary').textContent=scans.length?`${scans.length} saved scan${scans.length===1?'':'s'} · thumbnails, versions and Trash`:'No saved scans yet. Your results will appear in the Scan Library.';
   $('auto-ir').checked=!!state.auto_ir;
   for(const el of document.querySelectorAll('[data-setting]')) {
     if(document.activeElement===el)continue;
@@ -204,8 +202,7 @@ async function command(action, data={}) {
 document.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',async()=>{
   const action=button.dataset.action;
   if(action==='cancel'&&state.phase!=='counting'){$('cancel-dialog').showModal();return;}
-  const succeeded=await command(action,action==='open'?{name:$('saved').value}:{});
-  if(action==='open'&&succeeded)location.assign('/model/');
+  await command(action);
 }));
 $('keep-scanning').onclick=()=>$('cancel-dialog').close();
 $('confirm-cancel').onclick=()=>{$('cancel-dialog').close();command('cancel');};

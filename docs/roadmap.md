@@ -42,7 +42,10 @@ and open-surface limitations are handled explicitly.
 
 ## 5. Portable inspection projects
 
-Save annotations, measurements and view state with the session, and provide a
-portable project/export workflow that accounts for raw-recording dependencies.
+The Scan Library now provides thumbnails, display names, search/filtering,
+related versions, owned storage details and reversible Trash. See the
+[library guide](scan-library.md). Next, save annotations, measurements and view
+state with the session, and provide portable project packaging that accounts for
+raw-recording dependencies.
 Full STEP reverse engineering is a larger later project, beyond the first
 inspection and cleanup tools.

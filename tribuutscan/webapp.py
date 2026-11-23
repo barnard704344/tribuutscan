@@ -31,7 +31,7 @@ import webbrowser
 import numpy as np
 
 from . import controller as core
-from . import alignment, alignment_refine, cleanup, calib, frames, gpu, livescan, view3d
+from . import alignment, alignment_refine, cleanup, calib, frames, gpu, livescan, scan_library, view3d
 from .image import write_png
 
 WEB = Path(__file__).parent / 'web'
@@ -106,13 +106,7 @@ def workspace_depth_renderer(phase=lambda: None):
 
 def scan_directory(name):
     """Resolve only a saved scan directly inside this checkout's captures folder."""
-    if not isinstance(name, str) or Path(name).name != name or not name.endswith('-scan'):
-        raise ValueError('Choose a saved scan from the list')
-    root = frames.CAPTURES.resolve()
-    path = root / name
-    if path.is_symlink() or path.resolve().parent != root or not (path / 'cloud.ply').is_file():
-        raise ValueError('Saved scan not found')
-    return path
+    return scan_library.Library(frames.CAPTURES).directory(name)
 
 
 def png_bytes(ppm):
@@ -151,6 +145,12 @@ class ModelSource:
     def current(self):
         if self.file:
             version, payload, info = self.file.current()
+            library = getattr(self.service, 'library', None)
+            if library is not None:
+                try:
+                    info['display_name'] = library.labels([info['name']])[info['name']]
+                except ValueError:
+                    pass
             if self.service.processing:
                 info['phase'] = 'optimising'
             return version, payload, info
@@ -202,6 +202,7 @@ class Service:
     """Single owner for scanner commands; browser connections never own the scanner's lifetime."""
     def __init__(self, demo=False):
         self.demo = demo
+        self.library = scan_library.Library(frames.CAPTURES)
         self.alignment_output = None
         self.refinement = None
         self.last_job_failed = False
@@ -329,8 +330,12 @@ class Service:
             self.revision += 1
             self.last_phase = phase
         if time.monotonic() >= self.next_scan_refresh:
+            try:
+                trashed = self.library.trashed_names()
+            except ValueError:
+                trashed = set()
             self.saved_scans = sorted((p.name for p in frames.CAPTURES.glob('*-scan')
-                                      if not p.is_symlink() and (p / 'cloud.ply').is_file()), reverse=True)
+                                      if not p.is_symlink() and (p / 'cloud.ply').is_file() and p.name not in trashed), reverse=True)
             self.next_scan_refresh = time.monotonic() + 2
         scans = self.saved_scans
         state = dict(job_failed=self.last_job_failed, job_result=self.processing_result, instance=self.instance, revision=self.revision, phase=phase, connected=False, demo=self.demo,
@@ -342,6 +347,10 @@ class Service:
         state['distance_gauge'] = core.distance_reading(None, {}, calib.CAMERA.mode,
                                                         calib.CAMERA.law_estimate, time.monotonic())
         state['alignment_refinement'] = self.refinement
+        try:
+            state['scan_names'] = self.library.labels(scans)
+        except ValueError:
+            state['scan_names'] = {}
         previews = {}
         if app:
             blocked = app.lost or app.switching['busy']
@@ -421,6 +430,18 @@ class Service:
         if type(data.get('revision')) is not int or data['revision'] != self.revision:
             raise Conflict('The scanner changed. Review its current status and try again.')
         action = data.get('action')
+        if action in ('library-rename', 'library-trash', 'library-restore'):
+            app = self.controller
+            if self.demo or self.processing or app and (app.scan_state not in ('idle', 'disconnected')
+                    or app.rec['recorder'] or app.job['process'] or app.switching['busy']):
+                raise Conflict('Finish capture, recording and processing before changing the library')
+            result = self.library.update(data.get('name'), action.removeprefix('library-'),
+                data.get('entry_revision'), data.get('display_name'))
+            self.next_scan_refresh = 0
+            if action == 'library-trash' and self.model.file and self.model.file.ply.parent.name == data.get('name'):
+                self.model.file = None
+                self.model_url = self.empty_url
+            return result
         if action == 'restart':
             app = self.controller
             if self.processing or (app and (app.scan_state not in ('idle', 'disconnected')
@@ -738,6 +759,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path in ('/library', '/library.js', '/library.css'):
+            if path == '/library' and not self.paired():
+                return self.reply(b'', 'text/plain', status=303, headers={'Location':'/'})
+            filename = 'library.html' if path == '/library' else path[1:]
+            kind = 'text/html; charset=utf-8' if path == '/library' else 'text/javascript' if path.endswith('.js') else 'text/css'
+            return self.reply((WEB / filename).read_bytes(), kind)
         if path in ('/alignment', '/alignment.js', '/alignment.css'):
             if path == '/alignment' and not self.paired():
                 return self.reply(b'', 'text/plain', status=303, headers={'Location':'/'})
@@ -756,6 +783,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(dict(token=self.server.token, urls=getattr(self.server, 'connection_urls', [])))
         if path == '/api/state':
             return self.reply(json.dumps(self.service.state(), allow_nan=False).encode())
+        if path == '/api/library':
+            try:
+                return self.json(dict(items=self.service.library.catalogue()))
+            except (ValueError, OSError) as error:
+                return self.json(dict(error=str(error)), 400)
+        if path == '/api/library/thumbnail':
+            try:
+                name = parse_qs(urlsplit(self.path).query).get('scan', [None])[0]
+                return self.reply(self.service.library.thumbnail(name), 'image/png')
+            except (ValueError, OSError, KeyError, UnicodeError) as error:
+                return self.json(dict(error=str(error)), 400)
         if path == '/api/alignment/cloud':
             try:
                 if self.service.processing:

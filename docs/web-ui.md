@@ -32,7 +32,7 @@ second host-message panel. The scan views take priority.
 | --- | --- | --- |
 | **Scan** | Subject, point spacing, base removal, meshing/raw/countdown options, continue latest scan, separate piece | Prepare a take and choose how it is saved |
 | **Camera** | Depth range, IR exposure and device controls, tracking options, retry connection | Adjust the sensor or recover its connection |
-| **Files** | Saved scans, open/live controls and raw capture tools | Inspect or process results, align two saved scans and manage recordings |
+| **Files** | Scan Library, return to live and raw capture tools | Find and open results, organise versions and manage recordings |
 | **Host** | Connection state, phone pairing, guarded host restart, collapsed messages | Connect another browser or inspect host problems |
 
 Start/stop, pause/resume, cancel and current status remain outside the tab panels,
@@ -105,7 +105,7 @@ controls are used, with no phone app or scanner driver required.
 
 ## Saved-scan alignment
 
-**Files → Open scan → Align** opens the two-scan alignment tools inside the saved workspace.
+**Files → Open Scan Library → Open scan → Align** opens the two-scan alignment tools inside the saved workspace.
 It offers coloured overlays, corresponding-point fitting, numeric move/rotate
 nudges and transform undo/redo. The opened scan loads as the blue reference;
 choosing a second scan loads its amber preview automatically. **Move scan** and
@@ -126,3 +126,13 @@ report, and Undo to recover the manual placement if needed.
 *Synthetic saved sessions; the blue reference stays fixed while the amber scan is adjusted.*
 
 For installation and a complete capture walkthrough, use the [user guide](user-guide.md).
+
+## Scan Library
+
+**Files → Open Scan Library** opens the full-page thumbnail library. Search and
+filter scans, rename display titles, inspect related versions/storage or move a
+scan to reversible Trash. Open a card for all existing saved-workspace tools.
+The library uses the same paired LAN session and adapts to phone width. See the
+[library guide](scan-library.md), including why Trash retains files and storage.
+
+![Scan Library with synthetic scan families](images/scan-library.png)

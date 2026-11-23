@@ -246,28 +246,11 @@ assert.match(get('access-links').textContent,/No LAN address found/);
 get('access-dialog').close();
 console.log('Local pairing QR codes, multiple addresses, empty network and credential cleanup checks passed');
 
-// A browser refresh must not replace the user's next scan choice with the host's old selection.
-render('idle',{scans:['a-scan','b-scan'],selected:'a-scan',revision:10});
-get('saved').value='b-scan';document.activeElement=null;
-render('idle',{scans:['a-scan','b-scan'],selected:'a-scan',revision:11});
-assert.equal(get('saved').value,'b-scan');
-const navigations=[],openRequests=[];
-context.location.assign=url=>navigations.push(url);
-context.fetch=async(url,options)=>{
-  openRequests.push(JSON.parse(options.body));
-  return {ok:true,status:200,json:async()=>({...context.fixture,selected:'b-scan',revision:12})};
-};
-await get('open-scan').listeners.click();
-assert.equal(openRequests[0].action,'open');
-assert.equal(openRequests[0].name,'b-scan');
-assert.deepEqual(navigations,['/model/']);
-// A rejected open stays on the workspace and shows its error; it never opens the wrong model.
-context.fetch=async(url,options)=> options?.body
-  ?{ok:false,status:409,json:async()=>({error:'Finish scanning before opening a saved scan'})}
-  :{ok:true,status:200,json:async()=>({...context.fixture,revision:12})};
-await get('open-scan').listeners.click();
-assert.equal(navigations.length,1);
-assert.match(get('command-error').textContent,/Finish scanning/);
-console.log('Saved-scan selection survives polling; successful open navigates and failed open stays put');
-render('idle',{scans:['remaining-scan'],selected:'deleted-scan',revision:13});
-assert.equal(get('saved').value,'remaining-scan');
+// Files is an entry to the full library; it no longer duplicates a saved-scan picker.
+render('idle',{scans:['a-scan','b-scan']});
+assert.match(get('library-summary').textContent,/2 saved scans/);
+assert.equal(get('scan-library').tagName,'A');
+assert.equal(get('saved'),undefined);
+render('idle',{scans:[]});assert.match(get('library-summary').textContent,/No saved scans yet/);
+render('scanning',{scans:['a-scan']});assert.match(get('library-summary').textContent,/1 saved scan/);
+console.log('Files links to the Scan Library and reports saved counts without a duplicate picker');

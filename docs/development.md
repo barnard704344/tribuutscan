@@ -24,6 +24,7 @@ required. The runner imports test modules, which also supports spawned workers.
 .venv/bin/python tests/run_checks.py test_webapp test_viewer_cli
 node tests/test_scanner_ui.mjs
 node tests/test_saved_lasso_ui.mjs
+node tests/test_library_ui.mjs
 # Full regression run when warranted:
 .venv/bin/python tests/run_checks.py
 git diff --check
@@ -42,6 +43,7 @@ Choose checks for the changed paths and report what actually ran.
 | Browser capture and saved-result pages | `tribuutscan/web/` |
 | Saved-scan manual alignment and full-session save | `tribuutscan/alignment.py`, `tribuutscan/web/alignment.*` |
 | Bounded local surface refinement worker | `tribuutscan/alignment_refine.py` |
+| Scan Library metadata, provenance, storage and thumbnails | `tribuutscan/scan_library.py`, `tribuutscan/web/library.*` |
 | Editable copies, transactional history and cleanup masks | `tribuutscan/edit_session.py`, `tribuutscan/cleanup.py` |
 | Shared capture controller and optional desktop adapter | `tribuutscan/controller.py`, `tribuutscan/viewer.py` |
 | Scan worker and progress/performance messages | `tribuutscan/livescan.py` |
@@ -151,6 +153,15 @@ undo step for an accepted proposal. Refinement is CPU/Open3D work and is separat
 from the live GPU pipeline.
 
 ## Repository hygiene
+
+Library mutations go through the controller queue with both host freshness and
+per-entry revision guards. Display names and trash markers belong in the ignored
+root catalogue; they must never rename capture folders. Trash is a reversible
+visibility flag, not a physical move/delete: nested/shared recording references
+must remain usable and automatic continuation must skip trashed entries. Thumbnails
+use bounded PLY samples and paired routes. Run `test_scan_library`, then exercise
+search/grouping, name edits, original/derivative trash, restore and open/Align/back
+in the browser. Use only synthetic sessions for documentation screenshots.
 
 Keep `captures/`, credentials, logs and private photos out of commits. Inspect any
 new public example before adding it. Preserve MIT notices and the vendored Three.js

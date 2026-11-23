@@ -1,6 +1,6 @@
 # Aligning saved scans
 
-Open a saved scan from **Files → Open scan**, then select the **Align** tab.
+Open a saved scan from **Files → Open Scan Library → Open scan**, then select the **Align** tab.
 This is a saved-scan tool; it does not replace the live coverage pane or its paused camera.
 You can use it without the scanner connected, with the scanning environment installed.
 

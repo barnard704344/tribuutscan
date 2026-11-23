@@ -85,7 +85,7 @@ Phones use a stacked layout.
 | --- | --- |
 | Scan | Subject, spacing, capture options, continuation and separate pieces |
 | Camera | Depth range, exposure, hardware controls, IMU and markers |
-| Files | Choose/open a saved scan, return to live capture and manage raw recordings |
+| Files | Open the Scan Library, return to live capture and manage raw recordings |
 | Host | Connection, phone QR pairing, restart and host messages |
 
 Start/stop, pause/resume, cancel and current status remain visible above the tab
@@ -170,13 +170,15 @@ refresh reloads HTML/CSS/JavaScript; it does not reload the host's Python code.
 
 ## Inspect and export saved results
 
-To combine two saved free-object scans, use **Files → Open scan → Align**. See the
+To combine two saved free-object scans, use **Files → Open Scan Library → Open scan → Align**. See the
 [alignment guide](alignment.md) for direct dragging, optional matching points, undo/redo and
 saving a separate full session. This first stage has explicit input restrictions;
 the saved-result workspace provides lasso cleanup after alignment.
 
-In the **Files** tab, choose a take under **Saved scans** and choose **Open scan**.
-The result viewer opens in the current tab after the host accepts the selection.
+In **Files → Open Scan Library**, find a scan by thumbnail, name, date or related
+version, then choose **Open scan**. The result viewer opens in the current tab
+after the host accepts the selection. See the [library guide](scan-library.md)
+for display names, grouping, storage details and safe trash/restore.
 Use **← Capture** there to return to capture.
 The saved-result workspace groups **View**, **Align**, **Cleanup**, **Mesh** and
 **Export** tools. See the [saved-workspace guide](saved-workspace.md) for safe

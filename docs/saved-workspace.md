@@ -1,9 +1,12 @@
 # Saved-scan workspace
 
-Choose **Files → Saved scans → Open scan** in capture. The selected result opens
+Choose **Files → Open Scan Library → Open scan** in capture. The selected result opens
 in a workspace with the same colours and tabbed controls as the capture UI.
 **← Capture** returns to capture; opening a saved scan does not require the scanner
 to be connected. Editing and processing require capture/recording to be idle.
+Use **Scan Library** in the header to return to that card. Display names and
+related versions are managed in the [library](scan-library.md); folder IDs and
+recording links remain stable when a name changes.
 
 ![Saved-scan workspace showing synthetic test geometry](images/saved-workspace.png)
 

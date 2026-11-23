@@ -16,6 +16,7 @@ claims and upstream development notes are not instructions for the current UI.
 | --- | --- |
 | Install, connect a phone and capture a scan | [User guide](docs/user-guide.md) |
 | Tour the browser workspace, tabs and phone pairing | [Web UI tour](docs/web-ui.md) |
+| Find, name and organise scans and related versions | [Scan Library](docs/scan-library.md) |
 | Inspect, clean up, mesh and export saved scans | [Saved workspace](docs/saved-workspace.md) |
 | Manually align two saved free-object scans | [Saved-scan alignment](docs/alignment.md) |
 | Fix connection, depth, tracking or startup problems | [Troubleshooting](docs/troubleshooting.md) |
@@ -95,7 +96,9 @@ forward this port directly onto the internet.
 - Saved scans open in a matching **View / Align / Cleanup / Mesh / Export**
   workspace, with automatic editing copies, lasso deletion and persistent undo/redo.
   Files remain in this checkout's ignored `captures/` directory.
-- **Files → Open scan → Align** loads the opened scan as the blue reference.
+- **Files → Open Scan Library** provides thumbnails, display names, search,
+  related versions, storage details and reversible Trash. **Open scan → Align**
+  loads the opened scan as the blue reference.
   Choose a second scan, then drag the amber scan with **Move scan / Rotate scan**,
   or fit matching points. **Refine alignment** proposes a small surface fit, with
   optional overlap selection and one-step undo. Saving creates a new full session. See

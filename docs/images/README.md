@@ -18,6 +18,9 @@ private saved scans or live host credentials are included.
 | `saved-cleanup.png` | Lasso selection preview inside Cleanup, synthetic session |
 | `alignment-drag.png` | Same two-scan view, illustrating direct tools and the amber moving-scan outline |
 | `alignment-refine.png` | Surface-refinement proposal and sampled fit report on generated curved surfaces |
+| `scan-library.png` | Full desktop library, related captures/edits/aligned result, generated surfaces |
+| `scan-library-trash.png` | Reversible Trash with synthetic sessions and retained source relationships |
+| `scan-library-mobile.png` | 390-pixel phone viewport of the same synthetic library |
 
 The pairing example uses `192.0.2.10` and `documentation-example-only`; it is not
 an operational pairing link. Screenshots show demo/disconnected state, not scan

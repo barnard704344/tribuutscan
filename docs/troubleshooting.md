@@ -51,17 +51,17 @@ If the gauge itself is absent, refresh the browser after checking host version.
 
 ## Open scan does nothing or opens the wrong take
 
-Refresh the capture page to load the current browser code. In **Files**, choose
-the desired take, then press **Open scan**. Selecting a name alone does not open
-it. The viewer opens in the current tab after the host accepts the request;
-background refreshes should preserve your dropdown choice. Saved scans can open
+Refresh the capture page to load the current browser code. In **Files → Open Scan
+Library**, find the desired card, then press **Open scan**. The viewer opens in
+the current tab after the host accepts the request. Check Trash if a result is
+missing from the normal library; restore it before opening. Saved scans can open
 with the scanner disconnected, but capture, recording and processing must finish
 first. If the request fails, its error appears above the tool panel and the page
 stays in the capture workspace.
 
 ## Align asks for a scan, or dragging only moves the camera
 
-Open the take from **Files → Open scan**, then use its **Align** tab. The opened
+Open the take from **Files → Open Scan Library → Open scan**, then use its **Align** tab. The opened
 scan should load as the blue reference automatically. Choose a second take to load
 its amber preview. **Reload previews** retries a failed load; choosing a source
 normally loads it without that button. Refresh the browser if it still shows the
