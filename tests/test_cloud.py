@@ -907,7 +907,7 @@ def test_hold_relocks_without_splitting_then_explicit_start_waits_for_depth():
                 for i in range(1, 5):
                     s.pick("depth", (640, 400))
                     assert not s.feed(dict(good, t=float(i * 30)))
-                assert s.refind_shape.call_count == 4 and s.can_start_separate_piece()
+                assert s.refind_shape.call_count == 0 and s.can_start_separate_piece()  # GPU-only search skipped on CPU
                 assert len(s.pieces) == 1 and s.cloud is primary
                 s.away_frames = cl.AWAY_FRAMES  # CPU frame-to-frame tracking no longer allowed
                 assert not s.relock_due() and not s.step_due()
@@ -1170,6 +1170,7 @@ def test_object_feature_recovery_reports_success_only_after_consecutive_confirma
             s.pose[0, 3] = .02
             return 2, 73
         s.refind_object_features = Mock(side_effect=found)
+        s.recovery_search.choose = Mock(return_value="object features")
         old_cloud = s.cloud
         old_pose = s.pose.copy()
         # A confirmed reference survives loss of the provisional hypothesis.

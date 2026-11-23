@@ -176,6 +176,10 @@ class ScanProgress:
 
     def observe(self, frames, merged, points, tracking, cue, now=None):
         now = time.monotonic() if now is None else now
+        pending = cue.get("recovery_pending") or cue.get("object_recovery_pending")
+        tracking = bool(tracking) and not pending
+        if pending:
+            self.last_growth = self.last_merge = None
         piece = cue.get("piece", 1)
         if frames > self.frames:
             self.last_frame = now
@@ -208,8 +212,8 @@ class ScanProgress:
         elif not recent(self.last_frame):
             tracking, geometry = "Unknown (no recent reading)", "On hold"
             hint = "Check the live colour/depth previews before moving."
-        elif self.cue.get("object_recovery_pending"):
-            tracking, geometry = "Checking object match", "On hold"
+        elif self.cue.get("recovery_pending") or self.cue.get("object_recovery_pending"):
+            tracking, geometry = "Confirming recovered position", "On hold"
             hint = "Hold steady while the scanner checks the matched view."
         elif not self.tracking:
             tracking, geometry, hint = "Lost", "On hold", recovery
@@ -404,6 +408,8 @@ class LiveSource:
                 count = cache.get("points", 0)
             # Even if the selected model is unchanged, incoming/lost frames and their status are new.
             stats = {k: s.stats[k] for k in ("frames", "merged", "lost", "relocked", "tracking")}
+            stats["tracking"] = bool(stats["tracking"] and getattr(s, "unconfirmed", None) is None)
+            stats.update({k: s.stats.get(k, 0) for k in ("recovery_candidates", "recovery_confirmed", "recovery_rejected", "recovery_searches")})
             session = dict(stats, scene_mode=getattr(getattr(s, "scene", None), "mode", "still"), preset=s.preset, point_distance_mm=s.cloud.point_mm, raw_points=s.cloud.raw_points,
                            pieces=active if live else len(s.pieces), cue=dict(s.cue), crop=s.crop)
             if self.phase == "done":  # Crop axes are for a finished scan; don't recalculate on every poll.
@@ -617,15 +623,16 @@ def run(commands, replies, port=view3d.PORT, auth_token=None):
                            can_start_separate_piece=s.can_start_separate_piece(),
                            reference_ok=getattr(s, "unconfirmed", None) is None,
                            coverage_supported=getattr(s, "track_with", None) == "gpu")
-                source.progress.observe(s.stats["frames"], s.stats["merged"], points, s.stats["tracking"], cue)
+                tracking = bool(s.stats["tracking"] and getattr(s, "unconfirmed", None) is None)
+                source.progress.observe(s.stats["frames"], s.stats["merged"], points, tracking, cue)
             if new_piece and recorder is not None:
                 recorder.piece_start()
             timing["raw"] += t2 - t0
             timing["feed"] += time.perf_counter() - t2
             timing["frames"] += 1
             stage=getattr(getattr(s,'gpu',None),'timing',{})
-            cue['performance']=meter.update(time.monotonic(),s.stats['frames'],s.stats['merged'],s.stats['tracking'],time.perf_counter()-t2,stage)
-            replies.put(("frame_done", s.stats["merged"], s.stats["frames"], points, s.stats["tracking"],
+            cue['performance']=meter.update(time.monotonic(),s.stats['frames'],s.stats['merged'],tracking,time.perf_counter()-t2,stage)
+            replies.put(("frame_done", s.stats["merged"], s.stats["frames"], points, tracking,
                          cue, view_mask(s.last_view),
                          s.view_codes, t_d))
         elif kind == "frame":

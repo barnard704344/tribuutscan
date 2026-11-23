@@ -51,7 +51,9 @@ its tested unit; calibration and dimensional accuracy need checking on your unit
 2. Decode and prepare depth, select the subject and determine its mask. Table mode
    uses a support plane; free mode avoids that assumption.
 3. Estimate the pose against the fused model. Marker, colour-feature and shape
-   recovery paths help when local tracking fails; candidate poses are checked.
+   recovery paths help when local tracking fails. Wider searches are paced, confirmed
+   feature views are retained by viewpoint, and recovered poses require consecutive
+   confirmation before fusion resumes. See [tracking recovery](tracking-recovery.md).
 4. Fuse accepted views into the tracking volume. Merge selected views into the
    voxel point cloud alongside tracking. Not every tracked frame is a merged keyframe.
 5. Save pose, mask, session and source information. Optimisation adds loop closures

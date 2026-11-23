@@ -126,6 +126,9 @@ For a head or held object, select **Head / free object** before starting. Table
 mode can remove parts of a face as a support plane. Keep reliable depth, overlap
 with earlier views and return towards the **Last tracked view** after a loss.
 Moving slowly cannot compensate for missing depth or a wrong subject mask.
+**Confirming recovered position** means geometry is deliberately held until the
+match survives consecutive frames; maintain overlap and hold a recognisable view.
+See [tracking recovery](tracking-recovery.md) for diagnostics and limits.
 
 The classified coverage display uses the GPU tracking volume. **Force CPU** does
 not offer the same coverage display. Check the selected backend in host logs.

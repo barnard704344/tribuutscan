@@ -19,6 +19,7 @@ claims and upstream development notes are not instructions for the current UI.
 | Find, name and organise scans and related versions | [Scan Library](docs/scan-library.md) |
 | Inspect, clean up, mesh and export saved scans | [Saved workspace](docs/saved-workspace.md) |
 | Manually align two saved free-object scans | [Saved-scan alignment](docs/alignment.md) |
+| Understand recovery and test loss/reacquisition | [Tracking recovery](docs/tracking-recovery.md) |
 | Fix connection, depth, tracking or startup problems | [Troubleshooting](docs/troubleshooting.md) |
 | Understand the scanner, calibration, GPU pipeline and output files | [Technical reference](docs/technical-reference.md) |
 | Develop, test and measure changes | [Development guide](docs/development.md) |

@@ -25,6 +25,7 @@ required. The runner imports test modules, which also supports spawned workers.
 node tests/test_scanner_ui.mjs
 node tests/test_saved_lasso_ui.mjs
 node tests/test_library_ui.mjs
+.venv/bin/python tests/run_checks.py test_recovery test_cloud test_livescan
 # Full regression run when warranted:
 .venv/bin/python tests/run_checks.py
 git diff --check
@@ -42,6 +43,7 @@ Choose checks for the changed paths and report what actually ran.
 | HTTP host, pairing, previews, restart | `tribuutscan/webapp.py` |
 | Browser capture and saved-result pages | `tribuutscan/web/` |
 | Saved-scan manual alignment and full-session save | `tribuutscan/alignment.py`, `tribuutscan/web/alignment.*` |
+| Paced recovery search selection | `tribuutscan/recovery.py` (integration in `cloud.py`) |
 | Bounded local surface refinement worker | `tribuutscan/alignment_refine.py` |
 | Scan Library metadata, provenance, storage and thumbnails | `tribuutscan/scan_library.py`, `tribuutscan/web/library.*` |
 | Editable copies, transactional history and cleanup masks | `tribuutscan/edit_session.py`, `tribuutscan/cleanup.py` |

@@ -139,7 +139,10 @@ CPU capture/tracking does not provide the same volume-classification display.
 If tracking is lost, the flat coverage map can still refresh from the last tracked
 pose while geometry remains on hold. Return to an already scanned area with clear
 depth, overlap and recognisable shape/texture. The scanner attempts recovery
-automatically. The **Last tracked view** provides a reference when available.
+automatically. **Confirming recovered position** holds geometry while subsequent
+frames check the candidate. Keep overlap until it locks; recovery is reported only
+after confirmation. The **Last tracked view** provides a reference when available.
+See [tracking recovery](tracking-recovery.md) for behaviour and a scanner trial.
 
 ## Pause and inspect
 

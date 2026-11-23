@@ -32,6 +32,7 @@ from . import pointcloud as pc
 from . import prep
 from .calib import CAMERA, CLOSE
 from .mesh_exports import retire as retire_mesh
+from .recovery import SearchBudget
 from .image import yuyv_pixels, yuyv_to_rgb
 
 PRESETS_MM = {"small": 0.5, "medium": 1.0, "large": 2.0}  # point distance; depth noise ~1 mm (estimate)
@@ -62,7 +63,7 @@ GUESS_MAX_S = 0.3  # the motion guess extrapolates the last motion over at most 
                    # it ran on and on, 7 -> 177 mm at the object over 20 lost frames of the hand scan)
 REFIND_KEYFRAMES, REFIND_TRIES = 16, 3  # refind_anywhere: keyframes compared, best ones tried...
 REFIND_MIN_INLIERS = 50  # ...and the ORB inliers a pose found anywhere needs (the hand scan's had 141-245)...
-OBJECT_ANCHORS, OBJECT_ANCHOR_EVERY = 8, 8  # bounded in-memory confirmed RGB-D reference views
+OBJECT_ANCHORS, OBJECT_ANCHOR_EVERY = 16, 8  # bounded in-memory confirmed RGB-D reference views
 REFIND_MIN_AWAY = 25  # ...this many of them on the still scene around the object, not on it: the synthetic plate
                       # (the same markers on both faces, a plain table) was re-found mirrored, 180 degrees off
 REFIND_MM_S, REFIND_DEG_S, REFIND_SLACK = 300.0, 60.0, (50.0, 15.0)  # ...and must be reachable in the time lost:
@@ -755,7 +756,8 @@ class Scanner:
         self.last_t, self.motion_s, self.lost_run = None, None, 0  # time of the last tracked frame, of `motion`
         self.frame_table = None  # this frame's own table: (normal, narrower extent mm), for floor_agrees
         self.hold, self.refind_feat = 0, None  # refind_anywhere's state
-        self.unconfirmed = None  # a pose found anywhere, until REFIND_HOLD frames hold it: how to take it back
+        self.unconfirmed = None  # every recovered pose is provisional until consecutive frames confirm it
+        self.recovery_search = SearchBudget()
         self.shape_model, self.shape_t = None, None  # refind_shape's: (merged count, the model's shape features), last try
         self.object_turns = False  # the room stands still while the object turns (check_room): its features left out
         self.room_ref, self.room_votes, self.room_t = None, {"still": 0, "moved": 0}, None  # check_room's reference,
@@ -830,6 +832,14 @@ class Scanner:
         split = self.piece_pending or index in self.planned_piece_starts
         scene = self.scene
         t = frame.get("t")
+        if self.unconfirmed is not None and t is not None and self.last_t is not None \
+                and (not np.isfinite(t) or not 0 < t - self.last_t <= GAP_S):
+            self.take_back()
+            stats["lost"] += 1
+            stats["tracking"] = False
+            self.lost_run += 1
+            self.track_log.append((index, "confirmation interrupted", None))
+            return False
         guess = self.motion
         if t is not None and self.last_t is not None and self.motion_s:  # the guess follows the real time
             guess = scale_motion(self.motion, min(t - self.last_t, GUESS_MAX_S) / self.motion_s)
@@ -890,6 +900,8 @@ class Scanner:
                 scene.observe(all_xyz, all_pix, shape, np.eye(4))
         seen = look_of(xyz)  # (the piece's size and distance: likeness when lost, the object's look when tracked)
         status = "first" if self.prev is None else "tracked"
+        undo = None
+        recovering = self.prev is not None and (self.lost_run > 0 or self.after_gap(t))
         if fuse is not None:
             if self.track_with == "gpu":
                 levels = None  # the GPU matches the frame's own maps (Open3D levels only to re-find)
@@ -909,6 +921,7 @@ class Scanner:
                         self.feature_starts += 1
             if self.refind_needed:  # continuing a saved scan: find this frame in its world first
                 from . import session
+                undo = self.undo_point(index)
                 found = session.refind(self, xyz, marker_pts, levels)
                 if found is None:
                     stats["lost"] += 1
@@ -958,30 +971,46 @@ class Scanner:
                     step, ok = self.joint_step(levels, xyz, marker_pts, guess, index)
                 else:  # the CPU tracker looked away: do not trust frame-to-frame tracking
                     step, ok = np.eye(4), False
-                confirming_object = self.unconfirmed is not None and "object_anchor" in self.unconfirmed
-                if confirming_object and status != "tracked":
+                confirming_recovery = self.unconfirmed is not None
+                if confirming_recovery and status != "tracked":
                     ok = False  # a different global pose is not confirmation of the object match
                 like = "object" if ok else self.likeness(seen)  # (a piece of something else: no recovery tried)
-                undo = None if ok or self.unconfirmed is not None else self.undo_point(index)
+                undo = (self.undo_point(index) if self.unconfirmed is None
+                        and (not ok or recovering or status != "tracked") else None)
+                local_relocked = (not ok and not confirming_recovery and like != "other"
+                    and (self.relock_due() or (self.gpu is None and like == "object"))
+                    and self.relock(*self.relock_source(levels, xyz), marker_pts))
+                search = None
+                if not ok and not local_relocked and like != "other" and not confirming_recovery:
+                    available = set()
+                    if self.feature_anchors and self.features is not None:
+                        available.add("object features")
+                    if self.features is not None and any(k[3] is not None for k in self.keyframes):
+                        available.add("scene features")
+                    if self.gpu is not None and self.fuse is not None and self.stats["merged"]:
+                        available.add("shape")
+                    search = self.recovery_search.choose(t, index, available)
+                    if search:
+                        stats["recovery_searches"] = stats.get("recovery_searches", 0) + 1
+                        self.cue["recovery_search"] = search
                 if ok and status != "tracked":  # (re-found by shape after a gap: no motion to go on from)
                     self.pose, self.motion, self.motion_s = self.pose @ step, np.eye(4), None
                 elif ok:
                     self.motion = step
                     self.motion_s = (t - self.last_t) if (t is not None and self.last_t is not None) else None
                     self.pose = self.pose @ self.motion
-                elif (not confirming_object and like != "other" and (self.relock_due() or (self.gpu is None and like == "object"))
-                      and self.relock(*self.relock_source(levels, xyz), marker_pts)):
+                elif local_relocked:
                     stats["relocked"] += 1
                     status = "relocked"
-                elif (like != "other" and self.unconfirmed is None
+                elif (search == "object features"
                       and (anchor := self.refind_object_features(frame, pix, xyz, marker_pts)) is not None):
                     status = "re-found by object features"
                     undo["object_anchor"] = anchor
-                elif not confirming_object and like != "other" and self.refind_anywhere(frame, pix, xyz, marker_pts, feat):
+                elif search == "scene features" and self.refind_anywhere(frame, pix, xyz, marker_pts, feat):
                     stats["relocked"] += 1
                     status = "re-found"
                     feat = self.refind_feat
-                elif not confirming_object and like != "other" and self.refind_shape(xyz, marker_pts, t):
+                elif search == "shape" and self.refind_shape(xyz, marker_pts, t):
                     stats["relocked"] += 1
                     status = "re-found by shape"
                 else:
@@ -996,8 +1025,11 @@ class Scanner:
                     self.show_ghost()
                     self.lost_long(t, index, like, xyz)
                     return False
-            if status.startswith("re-found") and self.track_with == "gpu" and undo is not None:
+            if undo is not None and (status.startswith("re-found") or status == "relocked" or recovering):
+                undo["recovery_method"] = status if status != "tracked" else "local tracking"
                 self.unconfirmed = undo
+                self.hold = REFIND_HOLD + 1
+                stats["recovery_candidates"] = stats.get("recovery_candidates", 0) + 1
             self.last_t, self.lost_run, self.lost_since = t, 0, None
             self.last_source, self.like_source, self.away_frames = xyz.mean(0), None, 0
             self.cue.pop("away", None)
@@ -1022,16 +1054,23 @@ class Scanner:
             self.last_view = (all_pix, keep, np.zeros(len(keep), bool), shape)
         self.labels[index] = view_mask(self.last_view)
         stats["plane_frames"] += scene.plane is not None
-        if status.startswith("re-found") and self.track_with == "gpu":
-            self.hold = REFIND_HOLD + 1
-        if self.hold:  # a pose found anywhere is merged only once the frames after it have tracked from it
+        if self.hold:  # no fusion until consecutive frames confirm a recovered pose
             self.hold -= 1
-            if self.hold and self.unconfirmed and "object_anchor" in self.unconfirmed:
-                self.cue["object_recovery_pending"] = True
+            if self.hold and self.unconfirmed:
+                self.cue["recovery_pending"] = True
+                self.cue["recovery_remaining"] = self.hold
+                self.cue["recovery_method"] = self.unconfirmed.get("recovery_method", "matching")
+                if "object_anchor" in self.unconfirmed:
+                    self.cue["object_recovery_pending"] = True
             if not self.hold:
                 self.cue.pop("object_recovery_pending", None)
+                self.cue.pop("recovery_pending", None)
+                self.cue.pop("recovery_remaining", None)
                 confirmed = self.unconfirmed
                 self.unconfirmed = None
+                if confirmed:
+                    stats["recovery_confirmed"] = stats.get("recovery_confirmed", 0) + 1
+                    self.cue["recovery_confirmed"] = True
                 if confirmed and "object_anchor" in confirmed:
                     ref, inliers = confirmed["object_anchor"]
                     stats["relocked"] += 1
@@ -1089,7 +1128,8 @@ class Scanner:
 
     def frame_poses(self):
         """[(index, pose)] of every tracked frame (a scan saved before these were kept: its merged ones)."""
-        return [(i, p) for i, _, p in self.track_log if p is not None] or list(self.poses)
+        cutoff = self.unconfirmed["index"] if self.unconfirmed is not None else float("inf")
+        return [(i, p) for i, _, p in self.track_log if p is not None and i < cutoff] or list(self.poses)
 
     def turn_axis(self, min_deg=TURN_AXIS_MIN_DEG):
         """The axis a platform turned the object about (turn_axis), or None: not a platform scan (object_turns).
@@ -1187,7 +1227,8 @@ class Scanner:
             a, b = m["at"][k], m["at"][k + 1]
             sc.merged_data[int(index)] = (m["points"][a:b], m["rgb"][a:b], m["normals"][a:b])
         sc.pose = sc.last_merged = sc.poses[-1][1]
-        sc.stats.update({k: session[k] for k in ("frames", "merged", "lost", "relocked", "shape_refinds") if k in session})
+        sc.stats.update({k: session[k] for k in ("frames", "merged", "lost", "relocked", "shape_refinds", "recovery_candidates",
+                                                               "recovery_confirmed", "recovery_rejected", "recovery_searches") if k in session})
         # Re-saving old geometry must not claim it was tracked with the current camera.
         sc.stats["depth_mode"] = session.get("depth_mode") or CLOSE
         sc.stats["camera"] = session.get("camera")
@@ -1408,6 +1449,8 @@ class Scanner:
 
     def close(self):
         """Give the GPU tracker's memory back (after the last frame; the cloud and everything saved stay)."""
+        if self.unconfirmed is not None:
+            self.take_back()
         if self.gpu is not None:
             self.stats["gpu_ms"] = self.gpu.report()
             self.gpu.close()
@@ -1455,14 +1498,13 @@ class Scanner:
         return "unsure"
 
     def undo_point(self, index):
-        """What take_back restores: the state of a loss before a pose found anywhere (refind_anywhere,
-        refind_shape) at frame `index`."""
+        """Snapshot the last trusted state before any recovered pose at frame `index`."""
         return dict(index=index, pose=self.pose.copy(), motion=self.motion, motion_s=self.motion_s,
                     last_t=self.last_t, lost_run=self.lost_run, lost_since=self.lost_since,
                     away_frames=self.away_frames, last_source=self.last_source, like_source=self.like_source,
                     look=list(self.look), scene=self.scene.snapshot(), scene_of=self.scene,
                     markers=(self.marker_map.pos.copy(), self.marker_map.count.copy()), marker_map=self.marker_map,
-                    feat=(self.prev_feat, self.feat_pose))
+                    feat=(self.prev_feat, self.feat_pose), prev=self.prev, refind_needed=self.refind_needed)
 
     def take_back(self):
         """A pose found anywhere and lost again before REFIND_HOLD frames held it (nothing merged meanwhile): the
@@ -1470,6 +1512,8 @@ class Scanner:
         region, a base found) and the marker map at that pose is forgotten: on devclicks such frames voted the wall
         behind the hand as the base. Its frames are logged "taken back", without a pose."""
         u, self.unconfirmed, self.hold = self.unconfirmed, None, 0
+        self.stats["tracking"] = False
+        self.stats["recovery_rejected"] = self.stats.get("recovery_rejected", 0) + 1
         self.pose, self.motion, self.motion_s, self.last_t = u["pose"], u["motion"], u["motion_s"], u["last_t"]
         self.lost_run, self.lost_since, self.away_frames = u["lost_run"], u["lost_since"], u["away_frames"]
         self.last_source, self.like_source = u["last_source"], u["like_source"]
@@ -1480,7 +1524,10 @@ class Scanner:
         if self.marker_map is u["marker_map"]:
             self.marker_map.pos, self.marker_map.count = u["markers"]
         self.prev_feat, self.feat_pose = u["feat"]
+        self.prev, self.refind_needed = u["prev"], u["refind_needed"]
         self.cue.pop("object_recovery_pending", None)
+        self.cue.pop("recovery_pending", None)
+        self.cue.pop("recovery_remaining", None)
         self.track_log = [(i, "taken back", None) if i >= u["index"] and p is not None else (i, st, p)
                           for i, st, p in self.track_log]
         self.stats["taken_back"] = self.stats.get("taken_back", 0) + 1
@@ -1564,6 +1611,7 @@ class Scanner:
         self.prev, self.motion, self.motion_s, self.last_t = None, np.eye(4), None, None
         self.prev_feat = self.feat_pose = self.refind_feat = None
         self.hold, self.cue, self.unconfirmed = 0, {}, None
+        self.recovery_search = SearchBudget()
         self.shape_model, self.shape_t = None, None
         self.feature_anchors.clear()
         self.feature_anchor_at = self.feature_retry_t = None
@@ -1762,7 +1810,16 @@ class Scanner:
         self.feature_anchor_at = at
         feat = self.object_features(frame, pix)
         if len(feat[0]) >= REFIND_MIN_INLIERS:
-            self.feature_anchors.append((index, self.pose.copy(), feat))
+            anchor = (index, self.pose.copy(), feat)
+            # Keep viewpoint anchors fixed while moving slowly; otherwise a moving slot
+            # follows the camera indefinitely and forgets every earlier angle.
+            nearby = next((j for j, (_, pose, _) in enumerate(self.feature_anchors)
+                           if same_pose(pose, self.pose, feat[0], mm=12., deg=10.)), None)
+            if nearby is not None:
+                if len(feat[0]) > 1.2 * len(self.feature_anchors[nearby][2][0]):
+                    self.feature_anchors[nearby] = anchor
+            else:
+                self.feature_anchors.append(anchor)
 
     def refind_object_features(self, frame, pix, xyz, marker_pts):
         """Match live depth-backed object features to earlier confirmed views, then verify independently on the GPU."""
@@ -2092,6 +2149,8 @@ class Scanner:
             return cloud.subset(self.output_mask(cloud.xyz / cloud.n[:, None], connect))
 
     def save(self, directory, min_seen=MIN_SEEN):
+        if self.unconfirmed is not None:
+            self.take_back()
         self.flush()
         self.trim_table()
         self.stats["remove_base"], self.stats["base_found"] = self.remove_base, self.scene.plane is not None

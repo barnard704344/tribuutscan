@@ -168,13 +168,33 @@ This checkpoint updates the tools, workflow documentation and screenshots; it do
 not add a fresh hardware or performance acceptance result. Proposed inspection
 and cleanup additions are tracked separately in the [roadmap](roadmap.md).
 
-## Meter and recovery validation still open
+## Tracking recovery update — 23 November 2026
+
+Recovery now confirms local, wide and saved-continuation candidates before fusion,
+rolls back interrupted candidates, excludes provisional saved poses, paces wider
+searches and retains a more varied bounded feature-reference bank. Live telemetry
+and the recovered indicator distinguish provisional matches from confirmation.
+See [tracking recovery](tracking-recovery.md) for the state transitions, diagnostics
+and physical scanner trial. These changes do not establish a measured recovery
+success-rate improvement or sustained FPS target on hardware.
+
+The recovery, cloud, livescan, track, gputrack and webapp modules passed 123
+automated checks. New checks cover search pacing/fairness, reference diversity,
+provisional GPU/CPU pose handling, rollback on loss/timestamp interruption/stop,
+saved-pose exclusion and recovery status. A real CPU solve on generated depth
+reacquired a repeated view after injected depth loss and resumed merging after
+confirmation. This controlled repeated-view trial is not a physical motion,
+symmetry or dimensional-accuracy acceptance result; adapter-dependent tests can
+return without exercising unavailable adapters.
+
+## Meter and hardware recovery validation still open
 
 Commit `906c7c8` added a rolling performance meter and a short recovered-tracking
 indicator. The meter exposes processing FPS, average time and stage timing data;
 the UI currently shows FPS and milliseconds. Stage timings are wall-clock samples,
 not pure GPU timestamps. The recovery indicator reports a transition in existing
-tracking; it does not introduce a new recovery algorithm.
+tracking; that earlier indicator alone did not introduce a new recovery algorithm.
+The confirmation and search/reference changes described above are subsequent work.
 
 Validate counters across start, pause, resume, loss/recovery and stop. Check the
 indicator against actual accepted geometry rather than trusting its label alone.
