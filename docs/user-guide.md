@@ -10,6 +10,13 @@ its video devices and, for direct USB depth and IMU access, the supplied udev ru
 Device node numbers can change; discovery is by USB interface rather than a fixed
 `/dev/video0` path.
 
+Run setup commands from the cloned repository, not from `~`. Use `cd ~/tribuutscan`
+for the default clone location, or `cd` to your existing checkout if installed
+elsewhere. Follow the [USB rule installation steps](../README.md#install-and-launch)
+there; `udev/70-tribuutscan.rules` is relative to the checkout. If copying the rule
+fails with `cannot stat`, change to the correct directory and retry the copy
+before reloading rules.
+
 Create the scanning environment with `uv sync --all-extras`. The package's base
 dependency is NumPy; the scanning extra adds Open3D and OpenCV, and the GPU extra
 adds wgpu on supported Python versions. The legacy desktop UI additionally needs

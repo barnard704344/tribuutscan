@@ -41,13 +41,21 @@ interpreter does not have NumPy, run the web host directly with the environment:
 ```
 
 For 14-bit USB depth, install the supplied device rule, reload it and reconnect the
-scanner. The application can otherwise fall back to 10-bit V4L2 depth.
+scanner. The application can otherwise fall back to 10-bit V4L2 depth. Run this
+from the repository directory, not your home directory. The `cd` below assumes
+you cloned into `~/tribuutscan`; replace it with your existing checkout's path
+if you installed elsewhere.
 
 ```sh
+cd ~/tribuutscan
 sudo cp udev/70-tribuutscan.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=usb --attr-match=idVendor=2bc5
 ```
+
+If `cp` reports `cannot stat`, the rule was not installed. Check that
+`ls udev/70-tribuutscan.rules` finds the file before retrying. Reloading and
+triggering rules does not fix a failed copy.
 
 For a host without a desktop browser:
 
