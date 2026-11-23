@@ -10,6 +10,8 @@ const camera=new THREE.PerspectiveCamera(45,1,.0001,100), controls=new OrbitCont
 controls.enableDamping=true;
 const ray=new THREE.Raycaster(), pointer=new THREE.Vector2();
 let clouds={}, loaded=null, epoch=0, loading=false, saving=false, awaiting=false, mode=null;
+let manipulation='orbit', drag=null;
+const movingBox=new THREE.Box3Helper(new THREE.Box3(),0xffc45c);movingBox.visible=false;scene.add(movingBox);
 let base=new THREE.Matrix4(), past=[], future=[], landmarks={reference:[],moving:[]};
 const nudges=['tx','ty','tz','rx','ry','rz'];
 function error(message=''){$('error').textContent=message;$('error').hidden=!message;}
@@ -29,6 +31,7 @@ function buttons(){
  for(const id of ['reference','moving'])$(id).disabled=loading||saving||awaiting;
  for(const id of nudges)$(id).disabled=!ready();
  for(const option of $('moving').options)option.disabled=!!option.value&&option.value===$('reference').value;
+ syncManipulation();
  $('pair-count').textContent=`Reference: ${landmarks.reference.length} · Moving: ${landmarks.moving.length}`;
 }
 function matrix(){return clouds.moving?.matrix.clone()||new THREE.Matrix4();}
@@ -37,12 +40,12 @@ function apply(m,remember=true){
  base.copy(m);clouds.moving.matrix.copy(m);clouds.moving.matrixWorldNeedsUpdate=true;
  for(const id of nudges)$(id).value='0';$('fit-report').textContent='';buttons();
 }
-function pickMode(next){mode=next;for(const key of ['reference','moving']){
+function pickMode(next){cancelDrag();if(next)manipulation='orbit';mode=next;for(const key of ['reference','moving']){
  if(clouds[key])clouds[key].visible=mode?key===mode:$('visibility').value==='both'||$('visibility').value===key;
  $('pick-'+key).setAttribute('aria-pressed',String(mode===key));
- }canvas.style.cursor=mode?'crosshair':'grab';
+ }syncManipulation();
 }
-function dispose(){for(const item of Object.values(clouds)){
+function dispose(){cancelDrag();movingBox.visible=false;for(const item of Object.values(clouds)){
  scene.remove(item);item.traverse(o=>{o.geometry?.dispose();o.material?.dispose();});
  }clouds={};}
 function makeCloud(buf,key){
@@ -65,7 +68,7 @@ async function fetchCloud(key,name){
 }
 async function loadReference(){
  if(!$('reference').value)return;
- loading=true;loaded=null;buttons();error();$('result').hidden=true;const id=++epoch;
+ cancelDrag();manipulation='orbit';loading=true;loaded=null;buttons();error();$('result').hidden=true;const id=++epoch;
  $('status').textContent='Loading the opened scan as reference…';
  try{
   const [key,buf]=await fetchCloud('reference',$('reference').value);
@@ -78,7 +81,7 @@ async function loadReference(){
 async function load(){
  if(!$('moving').value)return loadReference();
  if($('reference').value===$('moving').value)return error('Choose two different scans.');
- loading=true;loaded=null;buttons();error();$('result').hidden=true;const id=++epoch;
+ cancelDrag();manipulation='orbit';loading=true;loaded=null;buttons();error();$('result').hidden=true;const id=++epoch;
  $('status').textContent='Loading the second scan for alignment…';
  try{
  const names={reference:$('reference').value,moving:$('moving').value};
@@ -96,7 +99,7 @@ function clearPoints(){
 }
 $('load').onclick=load;
 for(const key of ['reference','moving']){
- $(key).onchange=()=>{loaded=null;epoch++;clearPoints();pickMode(null);$('result').hidden=true;
+ $(key).onchange=()=>{cancelDrag();manipulation='orbit';loaded=null;epoch++;clearPoints();pickMode(null);$('result').hidden=true;
   if(key==='reference')dispose();
   else if(clouds.moving){scene.remove(clouds.moving);clouds.moving.geometry.dispose();clouds.moving.material.dispose();delete clouds.moving;}
   if($('reference').value===$('moving').value)$('moving').value='';
@@ -104,7 +107,75 @@ for(const key of ['reference','moving']){
  };
  $('pick-'+key).onclick=()=>{pickMode(mode===key?null:key);$('status').textContent=mode?`Click distinct features on the ${key} scan in matching order. Click its pick button again to finish.`:'Orbit to inspect the alignment.';};
 }
-$('visibility').onchange=()=>pickMode(null);
+function syncManipulation(){
+ const editing=manipulation!=='orbit'&&!mode&&ready()&&clouds.moving?.visible;
+ for(const name of ['orbit','move','rotate']){
+  $('tool-'+name).setAttribute('aria-pressed',String(manipulation===name));
+  $('tool-'+name).disabled=name!=='orbit'&&(!ready()||!clouds.moving?.visible);
+ }
+ controls.mouseButtons.LEFT=editing?null:THREE.MOUSE.ROTATE;
+ controls.touches.ONE=editing?null:THREE.TOUCH.ROTATE;
+ controls.enableDamping=!editing;controls.enabled=!drag;
+ movingBox.visible=!!editing;
+ canvas.style.cursor=mode?'crosshair':editing?(drag?'grabbing':manipulation==='rotate'?'grab':'move'):'grab';
+ $('transform-hint').textContent=mode?'Click corresponding features. Drag still orbits the camera.':editing
+  ?manipulation==='move'?'Drag the amber scan to move it across the view. Release to apply; Escape cancels the drag.':'Drag the amber scan to rotate it about its centre. Release to apply; Escape cancels the drag.'
+  :'Orbit to inspect. Choose Move scan or Rotate scan to drag the amber scan; the blue reference stays fixed.';
+ const legend=document.querySelector('#legend span:last-child');
+ if(legend)legend.textContent=editing?'Drag amber scan · right-drag pans · wheel zooms · Orbit view rotates camera':'Drag to orbit · right-drag to pan · scroll to zoom';
+}
+for(const name of ['orbit','move','rotate'])$('tool-'+name).onclick=()=>{
+ cancelDrag();mode=null;manipulation=name;pickMode(null);controls.update();
+};
+function cancelDrag(){
+ if(!drag)return;const previous=drag;drag=null;
+ if(clouds.moving){clouds.moving.matrix.copy(previous.start);clouds.moving.matrixWorldNeedsUpdate=true;}
+ if(canvas.hasPointerCapture(previous.id))canvas.releasePointerCapture(previous.id);
+ syncManipulation();
+}
+function pointerRay(event){
+ const rect=canvas.getBoundingClientRect();
+ pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);
+ camera.updateMatrixWorld(true);scene.updateMatrixWorld(true);ray.setFromCamera(pointer,camera);
+ return ray.ray;
+}
+canvas.addEventListener('pointerdown',event=>{
+ if(drag){if(event.pointerId!==drag.id)cancelDrag();return;}
+ if(!ready()||mode||manipulation==='orbit'||event.button!==0||!clouds.moving.visible)return;
+ pointerRay(event);if(!ray.intersectObject(clouds.moving,false).length)return;
+ const centre=clouds.moving.geometry.boundingBox.getCenter(new THREE.Vector3()).applyMatrix4(matrix());
+ const plane=new THREE.Plane().setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()),centre);
+ const anchor=ray.ray.intersectPlane(plane,new THREE.Vector3());if(!anchor)return;
+ drag={id:event.pointerId,x:event.clientX,y:event.clientY,start:matrix(),centre,plane,anchor:anchor.clone(),
+  right:new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,0),up:new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,1)};
+ canvas.setPointerCapture(event.pointerId);syncManipulation();event.preventDefault();
+});
+canvas.addEventListener('pointermove',event=>{
+ if(!drag||event.pointerId!==drag.id)return;
+ let result;
+ if(manipulation==='move'){
+  const point=pointerRay(event).intersectPlane(drag.plane,new THREE.Vector3());if(!point)return;
+  result=new THREE.Matrix4().makeTranslation(...point.sub(drag.anchor).toArray()).multiply(drag.start);
+ }else{
+  const yaw=new THREE.Quaternion().setFromAxisAngle(drag.up,(event.clientX-drag.x)*.007);
+  const pitch=new THREE.Quaternion().setFromAxisAngle(drag.right,(event.clientY-drag.y)*.007);
+  const rotation=new THREE.Matrix4().makeRotationFromQuaternion(pitch.multiply(yaw));
+  result=new THREE.Matrix4().makeTranslation(...drag.centre.toArray()).multiply(rotation)
+   .multiply(new THREE.Matrix4().makeTranslation(...drag.centre.clone().negate().toArray())).multiply(drag.start);
+ }
+ clouds.moving.matrix.copy(result);clouds.moving.matrixWorldNeedsUpdate=true;
+});
+canvas.addEventListener('pointerup',event=>{
+ if(!drag||event.pointerId!==drag.id)return;
+ const previous=drag,final=matrix();drag=null;
+ if(canvas.hasPointerCapture(previous.id))canvas.releasePointerCapture(previous.id);
+ clouds.moving.matrix.copy(previous.start);
+ if(!final.equals(previous.start))apply(final);else syncManipulation();
+});
+for(const event of ['pointercancel','lostpointercapture'])canvas.addEventListener(event,e=>{if(drag?.id===e.pointerId)cancelDrag();});
+window.addEventListener('blur',cancelDrag);
+window.addEventListener('keydown',event=>{if(event.key==='Escape'){cancelDrag();manipulation='orbit';pickMode(null);}});
+$('visibility').onchange=()=>{if($('visibility').value==='reference')manipulation='orbit';pickMode(null);};
 canvas.addEventListener('pointerdown',e=>{canvas.down={x:e.clientX,y:e.clientY};});
 canvas.addEventListener('pointerup',e=>{
  if(!ready()||!mode||e.button!==0||!canvas.down||Math.hypot(e.clientX-canvas.down.x,e.clientY-canvas.down.y)>5)return;
@@ -146,9 +217,9 @@ $('save').onclick=async()=>{
  }catch(e){error(e.message);}finally{saving=false;buttons();}
 };
 new ResizeObserver(()=>{const r=canvas.parentElement.getBoundingClientRect();renderer.setSize(r.width,r.height,false);camera.aspect=r.width/r.height;camera.updateProjectionMatrix();}).observe(canvas.parentElement);
-const animate=()=>{controls.update();renderer.render(scene,camera);};
+const animate=()=>{controls.update();if(movingBox.visible&&clouds.moving)movingBox.box.setFromObject(clouds.moving);renderer.render(scene,camera);};
 renderer.setAnimationLoop(animate);
-if(embedded){window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===parent&&event.data?.type==='alignment-visible')renderer.setAnimationLoop(event.data.visible?animate:null);});parent.postMessage({type:'alignment-ready'},location.origin);}
+if(embedded){window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===parent&&event.data?.type==='alignment-visible'){if(!event.data.visible)cancelDrag();renderer.setAnimationLoop(event.data.visible?animate:null);}});parent.postMessage({type:'alignment-ready'},location.origin);}
 try{
  const state=await api('/api/state');
  const options=()=>state.scans.map(name=>{const option=document.createElement('option');option.value=option.textContent=name;return option;});

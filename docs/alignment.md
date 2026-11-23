@@ -23,16 +23,22 @@ are rejected for now, rather than merging their incompatible masks or scene regi
    second scan under **Add a second scan**; its amber preview loads automatically.
    **Reload previews** is available if a source changes or a load needs retrying. Preview downloads are limited to 200,000
    points per scan; saving uses the full saved frame data.
-2. Drag to orbit, right-drag to pan and scroll to zoom. **Fit view** frames both
-   scans. The **Preview** selector can show either scan on its own.
-3. Use **Pick reference** to select at least three distinctive, spread-out
+2. Choose **Move scan** and drag the amber scan to reposition it across the
+   current view. Choose **Rotate scan** and drag it to turn it around its centre.
+   An amber outline identifies the moving scan. The blue reference stays fixed.
+   Release to apply one undoable adjustment; **Escape** cancels the current drag.
+   Mouse and one-finger touch dragging are supported.
+3. **Orbit view** rotates the camera; right-drag pans and the wheel zooms. To move
+   the scan along a different plane, orbit to another angle, then use Move scan.
+   **Fit view** frames both scans. The **Preview** selector shows either scan alone.
+4. For optional feature-based fitting, use **Pick reference** to select at least three distinctive, spread-out
    features. Select the same features in the same order with **Pick moving**.
    Only the selected scan is visible while picking. Click a pick button again
    to finish picking. Orbiting remains available; a drag does not select a point.
-4. Press **Align point pairs**. Three to twelve pairs are supported. Collinear
+5. Press **Align point pairs** when using landmarks. Three to twelve pairs are supported. Collinear
    or coincident selections are rejected. The reported RMS error measures only
    the selected point pairs; it does not establish whole-surface accuracy.
-5. Inspect the overlap from several angles. Use **Nudge position and rotation**
+6. Inspect the overlap from several angles. Use **Nudge position and rotation**
    for adjustments in millimetres and degrees. Rotation is around the moving
    scan's centre. Leaving a numeric field commits that adjustment and resets the
    field to zero for the next nudge. **Undo**, **Redo** and **Reset** affect the
@@ -42,6 +48,10 @@ are rejected for now, rather than merging their incompatible masks or scene regi
 Clear and repick landmarks if a point was selected incorrectly. Changing either
 source selection reloads the relevant preview automatically and clears the old
 alignment and landmark selections.
+
+![Direct movement and rotation tools with the moving scan outlined](images/alignment-drag.png)
+
+*Synthetic browser test: the outlined amber scan is adjustable; the blue reference is fixed.*
 
 ## Save and clean up
 

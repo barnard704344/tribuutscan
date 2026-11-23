@@ -15,6 +15,7 @@ live host credentials are included.
 | `saved-workspace.png` | New saved-result workspace, View tab, synthetic session |
 | `saved-alignment.png` | Align tab inside the saved-result workspace, synthetic sessions |
 | `saved-cleanup.png` | Lasso selection preview inside Cleanup, synthetic session |
+| `alignment-drag.png` | Direct move/rotate tools and amber moving-scan outline, synthetic sessions |
 
 The pairing example uses `192.0.2.10` and `documentation-example-only`; it is not
 an operational pairing link. Screenshots show demo/disconnected state, not scan

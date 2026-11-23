@@ -29,6 +29,10 @@ automatically loading the current result as reference. Choose a second scan to
 load its preview automatically, then pick matching landmarks or adjust position/rotation, then save a new aligned
 session. Returning to its result brings you back to this workspace.
 
+For quick manual alignment, choose **Move scan** or **Rotate scan** and drag the
+amber scan directly. The blue reference stays fixed. Use **Orbit view** to move
+the camera. Each completed drag is one undo step; Escape cancels an active drag.
+
 See [alignment](alignment.md) for restrictions. Align uncropped, single-piece
 free-object scans with matching range and calibration **before** lasso cleanup.
 
