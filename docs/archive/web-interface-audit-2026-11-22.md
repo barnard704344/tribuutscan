@@ -1,3 +1,7 @@
+> Historical reference only. This records an earlier revision; commands, UI,
+> authorship rules, measurements and plans below are not current fork instructions.
+> Use the [current README](../../README.md) and [development guide](../development.md).
+
 # Web scanner audit — 22 November 2026
 
 Reviewed the browser scanner introduced on `main` at `793c31a`: the controller,

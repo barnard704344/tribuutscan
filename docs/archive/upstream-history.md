@@ -1,3 +1,7 @@
+> Historical reference only. This records an earlier revision; commands, UI,
+> authorship rules, measurements and plans below are not current fork instructions.
+> Use the [current README](../../README.md) and [development guide](../development.md).
+
 # triBUUTSCAN: working history
 
 The dated working log, moved out of CLAUDE.md in Phase 6 (2026-11-04) so the working notes stay short.
