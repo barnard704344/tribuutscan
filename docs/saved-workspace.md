@@ -25,8 +25,8 @@ mode stays selected when polling reloads generated artifacts.
 ![Alignment within the saved workspace](images/saved-alignment.png)
 
 The **Align** tab hosts the existing two-scan alignment tools inside the workspace,
-preselecting the current result as reference. Choose another scan, load previews,
-pick matching landmarks or adjust position/rotation, then save a new aligned
+automatically loading the current result as reference. Choose a second scan to
+load its preview automatically, then pick matching landmarks or adjust position/rotation, then save a new aligned
 session. Returning to its result brings you back to this workspace.
 
 See [alignment](alignment.md) for restrictions. Align uncropped, single-piece

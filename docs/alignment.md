@@ -19,8 +19,9 @@ are rejected for now, rather than merging their incompatible masks or scene regi
 
 ## Align and inspect
 
-1. Choose the **Reference** and **Moving** scans and press **Load previews**.
-   Reference is blue; Moving is amber. Preview downloads are limited to 200,000
+1. The opened scan loads automatically as the blue **Reference**. Choose a
+   second scan under **Add a second scan**; its amber preview loads automatically.
+   **Reload previews** is available if a source changes or a load needs retrying. Preview downloads are limited to 200,000
    points per scan; saving uses the full saved frame data.
 2. Drag to orbit, right-drag to pan and scroll to zoom. **Fit view** frames both
    scans. The **Preview** selector can show either scan on its own.
@@ -39,7 +40,8 @@ are rejected for now, rather than merging their incompatible masks or scene regi
    aid, not automatic surface registration.
 
 Clear and repick landmarks if a point was selected incorrectly. Changing either
-source selection clears the preview; load the pair again before editing.
+source selection reloads the relevant preview automatically and clears the old
+alignment and landmark selections.
 
 ## Save and clean up
 

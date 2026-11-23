@@ -24,9 +24,11 @@ function buttons(){
  for(const id of ['centre','frame','pick-reference','pick-moving','clear-points','reset','save'])$(id).disabled=!ready();
  $('fit').disabled=!ready()||landmarks.reference.length<3||landmarks.reference.length!==landmarks.moving.length;
  $('undo').disabled=!ready()||!past.length;$('redo').disabled=!ready()||!future.length;
- $('load').disabled=loading||saving||awaiting;
+ $('load').disabled=loading||saving||awaiting||!$('reference').value;
+ $('frame').disabled=loading||saving||awaiting||!clouds.reference;
  for(const id of ['reference','moving'])$(id).disabled=loading||saving||awaiting;
  for(const id of nudges)$(id).disabled=!ready();
+ for(const option of $('moving').options)option.disabled=!!option.value&&option.value===$('reference').value;
  $('pair-count').textContent=`Reference: ${landmarks.reference.length} · Moving: ${landmarks.moving.length}`;
 }
 function matrix(){return clouds.moving?.matrix.clone()||new THREE.Matrix4();}
@@ -56,19 +58,36 @@ function frame(){
  controls.target.copy(centre);camera.position.copy(centre).add(new THREE.Vector3(size*.3,size*.15,size*1.5));camera.near=Math.max(size/10000,.00001);camera.far=Math.max(100,size*10);camera.updateProjectionMatrix();
  ray.params.Points.threshold=size/100;controls.update();
 }
-async function load(){
- if($('reference').value===$('moving').value)return error('Choose two different scans.');
- loading=true;loaded=null;buttons();error();$('result').hidden=true;const id=++epoch;
- try{
- const names={reference:$('reference').value,moving:$('moving').value};
- const fetched=await Promise.all(Object.entries(names).map(async([key,name])=>{
+async function fetchCloud(key,name){
  const r=await fetch('/api/alignment/cloud?scan='+encodeURIComponent(name),{signal:AbortSignal.timeout(30000)});
  if(!r.ok){let result;try{result=await r.json();}catch{}throw Error(result?.error||'Could not load scan; check browser pairing.');}
- return [key,await r.arrayBuffer(),r.headers.get('X-Scan-Version')];}));
+ return [key,await r.arrayBuffer(),r.headers.get('X-Scan-Version')];
+}
+async function loadReference(){
+ if(!$('reference').value)return;
+ loading=true;loaded=null;buttons();error();$('result').hidden=true;const id=++epoch;
+ $('status').textContent='Loading the opened scan as reference…';
+ try{
+  const [key,buf]=await fetchCloud('reference',$('reference').value);
+  if(id!==epoch)return;
+  dispose();clouds[key]=makeCloud(buf,key);base.identity();past=[];future=[];clearPoints();$('visibility').value='both';pickMode(null);frame();
+  $('status').textContent='Opened scan loaded as reference. Choose a second scan to align with it.';
+ }catch(e){if(id===epoch){dispose();error(e.message);}}
+ finally{if(id===epoch){loading=false;buttons();}}
+}
+async function load(){
+ if(!$('moving').value)return loadReference();
+ if($('reference').value===$('moving').value)return error('Choose two different scans.');
+ loading=true;loaded=null;buttons();error();$('result').hidden=true;const id=++epoch;
+ $('status').textContent='Loading the second scan for alignment…';
+ try{
+ const names={reference:$('reference').value,moving:$('moving').value};
+ const fetched=await Promise.all(Object.entries(names).map(([key,name])=>fetchCloud(key,name)));
  if(id!==epoch)return;dispose();for(const [key,buf] of fetched)clouds[key]=makeCloud(buf,key);
  loaded={...names,versions:fetched.map(x=>x[2])};base.identity();past=[];future=[];clearPoints();pickMode(null);frame();
- $('status').textContent='Previews loaded (up to 200,000 points per scan). Align, inspect, then save a new session.';
- }catch(e){dispose();loaded=null;error(e.message);}finally{loading=false;buttons();}
+ $('status').textContent='Both scans loaded (up to 200,000 points each). Align, inspect, then save a new session.';
+ }catch(e){if(id===epoch){loaded=null;error(e.message);}}
+ finally{if(id===epoch){loading=false;buttons();}}
 }
 function clearPoints(){
  landmarks={reference:[],moving:[]};for(const item of Object.values(clouds))for(const marker of [...item.children]){
@@ -77,7 +96,12 @@ function clearPoints(){
 }
 $('load').onclick=load;
 for(const key of ['reference','moving']){
- $(key).onchange=()=>{loaded=null;epoch++;dispose();clearPoints();pickMode(null);$('result').hidden=true;$('status').textContent='Load the selected scans to begin.';buttons();};
+ $(key).onchange=()=>{loaded=null;epoch++;clearPoints();pickMode(null);$('result').hidden=true;
+  if(key==='reference')dispose();
+  else if(clouds.moving){scene.remove(clouds.moving);clouds.moving.geometry.dispose();clouds.moving.material.dispose();delete clouds.moving;}
+  if($('reference').value===$('moving').value)$('moving').value='';
+  load();
+ };
  $('pick-'+key).onclick=()=>{pickMode(mode===key?null:key);$('status').textContent=mode?`Click distinct features on the ${key} scan in matching order. Click its pick button again to finish.`:'Orbit to inspect the alignment.';};
 }
 $('visibility').onchange=()=>pickMode(null);
@@ -126,9 +150,15 @@ const animate=()=>{controls.update();renderer.render(scene,camera);};
 renderer.setAnimationLoop(animate);
 if(embedded){window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===parent&&event.data?.type==='alignment-visible')renderer.setAnimationLoop(event.data.visible?animate:null);});parent.postMessage({type:'alignment-ready'},location.origin);}
 try{
- const state=await api('/api/state');for(const key of ['reference','moving']){
- $(key).replaceChildren(...state.scans.map(name=>{const option=document.createElement('option');option.value=option.textContent=name;return option;}));
- }const reference=new URLSearchParams(location.search).get('reference');if(state.scans.includes(reference))$('reference').value=reference;
- const other=state.scans.find(name=>name!==$('reference').value);if(other)$('moving').value=other;
- $('load').disabled=state.scans.length<2;$('status').textContent=state.scans.length<2?'Two saved scans are needed. You can return here after capturing them.':'Choose two saved scans, then load their previews.';
+ const state=await api('/api/state');
+ const options=()=>state.scans.map(name=>{const option=document.createElement('option');option.value=option.textContent=name;return option;});
+ $('reference').replaceChildren(...options());
+ const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Choose a second scan…';
+ $('moving').replaceChildren(placeholder,...options());$('moving').value='';
+ const requested=new URLSearchParams(location.search).get('reference');
+ const reference=state.scans.includes(requested)?requested:state.selected;
+ if(state.scans.includes(reference))$('reference').value=reference;
+ $('load').textContent='Reload previews';
+ if($('reference').value)await loadReference();
+ else{$('status').textContent='No saved scans yet. Capture a scan, then open it from Files.';buttons();}
 }catch(e){error(e.message);$('load').disabled=true;}
