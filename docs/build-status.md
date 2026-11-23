@@ -31,18 +31,25 @@ scene or GPU has passed a fresh physical acceptance trial at this checkpoint.
 ### Scan Library verification — 23 November 2026
 
 The full-page Scan Library adds cached thumbnails, display names, search and
-filters, related-version groups, storage details and reversible Trash. Folder IDs
-and recording paths remain unchanged. Trash retains files and does not free space;
-portable project packaging and permanent deletion remain future work.
+filters, related-version groups, storage details and reversible Bin. Folder IDs
+and recording paths remain unchanged. Bin retains files and does not free space;
+portable project packaging remains future work. Empty Bin permanently removes unused
+scan folders after confirmation, while preserving dependencies of retained scans.
 
 Sixty-seven Python checks across the library, web host, alignment, edit-session,
 viewer and mesh-export modules passed. JavaScript checks covered library actions,
 stale edits, capture controls and saved lasso behaviour. Browser checks covered
 Files → Library → saved workspace → Align → Library, safe display names,
-trash/restore with a usable dependent copy, thumbnails and desktop/laptop/phone
+bin/restore with a usable dependent copy, thumbnails and desktop/laptop/phone
 layouts. Documentation screenshots use synthetic geometry. A read-only catalogue
 of the current 28-entry host library completed in about 0.09 seconds; this is a
 local observation, not a large-library performance guarantee.
+
+Empty Bin subsequently passed eight library/backend checks, the library JavaScript
+checks and a browser trial using synthetic sessions. These covered dependency and
+undo-history protection, complete-family deletion, stale confirmation rejection,
+busy-host and pairing guards, and retention of shared raw recordings. The web-host
+module's 32 checks also passed. User-facing language uses **Bin**.
 
 ### Saved-result workspace verification — 23 November 2026
 

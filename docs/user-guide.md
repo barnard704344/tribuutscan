@@ -178,7 +178,7 @@ the saved-result workspace provides lasso cleanup after alignment.
 In **Files → Open Scan Library**, find a scan by thumbnail, name, date or related
 version, then choose **Open scan**. The result viewer opens in the current tab
 after the host accepts the selection. See the [library guide](scan-library.md)
-for display names, grouping, storage details and safe trash/restore.
+for display names, grouping, storage details and safe bin/restore.
 Use **← Capture** there to return to capture.
 The saved-result workspace groups **View**, **Align**, **Cleanup**, **Mesh** and
 **Export** tools. See the [saved-workspace guide](saved-workspace.md) for safe

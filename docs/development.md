@@ -155,12 +155,12 @@ from the live GPU pipeline.
 ## Repository hygiene
 
 Library mutations go through the controller queue with both host freshness and
-per-entry revision guards. Display names and trash markers belong in the ignored
-root catalogue; they must never rename capture folders. Trash is a reversible
+per-entry revision guards. Display names and bin markers belong in the ignored
+root catalogue; they must never rename capture folders. Bin is a reversible
 visibility flag, not a physical move/delete: nested/shared recording references
-must remain usable and automatic continuation must skip trashed entries. Thumbnails
+must remain usable and automatic continuation must skip binned entries. Thumbnails
 use bounded PLY samples and paired routes. Run `test_scan_library`, then exercise
-search/grouping, name edits, original/derivative trash, restore and open/Align/back
+search/grouping, name edits, original/derivative binning, restore and open/Align/back
 in the browser. Use only synthetic sessions for documentation screenshots.
 
 Keep `captures/`, credentials, logs and private photos out of commits. Inspect any

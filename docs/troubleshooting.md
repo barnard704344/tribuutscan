@@ -53,7 +53,7 @@ If the gauge itself is absent, refresh the browser after checking host version.
 
 Refresh the capture page to load the current browser code. In **Files → Open Scan
 Library**, find the desired card, then press **Open scan**. The viewer opens in
-the current tab after the host accepts the request. Check Trash if a result is
+the current tab after the host accepts the request. Check Bin if a result is
 missing from the normal library; restore it before opening. Saved scans can open
 with the scanner disconnected, but capture, recording and processing must finish
 first. If the request fails, its error appears above the tool panel and the page

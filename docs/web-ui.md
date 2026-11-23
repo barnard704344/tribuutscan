@@ -131,8 +131,8 @@ For installation and a complete capture walkthrough, use the [user guide](user-g
 
 **Files → Open Scan Library** opens the full-page thumbnail library. Search and
 filter scans, rename display titles, inspect related versions/storage or move a
-scan to reversible Trash. Open a card for all existing saved-workspace tools.
+scan to reversible Bin. Open a card for all existing saved-workspace tools.
 The library uses the same paired LAN session and adapts to phone width. See the
-[library guide](scan-library.md), including why Trash retains files and storage.
+[library guide](scan-library.md), including why Bin retains files and storage.
 
 ![Scan Library with synthetic scan families](images/scan-library.png)

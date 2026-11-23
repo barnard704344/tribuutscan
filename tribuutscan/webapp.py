@@ -430,13 +430,16 @@ class Service:
         if type(data.get('revision')) is not int or data['revision'] != self.revision:
             raise Conflict('The scanner changed. Review its current status and try again.')
         action = data.get('action')
-        if action in ('library-rename', 'library-trash', 'library-restore'):
+        if action in ('library-rename', 'library-trash', 'library-restore', 'library-empty-bin'):
             app = self.controller
             if self.demo or self.processing or app and (app.scan_state not in ('idle', 'disconnected')
                     or app.rec['recorder'] or app.job['process'] or app.switching['busy']):
                 raise Conflict('Finish capture, recording and processing before changing the library')
-            result = self.library.update(data.get('name'), action.removeprefix('library-'),
-                data.get('entry_revision'), data.get('display_name'))
+            if action == 'library-empty-bin':
+                result = self.library.empty_bin(data.get('signature'))
+            else:
+                result = self.library.update(data.get('name'), action.removeprefix('library-'),
+                    data.get('entry_revision'), data.get('display_name'))
             self.next_scan_refresh = 0
             if action == 'library-trash' and self.model.file and self.model.file.ply.parent.name == data.get('name'):
                 self.model.file = None
@@ -783,6 +786,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(dict(token=self.server.token, urls=getattr(self.server, 'connection_urls', [])))
         if path == '/api/state':
             return self.reply(json.dumps(self.service.state(), allow_nan=False).encode())
+        if path == '/api/library/bin-plan':
+            try:
+                return self.json(self.service.library.bin_plan())
+            except (ValueError, OSError) as error:
+                return self.json(dict(error=str(error)), 400)
         if path == '/api/library':
             try:
                 return self.json(dict(items=self.service.library.catalogue()))

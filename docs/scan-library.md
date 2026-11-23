@@ -34,7 +34,7 @@ Names also appear in the saved workspace and alignment source selectors.
 Original captures, editing copies and aligned results are grouped by recorded
 source relationships. Aligning two captures can connect both into one family.
 Use **Details → Related versions** to find a parent or derivative, including one
-in Trash. Grouping describes provenance; it does not establish alignment quality.
+in Bin. Grouping describes provenance; it does not establish alignment quality.
 
 ## Storage and recording links
 
@@ -48,20 +48,30 @@ Folder sizes are logical file totals, not a filesystem free-space measurement.
 History and related copies use storage too. A thumbnail is a sampled illustration
 of the point cloud, not evidence of scan completeness or export quality.
 
-## Trash and restore
+## Bin and restore
 
-**Move to Trash** asks for confirmation. The scan leaves normal library results,
+**Move to Bin** asks for confirmation. The scan leaves normal library results,
 alignment selectors and automatic capture continuation. If it was the selected
 saved model, that host selection is cleared. Related versions remain available.
 
-Trash is reversible: files remain in their original folders so recording links
-and other versions' dependencies keep working. **Trash → Restore** returns the
-same scan ID and display name. Moving to Trash does **not** free storage. This
-version has no permanent delete or Empty Trash action.
+Bin is reversible: files remain in their original folders so recording links
+and other versions' dependencies keep working. **Bin → Restore** returns the
+same scan ID and display name. Moving to Bin does **not** free storage.
 
-![Reversible Trash with synthetic sessions](images/scan-library-trash.png)
+**Empty Bin** previews the number and folder size of scans eligible for permanent
+deletion. Review the list of scans kept because another scan still uses them, then
+choose **Permanently delete** to remove eligible folders, meshes and undo history.
+This cannot be undone. The app checks recording references, saved undo states and
+source relationships before deleting; dependent scans must also be in the Bin
+before their sources can be removed. Shared/external recordings outside the deleted
+folders are kept. The confirmation is rejected if the library changes in another
+browser. Finish capture and processing before emptying the Bin.
 
-Library names, revisions and trash markers are stored in the ignored
+![Reversible Bin with synthetic sessions](images/scan-library-trash.png)
+
+![Empty Bin confirmation protecting a related source](images/scan-library-empty-bin.png)
+
+Library names, revisions and bin markers are stored in the ignored
 `captures/.scan-library.json`. Thumbnails are cached under
 `captures/.library-thumbnails/`. Preserve the metadata with a backup to retain
 organisation; preserve the complete capture layout to retain source recordings

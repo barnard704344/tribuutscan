@@ -19,7 +19,8 @@ private saved scans or live host credentials are included.
 | `alignment-drag.png` | Same two-scan view, illustrating direct tools and the amber moving-scan outline |
 | `alignment-refine.png` | Surface-refinement proposal and sampled fit report on generated curved surfaces |
 | `scan-library.png` | Full desktop library, related captures/edits/aligned result, generated surfaces |
-| `scan-library-trash.png` | Reversible Trash with synthetic sessions and retained source relationships |
+| `scan-library-trash.png` | Reversible Bin with synthetic sessions and retained source relationships |
+| `scan-library-empty-bin.png` | Permanent deletion preview preserving a source used by another synthetic scan |
 | `scan-library-mobile.png` | 390-pixel phone viewport of the same synthetic library |
 
 The pairing example uses `192.0.2.10` and `documentation-example-only`; it is not

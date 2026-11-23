@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import threading
 import time
@@ -68,7 +69,7 @@ class Library:
         if path.is_symlink() or (path / 'cloud.ply').is_symlink() or path.resolve().parent != root or not (path / 'cloud.ply').is_file():
             raise ValueError('Saved scan not found')
         if not include_trash and name in self.trashed_names():
-            raise ValueError('This scan is in Trash. Restore it from the Scan Library first')
+            raise ValueError('This scan is in Bin. Restore it from the Scan Library first')
         return path
 
     def update(self, name, operation, expected_revision, title=None):
@@ -101,6 +102,80 @@ class Library:
                 temporary.unlink(missing_ok=True)
             self.records, self.stamp = records, self.file.stat().st_mtime_ns
             return dict(name=name, **record)
+
+    def bin_plan(self):
+        """Protect every retained scan's provenance and raw links, including undo states."""
+        with self.lock:
+            items = self.catalogue()
+            candidates = {item['id'] for item in items if item['trashed_at']}
+            dependencies, fingerprints = {}, []
+            directories = [p for p in self.root.glob('*-scan') if p.is_dir() and not p.is_symlink()]
+            for directory in directories:
+                refs = set()
+                try:
+                    for filename in ['.editing.json', 'alignment.json']:
+                        data = _json(directory / filename, {})
+                        if not isinstance(data, dict):
+                            raise ValueError()
+                        refs.update(value for key, value in data.items()
+                                    if key in ('source', 'reference', 'moving') and isinstance(value, str))
+                    sessions = [directory / 'session.json', *directory.glob('.edit-history/*/session.json')]
+                    for session in sessions:
+                        data = _json(session, {})
+                        for source in data.get('sources', []):
+                            rec = (directory / source['rec']).resolve()
+                            refs.update(name for name in candidates
+                                        if rec == self.root.resolve() / name or self.root.resolve() / name in rec.parents)
+                    for base, dirs, files in os.walk(directory, followlinks=False):
+                        dirs[:] = sorted(d for d in dirs if not (Path(base) / d).is_symlink())
+                        for filename in sorted(files):
+                            path = Path(base) / filename
+                            st = path.lstat()
+                            fingerprints.append((str(path.relative_to(self.root)), st.st_size, st.st_mtime_ns))
+                except (ValueError, OSError, KeyError, TypeError, AttributeError):
+                    # Unknown metadata must not allow deletion of a possible dependency.
+                    refs.update(candidates)
+                dependencies[directory.name] = refs
+            retained = set(dependencies) - candidates
+            protected = {}
+            while True:
+                found = {name: owner for owner in sorted(retained) for name in dependencies.get(owner, set())
+                         if name in candidates and name not in retained}
+                if not found:
+                    break
+                protected.update(found)
+                retained.update(found)
+            deletable = sorted(candidates - retained)
+            snapshot = json.dumps([self.metadata(), fingerprints, deletable, protected], sort_keys=True).encode()
+            return dict(signature=hashlib.sha256(snapshot).hexdigest(),
+                        deletable=deletable, protected=[dict(id=name, used_by=owner) for name, owner in sorted(protected.items())],
+                        bytes=sum(item['bytes'] for item in items if item['id'] in deletable))
+
+    def empty_bin(self, signature):
+        with self.lock:
+            plan = self.bin_plan()
+            if not isinstance(signature, str) or signature != plan['signature']:
+                raise ValueError('The library changed. Review Empty Bin again before deleting files')
+            deleted, failed = [], []
+            for name in plan['deletable']:
+                path = self.directory(name, include_trash=True)
+                try:
+                    shutil.rmtree(path)
+                    deleted.append(name)
+                except OSError:
+                    failed.append(name)
+            # Remove only successfully deleted entries. Shared/external recordings stay put.
+            records = self.metadata()
+            for name in deleted:
+                records.pop(name, None)
+            temporary = self.file.with_name('.scan-library-' + uuid.uuid4().hex + '.tmp')
+            try:
+                temporary.write_text(json.dumps(records, indent=2, ensure_ascii=False))
+                temporary.replace(self.file)
+            finally:
+                temporary.unlink(missing_ok=True)
+            self.records, self.stamp = records, self.file.stat().st_mtime_ns
+            return dict(deleted=deleted, failed=failed, protected=plan['protected'])
 
     @staticmethod
     def storage(directory):

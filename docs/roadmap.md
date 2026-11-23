@@ -43,7 +43,7 @@ and open-surface limitations are handled explicitly.
 ## 5. Portable inspection projects
 
 The Scan Library now provides thumbnails, display names, search/filtering,
-related versions, owned storage details and reversible Trash. See the
+related versions, owned storage details and reversible Bin. See the
 [library guide](scan-library.md). Next, save annotations, measurements and view
 state with the session, and provide portable project packaging that accounts for
 raw-recording dependencies.

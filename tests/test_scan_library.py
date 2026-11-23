@@ -90,7 +90,7 @@ def test_library_api_pairing_freshness_busy_guard_and_open_restored_scan():
     from test_webapp import running_service,client
     with running_service() as (service,base):
         guest=client(base,paired=False)
-        for path in ['/api/library','/api/library/thumbnail?scan=source-scan']:assert guest(path)[0]==401
+        for path in ['/api/library','/api/library/bin-plan','/api/library/thumbnail?scan=source-scan']:assert guest(path)[0]==401
         assert b'id="pair-form"' in guest('/library')[1]
         request=client(base)
         for path in ['/library','/library.js','/library.css']:assert request(path)[0]==200
@@ -115,6 +115,15 @@ def test_library_api_pairing_freshness_busy_guard_and_open_restored_scan():
         service.processing=SimpleNamespace(poll=lambda:None)
         try:assert command('library-trash',name=source.name,entry_revision=3)[0]==409
         finally:service.processing=None
+        assert command('library-trash',name=source.name,entry_revision=3)[0]==200
+        plan=json.loads(request('/api/library/bin-plan')[1])
+        assert command('library-empty-bin',signature='stale')[0]==400
+        assert source.exists()
+        service.processing=SimpleNamespace(poll=lambda:None)
+        try:assert command('library-empty-bin',signature=plan['signature'])[0]==409
+        finally:service.processing=None
+        assert command('library-empty-bin',signature=plan['signature'])[0]==200
+        assert not source.exists()
 
 
 def test_corrupt_library_metadata_is_not_overwritten():
@@ -124,3 +133,50 @@ def test_corrupt_library_metadata_is_not_overwritten():
         lib=scan_library.Library(root)
         rejected(lambda:lib.update('source-scan','rename',0,'New title'))
         assert metadata.read_text()=='{invalid'
+
+
+def test_empty_bin_protects_dependencies_and_history_then_deletes_unused_families():
+    with tempfile.TemporaryDirectory() as tmp:
+        root=Path(tmp);lib=scan_library.Library(root)
+        a=make_session(root,'a-scan');b=make_session(root,'b-scan');c=make_session(root,'c-scan')
+        unused=make_session(root,'unused-scan')
+        (b/'.editing.json').write_text(json.dumps({'source':a.name}))
+        history=c/'.edit-history'/'old';history.mkdir(parents=True)
+        nested=b/'owned-rec';nested.mkdir();(nested/'frames').write_bytes(b'keep')
+        (history/'session.json').write_text(json.dumps({'sources':[{'rec':'../b-scan/owned-rec'}]}))
+        for path in [a,b,unused]:lib.update(path.name,'trash',0)
+        before=[hashes(a),hashes(b),hashes(c)]
+        plan=lib.bin_plan()
+        assert plan['deletable']==[unused.name]
+        assert {p['id'] for p in plan['protected']}=={a.name,b.name}
+        rejected(lambda:lib.empty_bin('old signature'))
+        # A concurrent restore invalidates the entire confirmation, with no deletion.
+        lib.update(unused.name,'restore',1)
+        rejected(lambda:lib.empty_bin(plan['signature']))
+        assert unused.exists()
+        lib.update(unused.name,'trash',2)
+        result=lib.empty_bin(lib.bin_plan()['signature'])
+        assert result['deleted']==[unused.name] and not result['failed'] and not unused.exists()
+        assert [hashes(a),hashes(b),hashes(c)]==before
+        assert unused.name not in lib.metadata()
+        # Binning the last dependent permits deletion of the complete group.
+        shared=(a/json.loads((a/'session.json').read_text())['sources'][0]['rec']).resolve()
+        lib.update(c.name,'trash',0)
+        plan=lib.bin_plan();assert set(plan['deletable'])=={a.name,b.name,c.name}
+        assert not lib.empty_bin(plan['signature'])['failed']
+        assert not any(p.exists() for p in [a,b,c])
+        assert shared.exists()  # shared raw recordings outside scan folders are never deleted
+
+
+def test_empty_bin_fails_closed_on_unknown_retained_metadata_and_checks_file_changes():
+    with tempfile.TemporaryDirectory() as tmp:
+        root=Path(tmp);lib=scan_library.Library(root)
+        candidate=make_session(root,'candidate-scan');active=make_session(root,'active-scan')
+        lib.update(candidate.name,'trash',0)
+        (active/'session.json').write_text('invalid json')
+        assert not lib.bin_plan()['deletable']
+        assert lib.bin_plan()['protected'][0]['id']==candidate.name
+        (active/'session.json').write_text('{}')
+        plan=lib.bin_plan();(candidate/'new-file').write_text('changed')
+        rejected(lambda:lib.empty_bin(plan['signature']))
+        assert candidate.exists()

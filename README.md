@@ -97,7 +97,7 @@ forward this port directly onto the internet.
   workspace, with automatic editing copies, lasso deletion and persistent undo/redo.
   Files remain in this checkout's ignored `captures/` directory.
 - **Files → Open Scan Library** provides thumbnails, display names, search,
-  related versions, storage details and reversible Trash. **Open scan → Align**
+  related versions, storage details and reversible Bin. **Open scan → Align**
   loads the opened scan as the blue reference.
   Choose a second scan, then drag the amber scan with **Move scan / Rotate scan**,
   or fit matching points. **Refine alignment** proposes a small surface fit, with

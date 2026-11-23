@@ -21,9 +21,11 @@ const entry=(id,name,kind,family,parents=[],trashed_at=null)=>({id,display_name:
 let items=[entry('a-scan','Raw <head>','capture','a-scan'),entry('b-scan','Cleanup copy','edited','a-scan',['a-scan']),entry('c-scan','Earlier scan','capture','c-scan',[],1)];items[0].dependents=['b-scan'];
 let state={phase:'idle',processing:false,instance:'host',revision:1},requests=[],navigations=[];
 const fetch=async(path,options)=>{
+ if(path==='/api/library/bin-plan')return {ok:true,status:200,json:async()=>({signature:'reviewed',deletable:['c-scan'],protected:[],bytes:1000})};
  if(path==='/api/state')return {ok:true,status:200,json:async()=>({...state})};
  if(path==='/api/library')return {ok:true,status:200,json:async()=>({items:structuredClone(items)})};
  const data=JSON.parse(options.body);requests.push(data);const item=items.find(i=>i.id===data.name);
+ if(data.action==='library-empty-bin'){assert.equal(data.signature,'reviewed');items=items.filter(i=>i.id!=='c-scan');return {ok:true,status:200,json:async()=>({deleted:['c-scan'],protected:[],failed:[]})};}
  if(data.action==='open')return {ok:true,status:200,json:async()=>({...state})};
  if(data.entry_revision!==item.revision)return {ok:false,status:400,json:async()=>({error:'Entry changed; refresh and try again'})};
  if(data.action==='library-rename')item.display_name=data.display_name;
@@ -54,5 +56,9 @@ control('b-scan','details').onclick();assert.equal(get('details-dialog').open,tr
 // Concurrent edits must keep the typed name and display the server's rejection.
 control('a-scan','rename').onclick();items[0].revision++;get('display-name').value='My pending title';get('rename-form').onsubmit({preventDefault(){}});
 await until(()=>!get('rename-error').hidden);assert.equal(get('rename-dialog').open,true);assert.equal(get('display-name').value,'My pending title');assert.equal(items[0].display_name,'Friendly <scan>');get('rename-dialog').close();
+get('trash-tab').onclick();await get('empty-bin').onclick();assert.equal(get('empty-bin-dialog').open,true);
+assert.equal(get('empty-bin-confirm').disabled,false);assert.ok(items.some(i=>i.id==='c-scan'),'review must not delete files');
+await get('empty-bin-form').onsubmit({preventDefault(){}});assert.equal(get('empty-bin-dialog').open,false);assert.ok(!items.some(i=>i.id==='c-scan'));
+get('active-tab').onclick();
 state.phase='scanning';await get('refresh').onclick();assert.equal(control('a-scan','open').disabled,true);assert.equal(control('a-scan','trash').disabled,true);assert.equal(control('a-scan','details').disabled,undefined);
 console.log('Library search/grouping, stable open IDs, display-name safety, trash/restore, stale rename and busy-state checks passed');
