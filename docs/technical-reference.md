@@ -80,10 +80,15 @@ All captures and local state live beneath the checkout's ignored `captures/`.
 | `*-scan/session.json` | Scan settings, camera/range identity, statistics and source references |
 | `keyframes.npz`, `merged.npz`, `scene.json` | Supporting data for restore and processing |
 | `frame_poses.txt`, `track.csv`, `labels.npz` | Pose history, tracking outcomes and frame masks when produced |
+| `*-aligned-*-scan/alignment.json` | Sources, source versions and rigid transform for a new combined full session |
+| `*-edit-*-scan/.editing.json` | Editing-copy identity and history state; original capture remains separate |
+| `*-edit-*-scan/.edit-history/` | Persistent snapshots: six states, allowing up to five undo steps |
+| `cleanup.json` | Lasso-through deletion rules, used when rebuilding point and mesh output |
 | `*-rec/` | Raw recording and metadata; retain with the scan that references it |
 | `mesh.ply` | Coloured scanned surface, in metres |
-| `mesh.stl` | Printable solid export, in millimetres, when successful |
+| `mesh.stl` | STL export in millimetres; may be an open surface if solid closure fails |
 | `solid.ply` | Coloured closed-solid export, in metres, when successful |
+| `mesh.json` | Mesh-generation report, including closure outcome when produced |
 | `.cancelled/` | Recovery data from cancelled takes |
 | `factory.json`, `calibration.json`, `calib/` | Local calibration data |
 | `.webapp.json` | Private launcher/pairing session information |
@@ -94,6 +99,17 @@ Cloud/mesh PLY coordinates use the viewer's axes: Y up and Z towards the scanner
 STL uses the same axes with millimetre scale. Always check scale and orientation
 in the receiving CAD/slicer application. Do not delete source recordings merely
 because a PLY exists: restore, optimisation, replay and meshing may need them.
+
+Aligned sessions and editing copies retain source-recording references without
+duplicating the recordings. Preserve the relative directory layout when backing
+up or moving captures. A downloaded PLY/STL or view PNG is not a portable full
+session. Editing history is host-side data and survives browser refresh/restart;
+a new edit after Undo discards the redo branch. Preview-transform undo in Align
+is separate from this persistent saved-session history.
+
+Check the mesh report and inspect the exported surface before printing. Cleanup
+that prevents solid closure can still produce an STL of the cleaned open surface;
+the filename alone does not establish that it is watertight.
 
 ## Useful offline tools
 

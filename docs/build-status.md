@@ -16,6 +16,9 @@ known validation gaps, not a hardware certification or release guarantee.
 - Saved-scan inspection, processing/downloads, continuation and safe idle host restart.
 - Saved-result workspace with View, Align, Cleanup, Mesh and Export tabs, automatic
   editing copies, lasso-through deletion, crop/base tools and persistent edit undo/redo.
+- Integrated alignment loads the opened scan as reference and a selected second
+  scan automatically. Mouse/touch move and rotate tools adjust the moving scan
+  directly, with preview undo/redo, optional landmark fitting and full-session save.
 - Retained upstream calibration, tracking/recovery, optimisation, GPU fusion/meshing,
   CPU fallback and output pipeline. See [technical reference](technical-reference.md).
 
@@ -48,20 +51,26 @@ The [web UI tour](web-ui.md) includes reviewed screenshots from an isolated demo
 session. This validates presentation and navigation, not a new hardware scan,
 dimensional accuracy or sustained processing throughput.
 
-## Latest checkpoint needing validation
+## Alignment verification and remaining trial
 
-The first browser saved-scan alignment stage supports matching-point fitting,
-manual transform adjustments, undo/redo and a new combined full session. Synthetic
-geometry/session and browser checks cover this path; a real scan trial is still
-required. It currently accepts uncropped, single-piece free-object sessions with
-matching calibration and range. Brush/lasso cleanup and automatic surface
-refinement remain future work. See [alignment](alignment.md).
+Alignment accepts uncropped, single-piece free-object sessions with matching
+calibration and range. Align before lasso cleanup, which is already implemented
+in the saved workspace. Brush tools and automatic surface refinement remain future
+work. See [alignment](alignment.md) for the full input restrictions.
 
-Six alignment regression checks and the 34 host/launcher checks passed. Browser
-checks exercised actual point picking and landmark fitting, numeric nudges,
-undo/redo, centring, a full-session save and opening the crop/processing result.
-The alignment page was checked at desktop, laptop and phone widths. These tests
-used synthetic sessions; they do not validate real-scene alignment quality.
+Recorded checks across the alignment changes covered rigid transforms, landmark
+fitting, frame/source-link preservation, unchanged originals and failed saves.
+Browser checks exercised automatic source loading, point picking, numeric nudges,
+direct mouse movement/rotation, one undo step per completed drag, Escape and touch
+cancellation, saving and reopening the result. Tab switching preserved the pair.
+Desktop, laptop and phone layouts were checked. These used synthetic sessions;
+real-scene alignment quality and interaction with large scans still need a trial.
+
+The documentation audit refreshes the current workflow and screenshots; it does
+not add a fresh hardware or performance acceptance result. Proposed inspection
+and cleanup additions are tracked separately in the [roadmap](roadmap.md).
+
+## Meter and recovery validation still open
 
 Commit `906c7c8` added a rolling performance meter and a short recovered-tracking
 indicator. The meter exposes processing FPS, average time and stage timing data;

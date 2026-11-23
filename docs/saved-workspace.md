@@ -26,8 +26,9 @@ mode stays selected when polling reloads generated artifacts.
 
 The **Align** tab hosts the existing two-scan alignment tools inside the workspace,
 automatically loading the current result as reference. Choose a second scan to
-load its preview automatically, then pick matching landmarks or adjust position/rotation, then save a new aligned
-session. Returning to its result brings you back to this workspace.
+load its preview automatically, then adjust position/rotation or optionally pick
+matching landmarks. Save a new aligned session and open its result to return to
+this workspace. Switching tabs preserves the loaded pair for the same opened scan.
 
 For quick manual alignment, choose **Move scan** or **Rotate scan** and drag the
 amber scan directly. The blue reference stays fixed. Use **Orbit view** to move
@@ -105,5 +106,6 @@ the slicer. Saving a PNG does not save the processing session or raw recordings.
 
 This release adds manual lasso/crop cleanup and integrated alignment. Automatic
 island removal, hole-repair brushes, measurement/section tools, CAD deviation maps
-and reverse engineering remain future work. Synthetic automated and browser checks
+and reverse engineering remain future work; see the [proposed roadmap](roadmap.md).
+Synthetic automated and browser checks
 do not replace validation on real scans.

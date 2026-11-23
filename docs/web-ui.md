@@ -107,10 +107,18 @@ controls are used, with no phone app or scanner driver required.
 
 **Files → Open scan → Align** opens the two-scan alignment tools inside the saved workspace.
 It offers coloured overlays, corresponding-point fitting, numeric move/rotate
-nudges and transform undo/redo. **Save aligned copy** creates a new full session;
+nudges and transform undo/redo. The opened scan loads as the blue reference;
+choosing a second scan loads its amber preview automatically. **Move scan** and
+**Rotate scan** let you drag the amber scan directly; **Orbit view** moves the
+camera. Each completed drag is one undo step, and Escape cancels an active drag.
+**Save aligned copy** creates a new full session;
 the originals are preserved. The [saved-result workspace](saved-workspace.md) handles the result with View,
 Align, Cleanup, Mesh and Export tabs. Edits create a copy automatically, and
 lasso/crop processing has persistent undo/redo.
 See the [alignment guide](alignment.md) for current restrictions and validation status.
+
+![Align tab with direct scan manipulation controls](images/saved-alignment.png)
+
+*Synthetic saved sessions; the blue reference stays fixed while the amber scan is adjusted.*
 
 For installation and a complete capture walkthrough, use the [user guide](user-guide.md).

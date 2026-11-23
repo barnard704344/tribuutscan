@@ -67,9 +67,9 @@ approved. It also does not claim that the scans overlap sufficiently. If a sourc
 changed since loading, reload it before saving. A failed job does not publish a
 partially written result.
 
-Choose **Inspect result, crop & process** when saving finishes. The existing saved
-result page provides the crop box, mesh generation and exports. Choose **Make mesh**
-there when ready; source recordings and compatible calibration must still be available.
+Choose **Inspect result, crop & process** when saving finishes. The saved-result
+workspace provides cleanup, mesh generation and exports. Choose **Mesh → Generate mesh**
+when ready; source recordings and compatible calibration must still be available.
 
 After alignment, use the [Cleanup tab](saved-workspace.md#cleanup) for lasso deletion
 and crop/base cleanup on an editable copy. Align and optimise before applying

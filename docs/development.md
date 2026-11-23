@@ -114,6 +114,13 @@ frame and recording-link preservation, unchanged originals, failed-save cleanup,
 and authenticated endpoint behaviour. Use synthetic sessions to check browser
 point picking, nudge/undo/redo, saving and opening the crop/processing result.
 
+Also check automatic reference loading and second-source loading in the embedded
+Align tab. Move drags use the current camera plane; rotation pivots around the
+moving scan's centre. Keep the reference unchanged and each completed gesture to
+one preview undo step. Escape, pointer cancellation, lost capture, window blur and
+hiding the tab must revert an unfinished gesture. Test mouse and touch input,
+tab-switch preservation, saved rigid transforms and unchanged source files.
+
 ## Repository hygiene
 
 Keep `captures/`, credentials, logs and private photos out of commits. Inspect any

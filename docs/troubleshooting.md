@@ -59,6 +59,35 @@ with the scanner disconnected, but capture, recording and processing must finish
 first. If the request fails, its error appears above the tool panel and the page
 stays in the capture workspace.
 
+## Align asks for a scan, or dragging only moves the camera
+
+Open the take from **Files → Open scan**, then use its **Align** tab. The opened
+scan should load as the blue reference automatically. Choose a second take to load
+its amber preview. **Reload previews** retries a failed load; choosing a source
+normally loads it without that button. Refresh the browser if it still shows the
+older workflow.
+
+Choose **Move scan** or **Rotate scan**, then drag the amber points. **Orbit view**
+moves the camera instead. The blue reference stays fixed. Move works across the
+current camera plane; orbit to a different angle to move along another plane.
+Escape cancels an unfinished drag. The tools need a loaded, visible moving scan.
+
+Saving requires uncropped, single-piece Head / free object sessions with matching
+camera calibration and range. Lasso-cleaned or bare exported PLY files are not
+compatible full sessions. See [alignment restrictions](alignment.md#first-release-limits).
+
+## Cleanup deletes too much, or optimisation is refused
+
+Lasso selection goes through the model, including surfaces behind the visible
+ones. Inspect the pink selection before deleting. **Undo** restores the previous
+editing state; **Clear all lasso cleanup** removes all lasso rules while retaining
+crop settings. Align and optimise before lasso cleanup; clear or undo the cleanup
+before changing poses. Editing history survives refresh/restart, with up to five
+undo steps. The original capture and its raw recordings remain separate.
+
+Capture continuation skips editing copies. To add more views, continue the
+original capture and create a new editing copy afterward.
+
 ## Coverage says waiting, stays pink, or stops growing
 
 Check **Tracking** and **Geometry** first. Camera frames can keep arriving while

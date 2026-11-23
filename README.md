@@ -22,6 +22,7 @@ claims and upstream development notes are not instructions for the current UI.
 | Understand the scanner, calibration, GPU pipeline and output files | [Technical reference](docs/technical-reference.md) |
 | Develop, test and measure changes | [Development guide](docs/development.md) |
 | Check completed work and unfinished work | [Build status](docs/build-status.md) |
+| See proposed inspection and cleanup additions | [Saved-workspace roadmap](docs/roadmap.md) |
 
 ## Install and launch
 
@@ -92,9 +93,11 @@ forward this port directly onto the internet.
 - **Resume** restores the normal layout and capture. **Stop & Save** saves the
   take and starts optimisation; meshing follows if enabled.
 - Saved scans open in a matching **View / Align / Cleanup / Mesh / Export**
-  workspace, with automatic editing copies, lasso deletion and undo/redo. Files remain in this checkout's ignored `captures/` directory.
-- **Files → Open scan → Align** opens manual two-scan alignment, matching-point
-  fitting and move/rotate adjustments. Saving creates a new full session. See
+  workspace, with automatic editing copies, lasso deletion and persistent undo/redo.
+  Files remain in this checkout's ignored `captures/` directory.
+- **Files → Open scan → Align** loads the opened scan as the blue reference.
+  Choose a second scan, then drag the amber scan with **Move scan / Rotate scan**,
+  or fit matching points. Saving creates a new full session. See
   the [first-release limits](docs/alignment.md#first-release-limits) before using it.
 
 ## Status and limits

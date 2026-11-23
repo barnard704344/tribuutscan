@@ -85,7 +85,7 @@ Phones use a stacked layout.
 | --- | --- |
 | Scan | Subject, spacing, capture options, continuation and separate pieces |
 | Camera | Depth range, exposure, hardware controls, IMU and markers |
-| Files | Saved scans, processing/downloads and raw recording |
+| Files | Choose/open a saved scan, return to live capture and manage raw recordings |
 | Host | Connection, phone QR pairing, restart and host messages |
 
 Start/stop, pause/resume, cancel and current status remain visible above the tab
@@ -171,7 +171,7 @@ refresh reloads HTML/CSS/JavaScript; it does not reload the host's Python code.
 ## Inspect and export saved results
 
 To combine two saved free-object scans, use **Files → Open scan → Align**. See the
-[alignment guide](alignment.md) for matching points, move/rotate, undo/redo and
+[alignment guide](alignment.md) for direct dragging, optional matching points, undo/redo and
 saving a separate full session. This first stage has explicit input restrictions;
 the saved-result workspace provides lasso cleanup after alignment.
 
@@ -180,9 +180,14 @@ The result viewer opens in the current tab after the host accepts the selection.
 Use **← Capture** there to return to capture.
 The saved-result workspace groups **View**, **Align**, **Cleanup**, **Mesh** and
 **Export** tools. See the [saved-workspace guide](saved-workspace.md) for safe
-editing copies, lasso deletion, undo/redo, cropping and PLY/STL downloads. It is distinct from the
-live capture workspace. Keep scans and their source recordings together when
-moving them to another machine.
+editing copies, lasso deletion, undo/redo, cropping and PLY/STL downloads.
+The opened scan becomes the reference automatically in Align; selecting a second
+scan loads it without an extra load step. Move/rotate tools adjust that second
+scan; Orbit view moves the inspection camera. Processing and downloads belong to
+this saved workspace, rather than extra links in Files.
+
+It is distinct from the live capture workspace. Keep scans and their source
+recordings together, preserving relative paths when moving them to another machine.
 
 For file contents, units and calibration, see the
 [technical reference](technical-reference.md). For benchmark and recovery work
