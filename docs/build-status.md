@@ -168,6 +168,13 @@ This checkpoint updates the tools, workflow documentation and screenshots; it do
 not add a fresh hardware or performance acceptance result. Proposed inspection
 and cleanup additions are tracked separately in the [roadmap](roadmap.md).
 
+## Export UI simplification — 24 November 2026
+
+Removed the ScanRuler promotion/link section from Export and its download status
+message. The shared STL action remains: use the existing printable STL or convert
+the current surface to millimetres. Current guides and the Export screenshot now
+reflect this layout; earlier handoff checkpoints below describe historical work.
+
 ## Frame loading correction — 24 November 2026
 
 A real saved scan exposed six-decimal pose rounding that exceeded the strict

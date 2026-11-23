@@ -137,12 +137,11 @@ The library uses the same paired LAN session and adapts to phone width. See the
 
 ![Scan Library with synthetic scan families](images/scan-library.png)
 
-## Desktop CAD handoff
+## Surface STL export
 
-Saved scans have a desktop-only ScanRuler section in **Export**. Download the STL
-above it, open ScanRuler and load it there for modelling. If no saved STL exists,
-the download exports the current surface in millimetres. It is a
-manual file handoff; projects and STEP files are saved through ScanRuler. The saved workspace also has Frames for accepted-frame repair; the ScanRuler section is hidden on phones. See [CAD handoff](cad-handoff.md).
+The STL download in **Export** uses the saved printable STL when available,
+otherwise the current surface is exported in millimetres. No external application
+links are shown. See [STL export](cad-handoff.md).
 
 ## Accepted frame repair
 

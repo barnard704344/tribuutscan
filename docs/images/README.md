@@ -16,7 +16,7 @@ private saved scans or live host credentials are included.
 | `frame-editor.png` | Accepted-frame timeline and exclusion in a generated session |
 | `frame-section-alignment.png` | Rigid section correction against retained synthetic keyframes |
 | `mesh-islands-preview.png` | Pink floating-island preview beside a synthetic sphere, Cleanup tab |
-| `saved-cad-handoff.png` | Export tab with shared STL download and desktop ScanRuler handoff, synthetic surface |
+| `saved-cad-handoff.png` | Export tab with surface STL download, synthetic surface |
 | `saved-workspace.png` | New saved-result workspace, View tab, synthetic session |
 | `saved-alignment.png` | Align tab with both synthetic scans loaded and Move scan selected |
 | `saved-cleanup.png` | Lasso selection preview inside Cleanup, synthetic session |

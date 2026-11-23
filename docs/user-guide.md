@@ -198,6 +198,5 @@ For file contents, units and calibration, see the
 [technical reference](technical-reference.md). For benchmark and recovery work
 that is not fully validated, see [build status](build-status.md).
 
-On desktop browsers, **Export** also offers a manual
-[millimetre STL handoff to ScanRuler](cad-handoff.md). Generate a surface first;
-CAD work stays in the separate ScanRuler browser tab.
+**Export** downloads an existing STL or converts the current surface to
+[millimetre STL](cad-handoff.md). Generate a surface first.

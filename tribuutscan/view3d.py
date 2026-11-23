@@ -96,7 +96,7 @@ def handoff_stl(path):
     before = path.stat()
     vertices, triangles = read_ply(path, faces=True)
     if triangles is None or not len(triangles):
-        raise ValueError('Generate a surface mesh before handing off to ScanRuler')
+        raise ValueError('Generate a surface mesh before downloading STL')
     xyz = np.column_stack([vertices[key] for key in ('x', 'y', 'z')]).astype(np.float64) * 1000.
     if not np.isfinite(xyz).all() or (triangles < 0).any() or (triangles >= len(xyz)).any():
         raise ValueError('The surface mesh contains invalid vertices or faces')

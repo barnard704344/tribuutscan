@@ -55,6 +55,5 @@ related versions, owned storage details and reversible Bin. See the
 [library guide](scan-library.md). Next, save annotations, measurements and view
 state with the session, and provide portable project packaging that accounts for
 raw-recording dependencies.
-A desktop [CAD handoff](cad-handoff.md) now downloads the selected surface for
-manual modelling in ScanRuler. Returning projects/STEP into the library and native
-STEP reverse engineering remain later work.
+[Surface STL export](cad-handoff.md) supports external CAD workflows. Importing
+CAD projects/STEP into the library and native STEP reverse engineering remain later work.

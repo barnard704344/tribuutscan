@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 const html=fs.readFileSync(new URL('../tribuutscan/web/index.html',import.meta.url),'utf8');
-const source=html.slice(html.indexOf('// Desktop-only file handoff:'),html.indexOf('function selectTool(name,'));
+const source=html.slice(html.indexOf('// Surface mesh STL download'),html.indexOf("$('frame-editor').addEventListener('load'"));
 function fixture(phone=false){
  const nodes=new Map(),downloads=[],requests=[],messages=[],revoked=[],changes=[];
  const element=id=>{if(!nodes.has(id))nodes.set(id,{});return nodes.get(id);};
@@ -27,7 +27,5 @@ function fixture(phone=false){
  f.ctx.lastInfo.mesh=null;await f.ctx.downloadSurfaceStl();assert.equal(f.downloads.length,0);
 }
 assert.ok(!html.includes('id="tab-cad"')&&!html.includes('id="panel-cad"'));
-assert.ok(html.indexOf('id="cad-handoff"')>html.indexOf('id="panel-export"'));
-assert.match(html,/@media\(max-width:760px\),\(pointer:coarse\)\{\.desktop-cad\{display:none!important/);
-assert.match(html,/href="https:\/\/scanruler.com\/\?workspace=reverse" target="_blank" rel="noopener noreferrer"/);
-console.log('Export handoff download identity, mm guidance, stale errors, private routes and phone exclusion passed');
+assert.ok(!html.includes('id="cad-handoff"')&&!html.includes('ScanRuler'));
+console.log('Surface STL download identity, mm guidance, stale errors and private routes passed');

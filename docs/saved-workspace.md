@@ -146,17 +146,11 @@ the current camera view as PNG. Unavailable artifacts are disabled. PLY coordina
 are metres; STL coordinates are millimetres. Check scale and orientation in CAD or
 the slicer. Saving a PNG does not save the processing session or raw recordings.
 
-## ScanRuler: desktop handoff
-
-Under **Export**, the desktop ScanRuler section uses the existing STL download
-and opens ScanRuler in a separate tab. If no saved STL exists, that download
-exports the current surface in millimetres instead. Load the downloaded file there, choose millimetres
-and use its Reverse engineer workspace. Projects and STEP downloads are saved
-through ScanRuler and are not automatically imported back into this library.
-The ScanRuler section is hidden on phones. See [CAD handoff](cad-handoff.md).
+If no saved printable STL exists, **Surface mesh · STL (mm)** exports the current
+surface directly. It keeps any holes in that surface. See [STL export](cad-handoff.md).
 
 This release adds lasso/crop cleanup, previewed mesh-island removal, integrated
-alignment and a desktop CAD handoff. Hole-repair brushes, measurement/section
+alignment and surface STL export. Hole-repair brushes, measurement/section
 tools and CAD deviation maps
 and native reverse engineering remain future work; see the [proposed roadmap](roadmap.md).
 Synthetic automated and browser checks
