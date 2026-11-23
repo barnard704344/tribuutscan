@@ -114,5 +114,8 @@ and crop/base cleanup on an editable copy. Align and optimise before applying
 world-space lasso cleanup. Automatic surface refinement, brush tools and automatic
 island/mesh repair are not implemented yet.
 
-The initial implementation was checked with synthetic sessions and browser
-interactions. Real head scans still need a physical validation run.
+Validation includes synthetic sessions and an initial real head-scan trial on
+23 November 2026. Controlled offsets on separate point subsets of a real fused
+scan were recovered, and refinement/preview undo/redo were exercised with two
+independent saved head captures. This is limited implementation evidence, not a
+scanner-accuracy test; inspect each new alignment and see [build status](build-status.md).

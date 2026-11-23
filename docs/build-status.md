@@ -66,8 +66,9 @@ fitting, frame/source-link preservation, unchanged originals and failed saves.
 Browser checks exercised automatic source loading, point picking, numeric nudges,
 direct mouse movement/rotation, one undo step per completed drag, Escape and touch
 cancellation, saving and reopening the result. Tab switching preserved the pair.
-Desktop, laptop and phone layouts were checked. These used synthetic sessions;
-real-scene alignment quality and interaction with large scans still need a trial.
+Desktop, laptop and phone layouts were checked using synthetic sessions. The
+initial real-data trial below extends that evidence; broader real-scene alignment
+quality and large-session coverage still need further validation.
 
 Surface-refinement checks cover known rigid offsets, noise/partial overlap,
 outliers, world-space selection, ambiguous planar patches, invalid input,
@@ -79,6 +80,29 @@ capture JavaScript checks passed; desktop/laptop/phone layouts were checked.
 The synthetic trial reduced sampled nearest-match RMS from about 1.99 mm to
 0.03 mm and recovered its known 2° offset. This does not establish scanner accuracy
 or real-scene registration quality.
+
+### Initial real-data refinement trial — 23 November 2026
+
+A newly captured head scan (918,612 points after optimisation) was used for
+controlled-offset tests. Separate random point subsets were given known 2° and
+5° rigid offsets. Refinement recovered the geometry to within about 0.04 mm at
+the 95th percentile. Both subsets come from the same fused surface, so this
+checks transform recovery on real geometry, not scanner dimensional accuracy or
+independent-capture agreement.
+
+The browser/host workflow also refined two independent saved head captures
+(approximately 0.92 million and 2.29 million points) after rough positioning.
+Sampled nearest-match RMS fell from 12.22 mm to 5.37 mm, and moving-point overlap
+within a 20 mm cutoff increased from 59% to 81%. Preview Undo/Redo passed; original
+sessions were unchanged and no combined output was published. A separate
+face-region check at a 10 mm cutoff refined 2.12 mm RMS to 2.06 mm. These checks
+illustrate why the shared region matters: hair, neck/shoulders, pose and capture
+coverage can differ between sessions. Residuals still require inspection.
+
+Tests used the existing CPU worker's 30,000-point sampling cap per scan. A poor
+initial placement was refused by the large-correction guard. Real-data UI checks
+were completed in an isolated host to avoid interfering with concurrent editing.
+Private scan images and recordings are not included in documentation or Git.
 
 This checkpoint updates the tools, workflow documentation and screenshots; it does
 not add a fresh hardware or performance acceptance result. Proposed inspection
