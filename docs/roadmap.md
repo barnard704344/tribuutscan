@@ -47,5 +47,6 @@ related versions, owned storage details and reversible Bin. See the
 [library guide](scan-library.md). Next, save annotations, measurements and view
 state with the session, and provide portable project packaging that accounts for
 raw-recording dependencies.
-Full STEP reverse engineering is a larger later project, beyond the first
-inspection and cleanup tools.
+A desktop [CAD handoff](cad-handoff.md) now downloads the selected surface for
+manual modelling in ScanRuler. Returning projects/STEP into the library and native
+STEP reverse engineering remain later work.

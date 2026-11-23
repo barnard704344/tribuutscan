@@ -90,6 +90,29 @@ def mesh_version(path):
         return None
 
 
+def handoff_stl(path):
+    """Read the surface PLY (metres) as binary STL in millimetres, without modifying it."""
+    path = Path(path)
+    before = path.stat()
+    vertices, triangles = read_ply(path, faces=True)
+    if triangles is None or not len(triangles):
+        raise ValueError('Generate a surface mesh before handing off to ScanRuler')
+    xyz = np.column_stack([vertices[key] for key in ('x', 'y', 'z')]).astype(np.float64) * 1000.
+    if not np.isfinite(xyz).all() or (triangles < 0).any() or (triangles >= len(xyz)).any():
+        raise ValueError('The surface mesh contains invalid vertices or faces')
+    records = np.zeros(len(triangles), dtype=[('normal', '<f4', (3,)), ('vertices', '<f4', (3, 3)), ('attribute', '<u2')])
+    records['vertices'] = xyz[triangles]
+    if not np.isfinite(records['vertices']).all():
+        raise ValueError('The surface mesh coordinates are out of range')
+    normal = np.cross(xyz[triangles[:, 1]] - xyz[triangles[:, 0]], xyz[triangles[:, 2]] - xyz[triangles[:, 0]])
+    length = np.linalg.norm(normal, axis=1)
+    records['normal'] = normal / np.where(length > 0, length, 1)[:, None]
+    after = path.stat()
+    if (before.st_mtime_ns, before.st_size) != (after.st_mtime_ns, after.st_size):
+        raise ValueError('The mesh changed during export; refresh and download again')
+    return b'triBUUTSCAN surface handoff; coordinates in millimetres'.ljust(80, b' ') + struct.pack('<I', len(records)) + records.tobytes()
+
+
 def mesh_versions(mesh_path):
     """Current downloads, independently: a rough mesh has a PLY, but no STL or solid."""
     mesh = mesh_version(mesh_path)
@@ -226,6 +249,23 @@ class Handler(BaseHTTPRequestHandler):
             if body is not None:
                 return self.reply(body, "application/octet-stream", f"{self.source.download_name()}.ply")
         mesh = self.source.mesh_path() if hasattr(self.source, "mesh_path") else None
+        if path == '/handoff.stl':
+            try:
+                params = parse_qs(query, keep_blank_values=True, max_num_fields=3)
+                if set(params) != {'name', 'version', 'mesh'} or any(len(v) != 1 for v in params.values()):
+                    raise ValueError('Reload the scan before downloading its handoff mesh')
+                if (info.get('phase') != 'done' or info.get('name') != params['name'][0]
+                        or str(version) != params['version'][0] or not info.get('mesh')
+                        or info['mesh'] != params['mesh'][0]):
+                    return self.send_error(409, 'The scan or mesh changed; refresh and download again')
+                if mesh is None:
+                    return self.send_error(404, 'No surface mesh available')
+                body = handoff_stl(mesh)
+                if mesh_version(mesh) != params['mesh'][0]:
+                    return self.send_error(409, 'The mesh changed; refresh and download again')
+                return self.reply(body, 'model/stl', f'{self.source.download_name()}-surface-mm.stl')
+            except (ValueError, KeyError, OSError) as error:
+                return self.send_error(400, str(error))
         endpoint = {"/mesh.ply": "mesh", "/mesh.bin": "mesh", "/mesh.stl": "stl",
                     "/solid.bin": "solid", "/solid.ply": "solid"}.get(path)
         if endpoint and info.get(endpoint) and mesh is not None:

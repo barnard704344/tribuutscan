@@ -197,3 +197,7 @@ recordings together, preserving relative paths when moving them to another machi
 For file contents, units and calibration, see the
 [technical reference](technical-reference.md). For benchmark and recovery work
 that is not fully validated, see [build status](build-status.md).
+
+On desktop browsers, the saved workspace also offers **CAD** for a manual
+[millimetre STL handoff to ScanRuler](cad-handoff.md). Generate a surface first;
+CAD work stays in the separate ScanRuler browser tab.

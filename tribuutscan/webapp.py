@@ -895,7 +895,7 @@ class Handler(BaseHTTPRequestHandler):
         relative = self.path[len('/model/'):]
         parsed = urlsplit(relative)
         allowed = {'', 'index.html', 'info.json', 'coverage.png', 'cloud.bin', 'cloud.ply', 'mesh.bin', 'mesh.ply',
-                   'mesh.stl', 'solid.bin', 'solid.ply', 'three.module.min.js', 'OrbitControls.js'}
+                   'mesh.stl', 'handoff.stl', 'solid.bin', 'solid.ply', 'three.module.min.js', 'OrbitControls.js'}
         if parsed.path not in allowed:
             return self.json({'error': 'Not found'}, 404)
         # No user-provided hostname or arbitrary backend path is forwarded.

@@ -168,6 +168,21 @@ This checkpoint updates the tools, workflow documentation and screenshots; it do
 not add a fresh hardware or performance acceptance result. Proposed inspection
 and cleanup additions are tracked separately in the [roadmap](roadmap.md).
 
+## Desktop CAD handoff — 23 November 2026
+
+A desktop-only CAD tab hands the selected surface mesh to ScanRuler through an
+explicit millimetre STL download and a separate-tab link. This is a manual file
+handoff, with no agent installation, direct scan URL sharing or automatic CAD
+project import. The source mesh and capture are unchanged, including rough/open
+surfaces. ScanRuler remains a separate application.
+
+The handoff, webapp and mesh-export modules passed 37 checks. JavaScript checks
+covered handoff controls and saved lasso regressions. A browser trial downloaded
+and parsed a synthetic surface STL and checked the panel, missing-mesh guard,
+1920/1366-pixel desktop layouts and phone exclusion. The screenshot uses synthetic
+geometry. CAD reconstruction quality and third-party application behaviour are
+not certified by these handoff checks. See [CAD handoff](cad-handoff.md).
+
 ## Tracking recovery update — 23 November 2026
 
 Recovery now confirms local, wide and saved-continuation candidates before fusion,

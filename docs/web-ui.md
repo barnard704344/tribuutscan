@@ -136,3 +136,10 @@ The library uses the same paired LAN session and adapts to phone width. See the
 [library guide](scan-library.md), including why Bin retains files and storage.
 
 ![Scan Library with synthetic scan families](images/scan-library.png)
+
+## Desktop CAD handoff
+
+Saved scans have a desktop-only **CAD** tab beside Export. Download the surface
+mesh as millimetre STL, open ScanRuler and load it there for modelling. It is a
+manual file handoff; projects and STEP files are saved through ScanRuler. Phone
+layouts retain the existing five tabs. See [CAD handoff](cad-handoff.md).

@@ -18,6 +18,7 @@ claims and upstream development notes are not instructions for the current UI.
 | Tour the browser workspace, tabs and phone pairing | [Web UI tour](docs/web-ui.md) |
 | Find, name and organise scans and related versions | [Scan Library](docs/scan-library.md) |
 | Inspect, clean up, mesh and export saved scans | [Saved workspace](docs/saved-workspace.md) |
+| Hand a surface mesh to ScanRuler for CAD modelling | [Desktop CAD handoff](docs/cad-handoff.md) |
 | Manually align two saved free-object scans | [Saved-scan alignment](docs/alignment.md) |
 | Understand recovery and test loss/reacquisition | [Tracking recovery](docs/tracking-recovery.md) |
 | Fix connection, depth, tracking or startup problems | [Troubleshooting](docs/troubleshooting.md) |
@@ -96,6 +97,7 @@ forward this port directly onto the internet.
   take and starts optimisation; meshing follows if enabled.
 - Saved scans open in a matching **View / Align / Cleanup / Mesh / Export**
   workspace, with automatic editing copies, lasso deletion and persistent undo/redo.
+  A desktop **CAD** tab adds a millimetre STL handoff to ScanRuler in a separate browser tab.
   Files remain in this checkout's ignored `captures/` directory.
 - **Files → Open Scan Library** provides thumbnails, display names, search,
   related versions, storage details and reversible Bin. **Open scan → Align**

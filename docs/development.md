@@ -25,6 +25,8 @@ required. The runner imports test modules, which also supports spawned workers.
 node tests/test_scanner_ui.mjs
 node tests/test_saved_lasso_ui.mjs
 node tests/test_library_ui.mjs
+node tests/test_handoff_ui.mjs
+.venv/bin/python tests/run_checks.py test_handoff test_webapp test_mesh_exports
 .venv/bin/python tests/run_checks.py test_recovery test_cloud test_livescan
 # Full regression run when warranted:
 .venv/bin/python tests/run_checks.py
