@@ -48,7 +48,16 @@ def poses(data):
         values = line.split()
         if values:
             if len(values) != 17:raise ValueError('Invalid saved frame poses')
-            result[int(values[0])] = alignment.rigid(np.array(values[1:], float).reshape(4, 4))
+            matrix = np.array(values[1:], float).reshape(4, 4)
+            rotation = matrix[:3, :3]
+            # cloud.write_poses stores six decimal places. Validate those measured
+            # values at their file precision, without changing the archived pose.
+            if (not np.isfinite(matrix).all() or not np.allclose(matrix[3], [0,0,0,1], atol=1e-8, rtol=0)
+                    or np.linalg.norm(matrix[:3,3]) > 10
+                    or not np.allclose(rotation.T @ rotation, np.eye(3), atol=5e-6, rtol=0)
+                    or abs(np.linalg.det(rotation)-1) > 5e-6):
+                raise ValueError('Invalid saved frame pose: expected a finite rigid camera pose')
+            result[int(values[0])] = matrix
     return result
 
 

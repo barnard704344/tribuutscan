@@ -168,6 +168,18 @@ This checkpoint updates the tools, workflow documentation and screenshots; it do
 not add a fresh hardware or performance acceptance result. Proposed inspection
 and cleanup additions are tracked separately in the [roadmap](roadmap.md).
 
+## Frame loading correction — 24 November 2026
+
+A real saved scan exposed six-decimal pose rounding that exceeded the strict
+manual-transform validator. The saved-pose reader now accepts only the small
+rotation error implied by that file precision, preserving the recorded values;
+manual transforms keep strict rigid validation. Frame data errors are visible
+above the timeline, and an unloaded backend displays restart guidance instead
+of an empty embedded workspace. The current scan's 1,848 statuses, 1,692 accepted
+poses and 231 keyframes were read without modifying scan files. Seven frame-editor
+checks cover the rounded-rotation regression alongside prior selection/history
+behaviour; browser verification uses the private scan without publishing its image.
+
 ## Accepted-frame editor — 23 November 2026
 
 The saved workspace now has Frames: accepted-pose/status inspection, sampled

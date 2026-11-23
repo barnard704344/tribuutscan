@@ -29,7 +29,7 @@ async function load(){busy=true;buttons();error();try{data=await api('/api/frame
  $('summary').textContent=`${data.rows.length.toLocaleString()} recorded statuses · ${data.rows.filter(row=>row.enabled).length.toLocaleString()} accepted poses included`;
  if(!data.editable)error(data.reason);
  const info=await api('/model/info.json');if(info.name!==scan)throw Error('The opened scan changed. Return to the saved workspace.');pending=info.editing;modelVersion=info.version;}
- catch(e){data=null;clear();error(e.message);}finally{busy=false;buttons();}if(data)await preview();}
+ catch(e){data=null;clear();$('status').textContent='Could not load this scan’s frame data.';error(e.message);}finally{busy=false;buttons();}if(data)await preview();}
 function inspect(index){const row=data.rows[index];$('timeline').value=index;$('scrub').value=index;$('first').value=$('last').value=row.index;details(index);}
 $('timeline').onchange=()=>{inspect(Number($('timeline').value));preview();};$('scrub').oninput=()=>inspect(Number($('scrub').value));$('scrub').onchange=preview;
 $('preview').onclick=preview;$('reload').onclick=load;$('fit-view').onclick=fit;$('visibility').onchange=visibility;

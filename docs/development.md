@@ -27,6 +27,7 @@ node tests/test_saved_lasso_ui.mjs
 node tests/test_library_ui.mjs
 node tests/test_handoff_ui.mjs
 node tests/test_islands_ui.mjs
+node tests/test_frame_load_ui.mjs
 .venv/bin/python tests/run_checks.py test_islands test_frame_editor test_edit_session test_webapp
 .venv/bin/python tests/run_checks.py test_handoff test_webapp test_mesh_exports
 .venv/bin/python tests/run_checks.py test_recovery test_cloud test_livescan

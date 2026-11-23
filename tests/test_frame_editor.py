@@ -144,3 +144,18 @@ def test_unsupported_cleanup_and_damaged_baseline_are_rejected_without_editing_s
         mutate(out,'frame-exclude',5,5)
         (out/frame_editor.ARCHIVE).write_bytes(b'broken archive')
         rejected(lambda:frame_editor.catalogue(out))
+
+
+def test_saved_six_decimal_rotations_accept_rounding_without_loosening_manual_transforms():
+    angle=.61;axis=np.array([1.,2.,3.]);axis/=np.linalg.norm(axis)
+    skew=np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
+    m=np.eye(4);m[:3,:3]=np.eye(3)+np.sin(angle)*skew+(1-np.cos(angle))*(skew@skew)
+    rounded=np.round(m,6)
+    data=('12 '+' '.join(f'{v:.6f}' for v in rounded.ravel())+'\n').encode()
+    parsed=frame_editor.poses(data)[12]
+    assert np.array_equal(parsed,rounded)
+    rejected(lambda:alignment.rigid(rounded))  # the previous strict reader rejected this valid saved rotation
+    for bad in [np.diag([1.,1.,1.001,1.]),np.diag([-1.,1.,1.,1.])]:
+        encoded=('12 '+' '.join(map(str,bad.ravel()))).encode()
+        rejected(lambda:frame_editor.poses(encoded))
+        rejected(lambda:frame_editor.rule(dict(first=0,last=1,transform=bad.tolist()),'frame-transform'))

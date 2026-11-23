@@ -417,7 +417,7 @@ async function poll() {
     const response = await fetch("info.json");
     if (!response.ok) throw new Error("could not load scan info");
     const info = await response.json();
-    if(tool==='frames'&&!busy&&$('frame-editor').dataset.scan!==info.name){$('frame-editor').dataset.scan=info.name;$('frame-editor').src='/frames?embedded=1&scan='+encodeURIComponent(info.name);}
+    if(tool==='frames'&&!busy&&$('frame-editor').dataset.scan!==info.name){$('frame-editor').dataset.scan=info.name;$('frame-editor').removeAttribute('srcdoc');$('frame-editor').src='/frames?embedded=1&scan='+encodeURIComponent(info.name);}
     if(islandPreview&&(islandPreview.name!==info.name||islandPreview.version!==info.version||islandPreview.mesh!==info.mesh))clearIslandPreview();
     if(lastInfo&&lastInfo.name!==info.name&&info.editing?.source!==lastInfo.name){
       framed=false;cloudKey=null;clearLasso();for(const kind in shapes){dropShape(kind);shapes[kind].version=null;}
@@ -549,6 +549,13 @@ async function downloadSurfaceStl(){
   status('Surface mesh downloaded in millimetres. Open ScanRuler and load the STL.');
  }catch(e){status(e.message,true);}finally{busy=false;updateTools();}
 };
+$('frame-editor').addEventListener('load',()=>{
+ const frame=$('frame-editor');
+ if(frame.hidden||frame.contentWindow.location.pathname!=='/frames')return;
+ if(!frame.contentDocument?.getElementById('timeline')){
+  frame.srcdoc='<html lang="en"><body style="margin:32px;background:#0b121d;color:#edf4fc;font:14px system-ui"><h2>Frame editor needs a host restart</h2><p>The running host has not loaded this workspace. Finish capture and processing, then use Host → Restart scanner host.</p><a style="color:#73dbb0" href="/model/" target="_parent">Reload saved workspace</a></body></html>';
+ }
+});
 function selectTool(name,focus=false){
   tool=name;
   for(const tab of document.querySelectorAll('[data-tool]')){
@@ -558,7 +565,7 @@ function selectTool(name,focus=false){
   $('workspace-body').classList.toggle('align-active',name==='align');
   $('workspace-body').classList.toggle('frames-active',name==='frames');
   const frameEditor=$('frame-editor');frameEditor.hidden=name!=='frames';
-  if(name==='frames'&&frameEditor.dataset.scan!==lastInfo?.name){frameEditor.dataset.scan=lastInfo?.name||'';frameEditor.src='/frames?embedded=1&scan='+encodeURIComponent(lastInfo?.name||'');}
+  if(name==='frames'&&frameEditor.dataset.scan!==lastInfo?.name){frameEditor.dataset.scan=lastInfo?.name||'';frameEditor.removeAttribute('srcdoc');frameEditor.src='/frames?embedded=1&scan='+encodeURIComponent(lastInfo?.name||'');}
   frameEditor.contentWindow?.postMessage({type:'frames-visible',visible:name==='frames'},location.origin);
   const frame=$('alignment-frame');frame.hidden=name!=='align';
   const reference=lastInfo?.name||'';
